@@ -281,20 +281,29 @@ export class MultiplayerClient {
         players: NetworkPlayer[]; cursor: number
         chat?: { id: string; playerId: string; playerName: string; message: string; createdAt: string }[]
       }>('poll', { cursor: this.cursor })
+      let electricalTopologyChanged = false
       for (const event of data.events ?? []) {
         const p = event.payload
         if (event.type === 'block' && p && Number.isInteger(p.x) && Number.isInteger(p.y) && Number.isInteger(p.z)) {
           const edit = p as BlockEdit
+          // Circuit sources, motors, glue and conductors can be built by a
+          // client. Make the host recompute the circuit immediately after the
+          // edit is applied instead of waiting for an unrelated dirty flag.
+          if (this.isHost && p.playerKey !== this.playerKey) electricalTopologyChanged = true
           const key = `${edit.x},${edit.y},${edit.z}`
           if (edit.ownerKey) this.lastBlockOwners.set(key, edit.ownerKey)
           else this.lastBlockOwners.delete(key)
           if (p.playerKey !== this.playerKey) this.engine?.applyMultiplayerBlock(edit)
         } else if (event.type === 'wire_upsert' && p?.id) {
           this.knownWireIds.add(String(p.id))
-          if (p.ownerKey !== this.playerKey) this.engine?.applyMultiplayerWire(p as NetworkWire)
+          if (p.ownerKey !== this.playerKey) {
+            this.engine?.applyMultiplayerWire(p as NetworkWire)
+            if (this.isHost) electricalTopologyChanged = true
+          }
         } else if (event.type === 'wire_remove' && p?.id) {
           this.knownWireIds.delete(String(p.id))
           this.engine?.removeMultiplayerWire(String(p.id))
+          if (this.isHost) electricalTopologyChanged = true
         } else if (event.type === 'action_intent' && this.isHost && p && p.playerKey !== this.playerKey) {
           this.engine?.applyMultiplayerMovingAction(p as MovingActionIntent)
         } else if (event.type === 'rules') {
@@ -312,6 +321,10 @@ export class MultiplayerClient {
         }
         this.callbacks.onChat?.(message)
       }
+      // Re-evaluate voltage after all block and wire events in this poll
+      // have been applied. This closes the race where a client finishes a
+      // circuit, but the host never marks its electrical graph dirty.
+      if (electricalTopologyChanged) this.engine?.mech.markNetworkCircuitDirty()
       this.cursor = Number.isFinite(data.cursor) ? data.cursor : this.cursor
       this.players = data.players ?? []
       this.callbacks.onPlayers?.(this.players.filter(p => p.id !== this.playerKey))
