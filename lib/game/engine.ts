@@ -863,7 +863,13 @@ export class Engine {
     this.sky.material.uniforms.uTime.value = this.elapsed
     this.updateChunks(centerX, centerZ)
     this.particles.update(frozen ? 0 : dt, this.camera)
-    if (this.physicsDebugLabel) this.physicsDebugLabel.textContent = this.mech.physicsDebugText()
+    if (this.physicsDebugLabel) {
+      const hit = this.target
+      const target = hit
+        ? `\nray target: id=${hit.id} cell=(${hit.x},${hit.y},${hit.z}) dist=${hit.dist.toFixed(2)} moving=${hit.moving?.kind ?? 'static'} source=${hit.moving?.key ?? '-'}`
+        : '\nray target: none'
+      this.physicsDebugLabel.textContent = this.mech.physicsDebugText() + target
+    }
 
     this.renderer.clear()
     this.renderer.render(this.scene, this.camera)
