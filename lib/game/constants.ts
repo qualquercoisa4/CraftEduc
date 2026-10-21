@@ -18,6 +18,27 @@ export const B = {
 
 export type BlockId = number
 
+/**
+ * Relative electrical conductivity (0–1). This is a material property, not a
+ * random chance: 0.9 means the material conducts well but introduces losses.
+ */
+export const BLOCK_CONDUCTIVITY: Readonly<Record<number, number>> = {
+  [B.AIR]: 0,
+  [B.ROBOTICS]: 0.92,
+  [B.IRON]: 0.90,
+  [B.WOOD]: 0,
+  [B.COMPONENT]: 0.98,
+  [B.LED]: 0,
+  [B.MOTOR]: 0,
+  [B.BATTERY_BOX]: 0,
+  [B.ALUMINUM]: 0.95,
+  [B.GEAR]: 0.90,
+}
+
+export function blockConductivity(id: number) {
+  return BLOCK_CONDUCTIVITY[id] ?? 0
+}
+
 /** 0:+X 1:-X 2:+Y 3:-Y 4:+Z 5:-Z */
 export const DIRS: ReadonlyArray<readonly [number, number, number]> = [
   [1, 0, 0],
