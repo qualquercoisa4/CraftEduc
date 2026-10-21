@@ -4,8 +4,10 @@ import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './me
 import {
   type BatteryBoxModel,
   type MotorModel,
+  type LedTerminalModel,
   createBatteryBoxModel,
   createGlowSprite,
+  createLedTerminalModel,
   createMotorModel,
   createWireMesh,
   disposeObject,
@@ -22,6 +24,7 @@ const MAX_CONTRAPTION = 400
 type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'box'; model: BatteryBoxModel }
+  | { type: 'led'; model: LedTerminalModel }
 
 export interface Wire {
   id: number
@@ -80,7 +83,7 @@ export class Mechanics {
   onBlockChange(x: number, y: number, z: number, oldId: number, newId: number) {
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -109,6 +112,11 @@ export class Mechanics {
       model.group.position.set(x + 0.5, y, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'box', model })
+    } else if (newId === B.LED) {
+      const model = createLedTerminalModel()
+      model.group.position.set(x, y, z)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'led', model })
     }
     this.rebuildGlue()
     this.powerDirty = true
