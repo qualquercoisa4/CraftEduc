@@ -24,6 +24,11 @@ export default function Page() {
     let engine: Engine
     try {
       engine = new Engine(canvas)
+      // A diagnostic URL skips the title menu so physics regressions can be
+      // tested deterministically. Normal gameplay still starts from the menu.
+      if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+        gameStore.set({ screen: 'playing' })
+      }
     } catch (error) {
       setBootError(error instanceof Error ? error.message : 'Não foi possível iniciar o renderizador 3D.')
       return
