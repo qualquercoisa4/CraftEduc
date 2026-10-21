@@ -1729,6 +1729,19 @@ export class Mechanics {
     }
     for (const [id, visual] of this.networkFallingVisuals) {
       if (liveVisualIds.has(id)) continue
+      // A landing snapshot may move a motor/box/wheel to a different voxel.
+      // Remove registry entries for the old source keys before disposing the
+      // replica group, otherwise mechanics would keep updating dead models.
+      for (const key of visual.keys) {
+        const [x, y, z] = parseKey(key)
+        const idAtOrigin = this.world.getBlock(x, y, z)
+        if (idAtOrigin === B.MOTOR || idAtOrigin === B.BATTERY_BOX || idAtOrigin === B.WHEEL || idAtOrigin === B.LED) continue
+        const entry = this.models.get(key)
+        if (entry && entry.model.group.parent === visual.group) this.models.delete(key)
+        this.mountedWheels.delete(key)
+        const glow = this.glows.get(key)
+        if (glow && glow.parent === visual.group) this.glows.delete(key)
+      }
       disposeObject(visual.group)
       this.networkFallingVisuals.delete(id)
     }
