@@ -76,6 +76,7 @@ interface Contraption {
   speed: number
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
   reactionTravel: number
+  velocity: THREE.Vector3
 }
 
 export class Mechanics {
@@ -548,13 +549,14 @@ export class Mechanics {
       speed: 0,
       wireEnds,
       reactionTravel: 0,
+      velocity: new THREE.Vector3(),
     })
     return 'driving'
   }
 
   private disassemble(c: Contraption, quarterTurns: number) {
     const q = new THREE.Quaternion().setFromAxisAngle(c.axis, quarterTurns * HALF_PI)
-    const pivot = new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5)
+    const pivot = c.group.position.clone()
     const rotDir = (dir: number) => {
       const v = new THREE.Vector3(...DIRS[dir]).applyQuaternion(q)
       const r = [Math.round(v.x), Math.round(v.y), Math.round(v.z)]
@@ -1001,7 +1003,7 @@ export class Mechanics {
           // lifts the complete machine. Never allow rotor blocks to be clipped
           // away by the floor's static voxel layer.
           const qNext = new THREE.Quaternion().setFromAxisAngle(c.axis, nextAngle)
-          const pivot = new THREE.Vector3(c.motorPos[0]+0.5,c.motorPos[1]+0.5,c.motorPos[2]+0.5)
+          const pivot = c.group.position.clone()
           let floorContact = false
           for (const b of c.blocks) {
             const center = new THREE.Vector3(...b.rel).applyQuaternion(qNext).add(pivot)
@@ -1074,57 +1076,58 @@ export class Mechanics {
         }
       }
       c.group.quaternion.setFromAxisAngle(c.axis, c.angle)
-      // Continuous ground reaction. Evaluate the current and next angle so a
-      // fast arm cannot skip the narrow contact interval between frames.
-      if (power > 0 && Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
-        const pivot = new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5)
-        let reactionX = 0, reactionZ = 0, liftImpulse = 0, contacts = 0
-        const sampleAngles = [c.angle, c.angle - c.speed * dt * 0.5, c.angle - c.speed * dt]
-        for (const sampleAngle of sampleAngles) {
-          const q = new THREE.Quaternion().setFromAxisAngle(c.axis, sampleAngle)
-          const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
-          const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
-          const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
-          const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
-          for (const b of c.blocks) {
-            const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
-            const center = rel.clone().add(pivot)
-            const bottom = center.y - halfY
-            const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
-            // Count near-floor contact even before numerical penetration. A
-            // block that is moving away from the floor contributes no push.
-            if (bottom <= GROUND_LEVEL + 0.12 && bottom >= GROUND_LEVEL - 0.55 && tangential.y < 0.03) {
-              const weight = Math.max(0.2, Math.min(1, (GROUND_LEVEL + 0.12 - bottom) / 0.25 + 0.2))
-              reactionX -= tangential.x * weight
-              reactionZ -= tangential.z * weight
-              liftImpulse += Math.max(0, -tangential.y) * weight
-              contacts++
-            }
+      // Continuous rigid-body motion: the entire glued assembly leaves the
+      // voxel grid while the motor is powered. Floor contact applies equal and
+      // opposite force; gravity and inertia keep motion smooth between contacts.
+      if (Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
+        const pivot = c.group.position.clone()
+        const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
+        const ex = new THREE.Vector3(1,0,0).applyQuaternion(q)
+        const ey = new THREE.Vector3(0,1,0).applyQuaternion(q)
+        const ez = new THREE.Vector3(0,0,1).applyQuaternion(q)
+        const halfY = 0.5 * (Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
+        let contacts = 0
+        const reaction = new THREE.Vector3()
+        let upward = 0
+        for (const b of c.blocks) {
+          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
+          const center = rel.clone().add(pivot)
+          const bottom = center.y - halfY
+          const tangent = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
+          if (bottom <= GROUND_LEVEL + 0.1 && bottom >= GROUND_LEVEL - 0.12 && tangent.y < -0.01) {
+            // Ground force opposes the arm's tangential movement. Keep its
+            // horizontal and vertical components; do not teleport any blocks.
+            reaction.x -= tangent.x
+            reaction.z -= tangent.z
+            upward += -tangent.y
+            contacts++
           }
         }
-        if (contacts > 0) {
-          // Average samples to make force stable across frame rates.
-          reactionX /= contacts
-          reactionZ /= contacts
-          liftImpulse /= contacts
-          const horizontalForce = Math.hypot(reactionX, reactionZ)
-          // Do not wait for a large threshold: accumulate only a small fraction
-          // of the opposing sweep, so movement continues during the whole contact.
-          c.reactionTravel += Math.min(0.2, horizontalForce * dt * 1.6)
-          if (c.reactionTravel >= 0.12) {
-            const dx = Math.abs(reactionX) >= Math.abs(reactionZ) ? Math.sign(reactionX) : 0
-            const dz = dx ? 0 : Math.sign(reactionZ)
-            if (dx || dz) {
-              let moved = this.translateContraption(c, dx, 0, dz)
-              if (!moved && liftImpulse > 0.005) {
-                moved = this.translateContraption(c, 0, 1, 0)
-                if (moved) moved = this.translateContraption(c, dx, 0, dz)
-              }
-              if (moved) c.reactionTravel = Math.max(0, c.reactionTravel - 0.12)
-              else c.reactionTravel = Math.min(c.reactionTravel, 0.24)
-            }
-          }
-        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.5)
+        if (contacts > 0 && power > 0) {
+          reaction.multiplyScalar(1 / contacts)
+          const mass = Math.max(1, c.blocks.length * 0.35 + 1)
+          c.velocity.x += reaction.x * dt * 2.2 / mass
+          c.velocity.z += reaction.z * dt * 2.2 / mass
+          c.velocity.y += Math.min(5, upward / contacts * 0.9) * dt
+        }
+        // Gravity and drag apply continuously, even when the arms are not in
+        // contact. This is what makes the assembly fall back down naturally.
+        c.velocity.y -= 9.81 * dt
+        c.velocity.x *= Math.exp(-0.65 * dt)
+        c.velocity.z *= Math.exp(-0.65 * dt)
+        c.group.position.addScaledVector(c.velocity, dt)
+        // Static floor collision: clamp the whole body, never delete individual
+        // blocks that overlap the floor. Arms can push the pivot up next frame.
+        let minBottom = Infinity
+        for (const b of c.blocks) {
+          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
+          const center = rel.clone().add(c.group.position)
+          minBottom = Math.min(minBottom, center.y - halfY)
+        }
+        if (minBottom < GROUND_LEVEL) {
+          c.group.position.y += GROUND_LEVEL - minBottom
+          if (c.velocity.y < 0) c.velocity.y = 0
+        }
       }
       if (c.wireEnds.length) {
         c.group.updateMatrixWorld(true)
