@@ -129,7 +129,17 @@ export class Mechanics {
   private networkAuthority = true
   private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState, ownerKey?: string | null) => void) | null = null
   private networkBlockOwner: ((x: number, y: number, z: number) => string | null) | null = null
-  private networkFallingVisuals = new Map<string, { group: THREE.Group; keys: string[]; signature: string }>()
+  private networkFallingVisuals = new Map<string, {
+    group: THREE.Group; keys: string[]; signature: string
+    targetPosition: THREE.Vector3; targetRotation: THREE.Quaternion
+  }>()
+  private networkBodyTargets = new Map<string, {
+    body: RAPIER.RigidBody
+    position: THREE.Vector3
+    rotation: THREE.Quaternion
+    linearVelocity: THREE.Vector3
+    angularVelocity: THREE.Vector3
+  }>()
 
   constructor(
     private world: World,
@@ -1459,7 +1469,7 @@ export class Mechanics {
       if (this.networkAuthority) {
         this.wakeBlocksBeingPushed()
         this.rigidPhysics.step(dt)
-      }
+      } else this.updateNetworkPoseInterpolation(dt)
       this.syncRigidTransforms()
     }
   }
@@ -1553,13 +1563,39 @@ export class Mechanics {
       !!v && typeof v === 'object' && ['x', 'y', 'z'].every(k => Number.isFinite(Number((v as Record<string, unknown>)[k])))
     const validRotation = (v: unknown): v is { x: number; y: number; z: number; w: number } =>
       !!v && typeof v === 'object' && ['x', 'y', 'z', 'w'].every(k => Number.isFinite(Number((v as Record<string, unknown>)[k])))
-    const pose = (body: RAPIER.RigidBody, record: unknown) => {
-      if (!record || typeof record !== 'object') return
-      const v = record as Record<string, unknown>
-      if (validVector(v.position)) body.setTranslation(v.position, true)
-      if (validRotation(v.rotation)) body.setRotation(v.rotation, true)
-      if (validVector(v.linearVelocity)) body.setLinvel(v.linearVelocity, true)
-      if (validVector(v.angularVelocity)) body.setAngvel(v.angularVelocity, true)
+    const validPose = (raw: unknown) => {
+      if (!raw || typeof raw !== 'object') return null
+      const v = raw as Record<string, unknown>
+      if (!validVector(v.position) || !validRotation(v.rotation)) return null
+      const velocity = (candidate: unknown) => validVector(candidate) ? candidate : { x: 0, y: 0, z: 0 }
+      return {
+        position: new THREE.Vector3(v.position.x, v.position.y, v.position.z),
+        rotation: new THREE.Quaternion(v.rotation.x, v.rotation.y, v.rotation.z, v.rotation.w).normalize(),
+        linearVelocity: new THREE.Vector3(velocity(v.linearVelocity).x, velocity(v.linearVelocity).y, velocity(v.linearVelocity).z),
+        angularVelocity: new THREE.Vector3(velocity(v.angularVelocity).x, velocity(v.angularVelocity).y, velocity(v.angularVelocity).z),
+      }
+    }
+    const queuePose = (key: string, body: RAPIER.RigidBody, raw: unknown) => {
+      const pose = validPose(raw)
+      if (!pose) return
+      let target = this.networkBodyTargets.get(key)
+      if (!target || target.body !== body) {
+        // First state for a newly assembled body needs an exact snap to avoid
+        // rendering it at the pre-assembly origin for one frame.
+        body.setTranslation(pose.position, true)
+        body.setRotation(pose.rotation, true)
+        body.setLinvel(pose.linearVelocity, true)
+        body.setAngvel(pose.angularVelocity, true)
+        target = { body, ...pose }
+        this.networkBodyTargets.set(key, target)
+      } else {
+        target.position.copy(pose.position)
+        target.rotation.copy(pose.rotation)
+        target.linearVelocity.copy(pose.linearVelocity)
+        target.angularVelocity.copy(pose.angularVelocity)
+        body.setLinvel(pose.linearVelocity, true)
+        body.setAngvel(pose.angularVelocity, true)
+      }
     }
     const record = value as Record<string, unknown>
     const previousPowered = new Set(this.world.poweredLeds)
@@ -1622,8 +1658,8 @@ export class Mechanics {
       if (typeof machine.motorKey !== 'string') continue
       const c = this.contraptions.get(machine.motorKey)
       if (!c) continue
-      pose(c.rotorBody, machine.rotor)
-      pose(c.chassisBody, machine.chassis)
+      queuePose(`machine:${c.motorKey}:rotor`, c.rotorBody, machine.rotor)
+      queuePose(`machine:${c.motorKey}:chassis`, c.chassisBody, machine.chassis)
       if (Number.isFinite(Number(machine.angle))) c.angle = Number(machine.angle)
       if (Number.isFinite(Number(machine.speed))) c.speed = Number(machine.speed)
     }
@@ -1672,12 +1708,11 @@ export class Mechanics {
           }
         }
         this.scene.add(group)
-        visual = { group, keys, signature }
+        visual = { group, keys, signature, targetPosition: new THREE.Vector3(), targetRotation: new THREE.Quaternion() }
         this.networkFallingVisuals.set(id, visual)
       }
-      visual.group.position.set(item.position.x, item.position.y, item.position.z)
-      visual.group.quaternion.set(item.rotation.x, item.rotation.y, item.rotation.z, item.rotation.w)
-      visual.group.updateMatrixWorld(true)
+      visual.targetPosition.set(item.position.x, item.position.y, item.position.z)
+      visual.targetRotation.set(item.rotation.x, item.rotation.y, item.rotation.z, item.rotation.w).normalize()
     }
     for (const [id, visual] of this.networkFallingVisuals) {
       if (liveVisualIds.has(id)) continue
@@ -1706,11 +1741,30 @@ export class Mechanics {
         const key = item.keys.find((entry) => !!entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).originKey === 'string') as Record<string, unknown> | undefined
         if (!key) continue
         const body = byKey.get(String(key.originKey))
-        if (body) pose(body.body, item)
+        if (body) queuePose(`falling:${String(key.originKey)}`, body.body, item)
       }
     }
     this.mechDirty = true
     if (this.rigidPhysics.ready) this.syncRigidTransforms()
+  }
+
+  private updateNetworkPoseInterpolation(dt: number) {
+    const blend = 1 - Math.exp(-Math.max(0, Math.min(dt, 0.05)) * 18)
+    for (const target of this.networkBodyTargets.values()) {
+      const body = target.body
+      const currentPosition = body.translation()
+      const position = new THREE.Vector3(currentPosition.x, currentPosition.y, currentPosition.z).lerp(target.position, blend)
+      const currentRotation = body.rotation()
+      const rotation = new THREE.Quaternion(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w).slerp(target.rotation, blend)
+      body.setTranslation({ x: position.x, y: position.y, z: position.z }, true)
+      body.setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w }, true)
+    }
+    const visualBlend = 1 - Math.exp(-Math.max(0, Math.min(dt, 0.05)) * 18)
+    for (const visual of this.networkFallingVisuals.values()) {
+      visual.group.position.lerp(visual.targetPosition, visualBlend)
+      visual.group.quaternion.slerp(visual.targetRotation, visualBlend)
+      visual.group.updateMatrixWorld(true)
+    }
   }
 
   private syncRigidTransforms() {
