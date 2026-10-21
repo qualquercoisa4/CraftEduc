@@ -1488,6 +1488,28 @@ export class Mechanics {
     return null
   }
 
+  physicsDebugText() {
+    const lines = [
+      `Rapier ready: ${this.rigidPhysics.ready}`,
+      `powerDirty=${this.powerDirty} mechDirty=${this.mechDirty} wires=${this.wires.length}`,
+      `contraptions=${this.contraptions.size} fallingBodies=${this.fallingBodies.length}`,
+    ]
+    for (const [key, entry] of this.models) {
+      if (entry.type !== 'motor') continue
+      const c = this.contraptions.get(key)
+      const p = this.motorPower.get(key) ?? 0
+      const direction = this.motorDirection.get(key) ?? 0
+      lines.push(`motor ${key} status=${entry.status} power=${p.toFixed(2)} dir=${direction} world=${this.world.getBlock(...parseKey(key))}`)
+      if (c) {
+        const w = c.rotorBody.angvel()
+        const v = c.rotorBody.linvel()
+        lines.push(`  rotor vel=(${w.x.toFixed(2)},${w.y.toFixed(2)},${w.z.toFixed(2)}) lin=(${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}) sleep=${c.rotorBody.isSleeping()}`)
+        lines.push(`  motor axis=${c.facing} blocks=${c.blocks.length} chassis=${c.chassisBlocks.length}`)
+      }
+    }
+    return lines.join('\n')
+  }
+
   isMotorDriving(key: string) {
     return this.contraptions.has(key)
   }
