@@ -19,6 +19,7 @@ import {
   updateWireMesh,
 } from './models'
 import type { BlockState, World } from './world'
+import type { Player } from './player'
 
 const HALF_PI = Math.PI / 2
 const MAX_CONTRAPTION = 400
@@ -809,12 +810,33 @@ export class Mechanics {
    * ground-reaction locomotion; the assembly stays assembled and keeps its
    * relative block layout instead of being torn down and rebuilt every step.
    */
-  private translateContraption(c: Contraption, dx: number, dy: number, dz: number) {
+  private translateContraption(c: Contraption, dx: number, dy: number, dz: number, angle = c.angle) {
     const [mx, my, mz] = c.motorPos
     const nx = mx + dx, ny = my + dy, nz = mz + dz
     if (ny < GROUND_LEVEL || ny >= 63) return false
     const targetKey = posKey(nx, ny, nz)
     if (this.world.getBlock(nx, ny, nz) !== B.AIR && targetKey !== c.motorKey) return false
+    // Validate every rotated block at the destination before moving anything.
+    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
+    const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
+    const axes = [new THREE.Vector3(1,0,0).applyQuaternion(q), new THREE.Vector3(0,1,0).applyQuaternion(q), new THREE.Vector3(0,0,1).applyQuaternion(q)]
+    const ext = new THREE.Vector3(
+      0.5 * axes.reduce((n,a)=>n+Math.abs(a.x),0),
+      0.5 * axes.reduce((n,a)=>n+Math.abs(a.y),0),
+      0.5 * axes.reduce((n,a)=>n+Math.abs(a.z),0),
+    )
+    for (const b of c.blocks) {
+      const center = new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot).add(new THREE.Vector3(dx,dy,dz))
+      const minX=Math.floor(center.x-ext.x+1e-4), maxX=Math.floor(center.x+ext.x-1e-4)
+      const minY=Math.floor(center.y-ext.y+1e-4), maxY=Math.floor(center.y+ext.y-1e-4)
+      const minZ=Math.floor(center.z-ext.z+1e-4), maxZ=Math.floor(center.z+ext.z-1e-4)
+      if (minY < GROUND_LEVEL || maxY >= 64) return false
+      for(let y=minY;y<=maxY;y++) for(let z=minZ;z<=maxZ;z++) for(let x=minX;x<=maxX;x++) {
+        // The pivot motor belongs to this same moving assembly.
+        if (posKey(x,y,z) === c.motorKey) continue
+        if (this.world.getBlock(x,y,z)!==B.AIR) return false
+      }
+    }
     const state = this.world.getState(mx, my, mz)
     this.suppress = true
     this.world.setBlock(mx, my, mz, B.AIR)
@@ -975,8 +997,29 @@ export class Mechanics {
         let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
         if (nextAngle < 0) nextAngle += Math.PI * 2
         if (model?.type === 'motor' && !this.canRotateContraption(c, nextAngle)) {
-          model.status = 'stalled'
-          c.speed = 0
+          // If the arm is trying to penetrate the floor, the ground reaction
+          // lifts the complete machine. Never allow rotor blocks to be clipped
+          // away by the floor's static voxel layer.
+          const qNext = new THREE.Quaternion().setFromAxisAngle(c.axis, nextAngle)
+          const pivot = new THREE.Vector3(c.motorPos[0]+0.5,c.motorPos[1]+0.5,c.motorPos[2]+0.5)
+          let floorContact = false
+          for (const b of c.blocks) {
+            const center = new THREE.Vector3(...b.rel).applyQuaternion(qNext).add(pivot)
+            const ex = new THREE.Vector3(1,0,0).applyQuaternion(qNext)
+            const ey = new THREE.Vector3(0,1,0).applyQuaternion(qNext)
+            const ez = new THREE.Vector3(0,0,1).applyQuaternion(qNext)
+            const halfY=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
+            if (center.y-halfY < GROUND_LEVEL-1e-4) { floorContact=true; break }
+          }
+          if (floorContact && this.translateContraption(c,0,1,0,nextAngle)) {
+            c.speed = nextSpeed
+            c.angle = nextAngle
+            const movedModel=this.models.get(c.motorKey)
+            if (movedModel?.type==='motor') movedModel.status='driving'
+          } else {
+            model.status = 'stalled'
+            c.speed = 0
+          }
         } else {
           c.speed = nextSpeed
           c.angle = nextAngle
@@ -1038,6 +1081,53 @@ export class Mechanics {
         }
         const touched = new Set(c.wireEnds.map((w) => w.wire))
         for (const w of touched) updateWireMesh(w.mesh, w.pa, w.pb)
+      }
+    }
+  }
+
+  /**
+   * Resolve dynamic rotor-vs-player contacts using each rotating voxel's
+   * transformed AABB. Pushes the player out and transfers tangential motion,
+   * including upward motion when the player stands on a moving arm.
+   */
+  resolvePlayerCollision(player: Player, dt: number) {
+    const p = player.pos
+    const halfW = 0.3
+    const h = player.height
+    for (const c of this.contraptions.values()) {
+      const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
+      const pivot = new THREE.Vector3(c.motorPos[0]+0.5,c.motorPos[1]+0.5,c.motorPos[2]+0.5)
+      const ex=new THREE.Vector3(1,0,0).applyQuaternion(q)
+      const ey=new THREE.Vector3(0,1,0).applyQuaternion(q)
+      const ez=new THREE.Vector3(0,0,1).applyQuaternion(q)
+      const hx=0.5*(Math.abs(ex.x)+Math.abs(ey.x)+Math.abs(ez.x))
+      const hy=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
+      const hz=0.5*(Math.abs(ex.z)+Math.abs(ey.z)+Math.abs(ez.z))
+      for (const b of c.blocks) {
+        const center=new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot)
+        const minX=center.x-hx,maxX=center.x+hx,minY=center.y-hy,maxY=center.y+hy,minZ=center.z-hz,maxZ=center.z+hz
+        const px0=p.x-halfW,px1=p.x+halfW,py0=p.y,py1=p.y+h,pz0=p.z-halfW,pz1=p.z+halfW
+        if (!(px0<maxX && px1>minX && py0<maxY && py1>minY && pz0<maxZ && pz1>minZ)) continue
+        const penL=px1-minX, penR=maxX-px0, penD=py1-minY, penU=maxY-py0, penB=pz1-minZ, penF=maxZ-pz0
+        const minPen=Math.min(penL,penR,penD,penU,penB,penF)
+        if (minPen===penU) {
+          p.y += penU + 0.002
+          player.vel.y=Math.max(player.vel.y, Math.max(0,c.speed * 0.15))
+          player.onGround=true
+        } else if (minPen===penD) {
+          p.y -= penD + 0.002
+          player.vel.y=Math.min(player.vel.y,0)
+        } else if (minPen===penL) { p.x += penL+0.002; player.vel.x=Math.max(player.vel.x, c.speed*0.2) }
+        else if (minPen===penR) { p.x -= penR+0.002; player.vel.x=Math.min(player.vel.x, -c.speed*0.2) }
+        else if (minPen===penB) { p.z += penB+0.002; player.vel.z=Math.max(player.vel.z, c.speed*0.2) }
+        else { p.z -= penF+0.002; player.vel.z=Math.min(player.vel.z, -c.speed*0.2) }
+        // Add a small tangential impulse so a side-sweeping arm pushes rather
+        // than merely teleporting the player to the nearest non-overlap point.
+        const rel=center.clone().sub(pivot)
+        const tangential=new THREE.Vector3().crossVectors(c.axis,rel).multiplyScalar(c.speed)
+        player.vel.x += tangential.x * Math.min(1,dt*3)
+        player.vel.y += tangential.y * Math.min(1,dt*3)
+        player.vel.z += tangential.z * Math.min(1,dt*3)
       }
     }
   }

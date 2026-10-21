@@ -798,6 +798,7 @@ export class Engine {
         if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
           gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
         this.mech.update(dt)
+        if (playing) this.mech.resolvePlayerCollision(this.player, dt)
       }
       this.updateCamera(dt)
       centerX = this.player.pos.x
