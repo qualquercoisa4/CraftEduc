@@ -4,6 +4,7 @@ import { B, DEFAULT_HOTBAR } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
 import { Mechanics } from '../lib/game/mechanics'
 import { posKey } from '../lib/game/constants'
+import { createWireMesh } from '../lib/game/models'
 import type { World } from '../lib/game/world'
 
 async function main() {
@@ -61,12 +62,14 @@ async function main() {
   // an immovable world collider. A moving wooden arm must wake it into Rapier
   // when the arm is travelling into it, then push the now-dynamic aluminum.
   const blockMap = new Map<string, number>()
-  const stateMap = new Map<string, { glue?: number; facing?: number }>()
+  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number }>()
   const chunks = new Map([['0,0', { cx: 0, cz: 0, maxY: 8 }]])
   let mechanicsRef: Mechanics | null = null
   const mockGameWorld = {
     chunks,
     states: stateMap,
+    poweredLeds: new Set<string>(),
+    markBlockDirty() {},
     getBlock(x: number, y: number, z: number) { return blockMap.get(posKey(x, y, z)) ?? B.AIR },
     getState(x: number, y: number, z: number) { return stateMap.get(posKey(x, y, z)) },
     ensureState(x: number, y: number, z: number) {
@@ -75,7 +78,7 @@ async function main() {
       if (!state) { state = {}; stateMap.set(key, state) }
       return state
     },
-    setBlock(x: number, y: number, z: number, id: number, state?: { glue?: number; facing?: number }) {
+    setBlock(x: number, y: number, z: number, id: number, state?: { glue?: number; facing?: number; batteries?: number }) {
       const key = posKey(x, y, z)
       const oldId = blockMap.get(key) ?? B.AIR
       const oldState = stateMap.get(key)
@@ -130,6 +133,71 @@ async function main() {
   mechanicsPhysics.removeRigidBody(movingArm)
   for (const body of dynamicBodies) mechanicsPhysics.removeRigidBody(body.body)
   mechanics.contraptions.clear()
+
+  // Recreate the reported failure with an actual motor + chassis + rotor:
+  // battery compartment and aluminum chassis are glued to the motor's fixed
+  // side, while three wood blocks form a rotating arm on its output face.
+  const baseKey = posKey(2, 5, 2)
+  const batteryKey = posKey(2, 6, 2)
+  const noseKey = posKey(3, 5, 2)
+  const motorKey = posKey(4, 5, 2)
+  mockGameWorld.setBlock(2, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 2) })
+  mockGameWorld.setBlock(2, 6, 2, B.BATTERY_BOX, { glue: 1 << 3, batteries: 3 })
+  mockGameWorld.setBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
+  mockGameWorld.setBlock(4, 5, 2, B.MOTOR, { facing: 2, glue: 1 << 1 })
+  mockGameWorld.setBlock(4, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 3) })
+  mockGameWorld.setBlock(5, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 1) })
+  mockGameWorld.setBlock(6, 6, 2, B.WOOD, { glue: 1 << 1 })
+
+  const makeTestWire = (id: number, a: string, ta: string, b: string, tb: string) => {
+    const pa = new THREE.Vector3(2.5, 6.5, 2.5)
+    const pb = new THREE.Vector3(4.5, 5.5, 2.5)
+    return { id, a, ta, b, tb, pa, pb, mesh: createWireMesh(pa, pb) }
+  }
+  mechanics.wires = [
+    makeTestWire(101, batteryKey, '+', baseKey, 'face:0'),
+    makeTestWire(102, baseKey, 'face:1', motorKey, 'A'),
+    makeTestWire(103, batteryKey, '-', motorKey, 'B'),
+  ] as never
+
+  // Simulate the real powered assembly transition. tryAssemble removes all
+  // moving blocks from World, just as it does during gameplay.
+  mechanics.motorPower.set(motorKey, 3)
+  mechanics.motorDirection.set(motorKey, 1)
+  const assemble = (mechanics as unknown as { tryAssemble: (key: string) => string }).tryAssemble(motorKey)
+  assert.equal(assemble, 'driving', 'the glued rotor and chassis must assemble')
+  const machine = mechanics.contraptions.get(motorKey)
+  assert.ok(machine, 'the motor mechanism must stay registered after assembly')
+  assert.equal(mockGameWorld.getBlock(2, 6, 2), B.AIR,
+    'the battery compartment should be represented by the moving chassis while assembled')
+  assert.ok(machine.chassisBlocks.some((block) => block.id === B.BATTERY_BOX && block.state?.batteries === 3),
+    'the assembled chassis must preserve battery count and battery-box identity')
+
+  // This is the regression for the actual bug: rebuilding the circuit graph
+  // after assembly used to see the motor but not the battery/conductive chassis,
+  // dropping motor power to zero and triggering repeated disassembly/reassembly.
+  const recomputePower = (mechanics as unknown as { recomputePower: () => void }).recomputePower.bind(mechanics)
+  for (let pass = 0; pass < 12; pass++) {
+    recomputePower()
+    const delivered = mechanics.motorPower.get(motorKey) ?? 0
+    assert.ok(delivered > 2.7 && delivered <= 3,
+      `motor power must persist after assembly (pass ${pass + 1}, delivered ${delivered.toFixed(3)})`)
+  }
+  assert.equal(mechanics.contraptions.has(motorKey), true,
+    'a powered assembly must not leave the active-contraption state during circuit refresh')
+
+  for (const wire of mechanics.wires) {
+    mechanicsPhysics.removeRigidBody(undefined)
+    wire.mesh.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (mesh.geometry) mesh.geometry.dispose()
+    })
+  }
+  for (const c of mechanics.contraptions.values()) {
+    mechanicsPhysics.removeRigidBody(c.rotorBody)
+    mechanicsPhysics.removeRigidBody(c.chassisBody)
+  }
+  mechanics.contraptions.clear()
   scene.clear()
   mechanicsPhysics.dispose()
 
@@ -137,6 +205,7 @@ async function main() {
   console.log(`PASS: mass order aluminum=${blockMass(B.ALUMINUM)}, wood=${blockMass(B.WOOD)}, iron=${blockMass(B.IRON)}`)
   console.log(`PASS: wooden arm collision lifted aluminum ${aluminumLift.toFixed(3)} m vs wood ${woodLift.toFixed(3)} m in 0.2 s`)
   console.log('PASS: moving wood arm wakes and pushes a previously static aluminum voxel')
+  console.log('PASS: 3-cell wood arm remains powered after battery/aluminum chassis leaves the static grid')
 }
 
 main().catch((error) => {
