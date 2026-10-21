@@ -1423,7 +1423,8 @@ export class Mechanics {
     const horizontalAxle = Math.hypot(axle.x, axle.z)
     if (horizontalAxle < 0.65) return
 
-    const drive = new THREE.Vector3(0, 1, 0).cross(axle)
+    // Ground traction opposes the wheel's bottom-surface motion.
+    const drive = axle.clone().cross(new THREE.Vector3(0, 1, 0))
     drive.y = 0
     if (drive.lengthSq() < 1e-8) return
     drive.normalize().multiplyScalar(direction < 0 ? -1 : 1)
