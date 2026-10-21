@@ -7,7 +7,8 @@ import type { SkinConfig } from './multiplayer-types'
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://emitzhlqcvryfxiufqtb.supabase.co'
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_N6f5E5fhwm52fE8dTMEO5Q_bw-m4o5T'
 const ENDPOINT = `${SUPABASE_URL}/functions/v1/crafteduc-multiplayer`
-const PLAYER_KEY_STORAGE = 'crafteduc-multiplayer-player-v1'
+const PLAYER_KEY_STORAGE = 'crafteduc-multiplayer-player-v2'
+let fallbackPlayerKey: string | null = null
 
 export interface MultiplayerRules {
   playersCanOnlyDestroyOwnBlocks: boolean
@@ -85,13 +86,22 @@ export function saveSkin(skin: SkinConfig) {
   if (typeof window !== 'undefined') localStorage.setItem('crafteduc-multiplayer-skin-v1', JSON.stringify(skin))
 }
 export function getPlayerKey() {
-  if (typeof window === 'undefined') return randomKey(24)
-  let key = localStorage.getItem(PLAYER_KEY_STORAGE)
-  if (!key || !/^[a-zA-Z0-9_-]{16,80}$/.test(key)) {
-    key = randomKey(32)
-    localStorage.setItem(PLAYER_KEY_STORAGE, key)
+  if (typeof window === 'undefined') return randomKey(32)
+  try {
+    // sessionStorage isolates separate game tabs; localStorage made two tabs
+    // appear as the same player and caused clients to ignore each other's edits.
+    let key = window.sessionStorage.getItem(PLAYER_KEY_STORAGE)
+    if (!key || !/^[a-zA-Z0-9_-]{16,80}$/.test(key)) {
+      key = randomKey(32)
+      window.sessionStorage.setItem(PLAYER_KEY_STORAGE, key)
+    }
+    return key
+  } catch {
+    // Some privacy modes disable storage. Keep a stable identity for this tab
+    // for the lifetime of the loaded application.
+    fallbackPlayerKey ??= randomKey(32)
+    return fallbackPlayerKey
   }
-  return key
 }
 function randomKey(length: number) {
   const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
