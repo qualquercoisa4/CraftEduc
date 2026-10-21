@@ -4,7 +4,6 @@ import { B, DEFAULT_HOTBAR } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
 import { Mechanics } from '../lib/game/mechanics'
 import { posKey } from '../lib/game/constants'
-import { createWireMesh } from '../lib/game/models'
 import type { World } from '../lib/game/world'
 
 async function main() {
@@ -141,18 +140,37 @@ async function main() {
   const batteryKey = posKey(2, 6, 2)
   const noseKey = posKey(3, 5, 2)
   const motorKey = posKey(4, 5, 2)
-  mockGameWorld.setBlock(2, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 2) })
-  mockGameWorld.setBlock(2, 6, 2, B.BATTERY_BOX, { glue: 1 << 3, batteries: 3 })
-  mockGameWorld.setBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
-  mockGameWorld.setBlock(4, 5, 2, B.MOTOR, { facing: 2, glue: 1 << 1 })
-  mockGameWorld.setBlock(4, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 3) })
-  mockGameWorld.setBlock(5, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 1) })
-  mockGameWorld.setBlock(6, 6, 2, B.WOOD, { glue: 1 << 1 })
+  const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number }) => {
+    const key = posKey(x, y, z)
+    blockMap.set(key, id)
+    stateMap.set(key, { ...state })
+  }
+  putTestBlock(2, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 2) })
+  putTestBlock(2, 6, 2, B.BATTERY_BOX, { glue: 1 << 3, batteries: 3 })
+  putTestBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
+  putTestBlock(4, 5, 2, B.MOTOR, { facing: 2, glue: 1 << 1 })
+  putTestBlock(4, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 3) })
+  putTestBlock(5, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 1) })
+  putTestBlock(6, 6, 2, B.WOOD, { glue: 1 << 1 })
+
+  // The model visuals are irrelevant to this server-side regression; use a
+  // minimal motor model so the production assembly code still builds its real
+  // Rapier bodies without needing browser canvas textures.
+  const motorGroup = new THREE.Group()
+  motorGroup.position.set(4.5, 5.5, 2.5)
+  const motorShaft = new THREE.Group()
+  motorGroup.add(motorShaft)
+  mechanics.models.set(motorKey, {
+    type: 'motor',
+    model: { group: motorGroup, shaft: motorShaft },
+    spin: 0,
+    status: 'idle',
+  } as never)
 
   const makeTestWire = (id: number, a: string, ta: string, b: string, tb: string) => {
     const pa = new THREE.Vector3(2.5, 6.5, 2.5)
     const pb = new THREE.Vector3(4.5, 5.5, 2.5)
-    return { id, a, ta, b, tb, pa, pb, mesh: createWireMesh(pa, pb) }
+    return { id, a, ta, b, tb, pa, pb, mesh: new THREE.Group() }
   }
   mechanics.wires = [
     makeTestWire(101, batteryKey, '+', baseKey, 'face:0'),
