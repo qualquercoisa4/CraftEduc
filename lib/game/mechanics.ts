@@ -133,6 +133,7 @@ export class Mechanics {
   private networkFallingVisuals = new Map<string, {
     group: THREE.Group; keys: string[]; signature: string
     targetPosition: THREE.Vector3; targetRotation: THREE.Quaternion
+    linearVelocity: THREE.Vector3; angularVelocity: THREE.Vector3; receivedAt: number
   }>()
   private networkBodyTargets = new Map<string, {
     body: RAPIER.RigidBody
@@ -140,6 +141,7 @@ export class Mechanics {
     rotation: THREE.Quaternion
     linearVelocity: THREE.Vector3
     angularVelocity: THREE.Vector3
+    receivedAt: number
   }>()
 
   constructor(
@@ -1551,8 +1553,13 @@ export class Mechanics {
       a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
       pa: this.vectorSnapshot(wire.pa), pb: this.vectorSnapshot(wire.pb),
     }))
-    const motorVisuals = [...this.models.entries()].flatMap(([key, entry]) => entry.type === 'motor'
-      ? [{ key, spin: entry.spin, status: entry.status }] : [])
+    const motorVisuals = [...this.models.entries()].flatMap(([key, entry]) => {
+      if (entry.type !== 'motor') return []
+      // For an assembled rotor, the visible shaft angle belongs to the
+      // authoritative rigid body; entry.spin is used only before assembly.
+      const machine = this.contraptions.get(key)
+      return [{ key, spin: machine?.angle ?? entry.spin, status: entry.status }]
+    })
     const wheelVisuals = [...this.models.entries()].flatMap(([key, entry]) => entry.type === 'wheel'
       ? [{ key, spin: entry.spin }] : [])
     const mountedWheelVisuals = [...this.mountedWheels.entries()].map(([key, entry]) => ({ key, spin: entry.spin }))
@@ -1592,13 +1599,14 @@ export class Mechanics {
         body.setRotation(pose.rotation, true)
         body.setLinvel(pose.linearVelocity, true)
         body.setAngvel(pose.angularVelocity, true)
-        target = { body, ...pose }
+        target = { body, ...pose, receivedAt: performance.now() }
         this.networkBodyTargets.set(key, target)
       } else {
         target.position.copy(pose.position)
         target.rotation.copy(pose.rotation)
         target.linearVelocity.copy(pose.linearVelocity)
         target.angularVelocity.copy(pose.angularVelocity)
+        target.receivedAt = performance.now()
         body.setLinvel(pose.linearVelocity, true)
         body.setAngvel(pose.angularVelocity, true)
       }
@@ -1721,11 +1729,23 @@ export class Mechanics {
           }
         }
         this.scene.add(group)
-        visual = { group, keys, signature, targetPosition: new THREE.Vector3(), targetRotation: new THREE.Quaternion() }
+        visual = {
+          group, keys, signature,
+          targetPosition: new THREE.Vector3(),
+          targetRotation: new THREE.Quaternion(),
+          linearVelocity: new THREE.Vector3(),
+          angularVelocity: new THREE.Vector3(),
+          receivedAt: performance.now(),
+        }
         this.networkFallingVisuals.set(id, visual)
       }
       visual.targetPosition.set(item.position.x, item.position.y, item.position.z)
       visual.targetRotation.set(item.rotation.x, item.rotation.y, item.rotation.z, item.rotation.w).normalize()
+      if (validVector(item.linearVelocity)) visual.linearVelocity.set(item.linearVelocity.x, item.linearVelocity.y, item.linearVelocity.z)
+      else visual.linearVelocity.set(0, 0, 0)
+      if (validVector(item.angularVelocity)) visual.angularVelocity.set(item.angularVelocity.x, item.angularVelocity.y, item.angularVelocity.z)
+      else visual.angularVelocity.set(0, 0, 0)
+      visual.receivedAt = performance.now()
     }
     for (const [id, visual] of this.networkFallingVisuals) {
       if (liveVisualIds.has(id)) continue
@@ -1783,20 +1803,47 @@ export class Mechanics {
   }
 
   private updateNetworkPoseInterpolation(dt: number) {
-    const blend = 1 - Math.exp(-Math.max(0, Math.min(dt, 0.05)) * 18)
+    const blend = 1 - Math.exp(-Math.max(0, Math.min(dt, 0.05)) * 22)
+    const now = performance.now()
+    // Snapshots are sent over HTTP polling, so a moving body would otherwise
+    // stop between snapshots. Extrapolate the authoritative linear/angular
+    // velocity briefly, then blend toward that predicted pose. The cap prevents
+    // a disconnected or delayed client from letting machines drift indefinitely.
+    const extrapolatedPose = (
+      position: THREE.Vector3,
+      rotation: THREE.Quaternion,
+      linearVelocity: THREE.Vector3,
+      angularVelocity: THREE.Vector3,
+      receivedAt: number,
+    ) => {
+      const age = Math.min(0.45, Math.max(0, (now - receivedAt) / 1000))
+      const predictedPosition = position.clone().addScaledVector(linearVelocity, age)
+      const predictedRotation = rotation.clone()
+      const angularSpeed = angularVelocity.length()
+      if (angularSpeed > 1e-5 && age > 0) {
+        const delta = new THREE.Quaternion().setFromAxisAngle(
+          angularVelocity.clone().multiplyScalar(1 / angularSpeed),
+          angularSpeed * age,
+        )
+        // Rapier reports world-space angular velocity, so its delta premultiplies.
+        predictedRotation.premultiply(delta).normalize()
+      }
+      return { position: predictedPosition, rotation: predictedRotation }
+    }
     for (const target of this.networkBodyTargets.values()) {
       const body = target.body
+      const predicted = extrapolatedPose(target.position, target.rotation, target.linearVelocity, target.angularVelocity, target.receivedAt)
       const currentPosition = body.translation()
-      const position = new THREE.Vector3(currentPosition.x, currentPosition.y, currentPosition.z).lerp(target.position, blend)
+      const position = new THREE.Vector3(currentPosition.x, currentPosition.y, currentPosition.z).lerp(predicted.position, blend)
       const currentRotation = body.rotation()
-      const rotation = new THREE.Quaternion(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w).slerp(target.rotation, blend)
+      const rotation = new THREE.Quaternion(currentRotation.x, currentRotation.y, currentRotation.z, currentRotation.w).slerp(predicted.rotation, blend)
       body.setTranslation({ x: position.x, y: position.y, z: position.z }, true)
       body.setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w }, true)
     }
-    const visualBlend = 1 - Math.exp(-Math.max(0, Math.min(dt, 0.05)) * 18)
     for (const visual of this.networkFallingVisuals.values()) {
-      visual.group.position.lerp(visual.targetPosition, visualBlend)
-      visual.group.quaternion.slerp(visual.targetRotation, visualBlend)
+      const predicted = extrapolatedPose(visual.targetPosition, visual.targetRotation, visual.linearVelocity, visual.angularVelocity, visual.receivedAt)
+      visual.group.position.lerp(predicted.position, blend)
+      visual.group.quaternion.slerp(predicted.rotation, blend)
       visual.group.updateMatrixWorld(true)
     }
   }
