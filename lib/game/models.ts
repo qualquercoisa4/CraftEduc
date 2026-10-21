@@ -19,6 +19,9 @@ function createMaterials() {
     wire: new THREE.MeshLambertMaterial({ color: 0xf2c230 }),
     solder: new THREE.MeshLambertMaterial({ color: 0xb8bcc2 }),
     shaftMark: new THREE.MeshLambertMaterial({ color: 0x2f7dff }),
+    tire: new THREE.MeshLambertMaterial({ color: 0x171719 }),
+    yellow: new THREE.MeshLambertMaterial({ color: 0xffc400 }),
+    tread: new THREE.MeshLambertMaterial({ color: 0x29292b }),
   }
 }
 
@@ -82,6 +85,47 @@ export function createMotorModel(facing: number): MotorModel {
 
 export function setMotorFacing(model: MotorModel, facing: number) {
   model.group.quaternion.copy(facingQuaternion(facing))
+}
+
+
+export interface WheelModel { group: THREE.Group; rim: THREE.Group }
+
+/** Arduino robot wheel with a chunky rubber tire, five-spoke yellow rim and tread lugs. */
+export function createArduinoWheelModel(facing = 0): WheelModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  const rim = new THREE.Group()
+  group.add(rim)
+  const tire = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.11, 12, 32), m.tire)
+  rim.add(tire)
+  const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.265, 0.265, 0.09, 32), m.yellow)
+  disk.rotation.x = Math.PI / 2
+  rim.add(disk)
+  for (let i = 0; i < 5; i++) {
+    const a = i * Math.PI * 2 / 5
+    const spoke = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.30, 0.07), m.yellow)
+    spoke.position.set(Math.sin(a) * 0.15, Math.cos(a) * 0.15, 0)
+    spoke.rotation.z = -a
+    rim.add(spoke)
+  }
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.105, 0.105, 0.14, 20), m.yellow)
+  hub.rotation.x = Math.PI / 2
+  rim.add(hub)
+  const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.15, 16), m.steel)
+  cap.rotation.x = Math.PI / 2
+  rim.add(cap)
+  for (let i = 0; i < 32; i++) {
+    const a = i * Math.PI * 2 / 32
+    for (const side of [-1, 1]) {
+      const lug = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.055, 0.045), m.tread)
+      lug.position.set(Math.sin(a) * 0.445, Math.cos(a) * 0.445, side * 0.06)
+      lug.rotation.z = -a
+      rim.add(lug)
+    }
+  }
+  const d = DIRS[facing] ?? DIRS[0]
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(d[0], d[1], d[2]))
+  return { group, rim }
 }
 
 export interface BatteryBoxModel {
