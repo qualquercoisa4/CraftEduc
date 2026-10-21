@@ -96,6 +96,7 @@ export class Mechanics {
   private readonly gravity = 18
   private physicsScanCooldown = 0
   private powerCooldown = 0
+  private tractionVelocity = new Map<string, THREE.Vector3>()
 
   constructor(
     private world: World,
@@ -848,6 +849,47 @@ export class Mechanics {
       if (mounted) {
         mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
         mounted.model.rim.rotation.z = mounted.spin
+        // Wheel torque becomes chassis traction when the motor is glued into
+        // a supported assembly. Friction and load limit acceleration.
+        const contraption = this.contraptions.get(key)
+        if (power > 0 && contraption && contraption.blocks.length) {
+          const grounded = contraption.blocks.some((b) => {
+            const wx = Math.round(b.rel[0] + contraption.motorPos[0])
+            const wy = Math.round(b.rel[1] + contraption.motorPos[1])
+            const wz = Math.round(b.rel[2] + contraption.motorPos[2])
+            return this.world.getBlock(wx, wy - 1, wz) !== B.AIR
+          })
+          if (grounded) {
+            const mass = Math.max(1, contraption.blocks.length)
+            const facing = DIRS[contraption.facing] ?? DIRS[2]
+            const traction = (this.motorDirection.get(key) ?? 1) * power * 3.2 / Math.sqrt(mass)
+            const dx = facing[0] * traction * dt
+            const dz = facing[2] * traction * dt
+            const candidates = contraption.blocks.map((b) => ({
+              b,
+              x: Math.round(b.rel[0] + contraption.motorPos[0] + dx),
+              y: Math.round(b.rel[1] + contraption.motorPos[1]),
+              z: Math.round(b.rel[2] + contraption.motorPos[2] + dz),
+            }))
+            const canMove = candidates.every(({ x, y, z }) =>
+              this.world.getBlock(x, y, z) === B.AIR ||
+              contraption.byKey.has(posKey(x, y, z)))
+            if (canMove && (Math.abs(dx) + Math.abs(dz) > 1e-4)) {
+              const stepX = Math.abs(dx) > 0.08 ? Math.sign(dx) : 0
+              const stepZ = Math.abs(dz) > 0.08 ? Math.sign(dz) : 0
+              if (stepX || stepZ) {
+                this.disassemble(contraption, Math.round(contraption.angle / HALF_PI) % 4)
+                const moving = candidates.map(({ b, x, y, z }) => ({ b, x: x + stepX, y, z: z + stepZ }))
+                this.suppress = true
+                for (const { b } of moving) this.world.setBlock(...parseKey(b.origKey), B.AIR)
+                for (const { b, x, y, z } of moving) this.world.setBlock(x, y, z, b.id, b.state)
+                this.suppress = false
+                this.physicsDirty = true
+                this.mechDirty = true
+              }
+            }
+          }
+        }
       }
     }
 
