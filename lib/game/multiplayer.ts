@@ -408,6 +408,14 @@ export class MultiplayerClient {
     if (this.stopped || !this.isHost || !this.engine || this.savingSimulation) return
     this.savingSimulation = true
     try {
+      // Moving machines can drag wire endpoints to new voxel keys. Persist those
+      // changes too, so players who join later receive the same circuit topology.
+      for (const wire of this.engine.mech.wires) {
+        const signature = this.wireSignature(wire)
+        if (this.localWireSignature.get(wire.id) === signature) continue
+        this.localWireSignature.set(wire.id, signature)
+        await this.publishWire(wire)
+      }
       const sharedState = this.engine.mech.exportNetworkSnapshot()
       sharedState.worldTime = Date.now()
       await this.request('save_simulation', { sharedState })
