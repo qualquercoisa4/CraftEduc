@@ -353,6 +353,44 @@ export class Engine {
     if (document.pointerLockElement) document.exitPointerLock()
   }
 
+  exportNetworkWorld(playerKey: string): { blocks: BlockEdit[]; wires: NetworkWire[] } {
+    const blocks = new Map<string, BlockEdit>()
+    for (const chunk of this.world.chunks.values()) {
+      if (!chunk.modified) continue
+      const baseX = chunk.cx * CHUNK_SIZE
+      const baseZ = chunk.cz * CHUNK_SIZE
+      for (let y = GROUND_LEVEL; y < WORLD_HEIGHT; y++) {
+        const row = y * CHUNK_SIZE * CHUNK_SIZE
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const rowZ = row + z * CHUNK_SIZE
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            const block = chunk.data[rowZ + x]
+            if (block === B.AIR) continue
+            const wx = baseX + x
+            const wz = baseZ + z
+            const state = this.world.getState(wx, y, wz)
+            blocks.set(posKey(wx, y, wz), {
+              x: wx, y, z: wz, block, state: state ? { ...state } : undefined,
+            })
+          }
+        }
+      }
+    }
+    for (const block of this.mech.exportNetworkBlocks()) {
+      blocks.set(posKey(block.x, block.y, block.z), { ...block })
+    }
+    const wires = this.mech.wires.map((wire) => {
+      if (!wire.networkId) wire.networkId = `wire_${playerKey.slice(0, 12)}_${wire.id}`
+      return {
+        id: wire.networkId,
+        a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
+        pa: { x: wire.pa.x, y: wire.pa.y, z: wire.pa.z },
+        pb: { x: wire.pb.x, y: wire.pb.y, z: wire.pb.z },
+      }
+    })
+    return { blocks: [...blocks.values()], wires }
+  }
+
   setMultiplayerBridge(bridge: MultiplayerBridge | null) {
     this.multiplayerBridge = bridge
     this.mech.setNetworkBlockPublisher(
