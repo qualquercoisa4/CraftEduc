@@ -56,7 +56,8 @@ interface MultiplayerBridge {
   canFly: () => boolean
   canBreakBlock: (x: number, y: number, z: number, actorKey?: string) => boolean
   movingAction: (intent: Omit<MovingActionIntent, 'playerKey' | 'playerName'>) => void
-  blockChanged: (x: number, y: number, z: number, block: number, state?: import('./world').BlockState) => void
+  blockChanged: (x: number, y: number, z: number, block: number, state?: import('./world').BlockState, ownerKey?: string | null) => void
+  ownerForBlock: (x: number, y: number, z: number) => string | null
   wireCreated: (wire: Wire) => void
   wiresRemovedAt: (key: string) => void
 }
@@ -354,7 +355,10 @@ export class Engine {
 
   setMultiplayerBridge(bridge: MultiplayerBridge | null) {
     this.multiplayerBridge = bridge
-    this.mech.setNetworkBlockPublisher(bridge ? (x, y, z, block, state) => bridge.blockChanged(x, y, z, block, state) : null)
+    this.mech.setNetworkBlockPublisher(
+      bridge ? (x, y, z, block, state, ownerKey) => bridge.blockChanged(x, y, z, block, state, ownerKey) : null,
+      bridge ? (x, y, z) => bridge.ownerForBlock(x, y, z) : null,
+    )
   }
 
   setMultiplayerRules(rules: MultiplayerRules, isHost: boolean) {
