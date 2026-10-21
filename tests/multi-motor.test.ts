@@ -25,13 +25,12 @@ async function main() {
   place(11, 5, 10, B.WOOD, { glue: (1 << 1) | (1 << 2) })
   place(11, 6, 10, B.WOOD, { glue: (1 << 3) | (1 << 2) })
   place(11, 7, 10, B.WOOD, { glue: 1 << 3 })
-  place(10, 6, 11, B.WOOD, { glue: (1 << 5) | (1 << 0) })
-  place(11, 6, 11, B.WOOD, { glue: (1 << 1) | (1 << 0) })
-  place(12, 6, 11, B.WOOD, { glue: 1 << 1 })
+  place(10, 6, 11, B.WOOD, { glue: (1 << 5) | (1 << 2) })
+  place(10, 7, 11, B.WOOD, { glue: 1 << 3 })
 
-  // The auxiliary arm sweeps upward through this supported test target.
-  place(10, 7, 11, B.IRON)
-  place(10, 8, 11, B.ALUMINUM)
+  // The auxiliary arm sweeps left through a supported target as it rotates around +Z.
+  place(9, 5, 11, B.IRON)
+  place(9, 6, 11, B.ALUMINUM)
 
   const mechanics = new Mechanics(world, scene, material, new THREE.MeshBasicMaterial())
   const internals = mechanics as unknown as {
@@ -86,7 +85,7 @@ async function main() {
   internals.physicsScanCooldown = 30
 
   const extra = machine.extraRotors[0]
-  const targetKey = posKey(10, 8, 11)
+  const targetKey = posKey(9, 6, 11)
   let sawTargetAwake = false
   let maxTargetDisplacement = 0
   for (let i = 0; i < 120; i++) {
@@ -95,7 +94,7 @@ async function main() {
     if (dynamicTarget) {
       sawTargetAwake = true
       const p = dynamicTarget.body.translation()
-      maxTargetDisplacement = Math.max(maxTargetDisplacement, Math.hypot(p.x - 10.5, p.y - 8.5, p.z - 11.5))
+      maxTargetDisplacement = Math.max(maxTargetDisplacement, Math.hypot(p.x - 9.5, p.y - 6.5, p.z - 11.5))
     }
   }
 
