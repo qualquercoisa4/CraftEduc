@@ -125,6 +125,7 @@ export class Mechanics {
   private powerCooldown = 0
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
+  private networkAuthority = true
 
   constructor(
     private world: World,
@@ -1269,7 +1270,7 @@ export class Mechanics {
 
     // Assemble powered machines before scanning unsupported voxels so the
     // rotor/chassis become their articulated physics bodies first.
-    this.updateGravity(dt)
+    if (this.networkAuthority) this.updateGravity(dt)
 
     for (const [key, e] of this.models) {
       if (e.type === 'wheel') {
@@ -1302,6 +1303,7 @@ export class Mechanics {
       }
     }
 
+    if (this.networkAuthority) {
     for (const c of [...this.contraptions.values()]) {
       const motorAlive = this.models.get(c.motorKey)?.type === 'motor'
       if (!motorAlive) {
@@ -1353,13 +1355,105 @@ export class Mechanics {
       }
     }
 
+    }
+
     // All dynamic voxel groups and motor rotors use this one solver. No
     // rotation-specific floor correction or per-motor translation branch.
     if (this.rigidPhysics.ready) {
-      this.wakeBlocksBeingPushed()
-      this.rigidPhysics.step(dt)
+      if (this.networkAuthority) {
+        this.wakeBlocksBeingPushed()
+        this.rigidPhysics.step(dt)
+      }
       this.syncRigidTransforms()
     }
+  }
+
+  /** A multiplayer client builds the same articulated visuals, but only the host advances Rapier. */
+  setNetworkAuthority(isAuthority: boolean) {
+    this.networkAuthority = isAuthority
+    this.mechDirty = true
+    this.physicsDirty = true
+  }
+
+  private vectorSnapshot(v: { x: number; y: number; z: number }) {
+    return { x: v.x, y: v.y, z: v.z }
+  }
+
+  private rotationSnapshot(q: { x: number; y: number; z: number; w: number }) {
+    return { x: q.x, y: q.y, z: q.z, w: q.w }
+  }
+
+  exportNetworkSnapshot(): Record<string, unknown> {
+    const machines = [...this.contraptions.values()].slice(0, 128).map((c) => ({
+      motorKey: c.motorKey,
+      angle: c.angle,
+      speed: c.speed,
+      rotor: {
+        position: this.vectorSnapshot(c.rotorBody.translation()),
+        rotation: this.rotationSnapshot(c.rotorBody.rotation()),
+        linearVelocity: this.vectorSnapshot(c.rotorBody.linvel()),
+        angularVelocity: this.vectorSnapshot(c.rotorBody.angvel()),
+      },
+      chassis: {
+        position: this.vectorSnapshot(c.chassisBody.translation()),
+        rotation: this.rotationSnapshot(c.chassisBody.rotation()),
+        linearVelocity: this.vectorSnapshot(c.chassisBody.linvel()),
+        angularVelocity: this.vectorSnapshot(c.chassisBody.angvel()),
+      },
+    }))
+    const falling = this.fallingBodies.slice(0, 128).map((body) => ({
+      keys: body.blocks.slice(0, 400).map((block) => ({
+        originKey: block.originKey, id: block.id,
+        localOrigin: this.vectorSnapshot(block.localOrigin),
+      })),
+      position: this.vectorSnapshot(body.body.translation()),
+      rotation: this.rotationSnapshot(body.body.rotation()),
+      linearVelocity: this.vectorSnapshot(body.body.linvel()),
+      angularVelocity: this.vectorSnapshot(body.body.angvel()),
+    }))
+    return { version: 1, machines, falling }
+  }
+
+  applyNetworkSnapshot(value: Record<string, unknown>) {
+    if (this.networkAuthority || !value || typeof value !== 'object') return
+    const validVector = (v: unknown): v is { x: number; y: number; z: number } =>
+      !!v && typeof v === 'object' && ['x', 'y', 'z'].every(k => Number.isFinite(Number((v as Record<string, unknown>)[k])))
+    const validRotation = (v: unknown): v is { x: number; y: number; z: number; w: number } =>
+      !!v && typeof v === 'object' && ['x', 'y', 'z', 'w'].every(k => Number.isFinite(Number((v as Record<string, unknown>)[k])))
+    const pose = (body: RAPIER.RigidBody, record: unknown) => {
+      if (!record || typeof record !== 'object') return
+      const v = record as Record<string, unknown>
+      if (validVector(v.position)) body.setTranslation(v.position, true)
+      if (validRotation(v.rotation)) body.setRotation(v.rotation, true)
+      if (validVector(v.linearVelocity)) body.setLinvel(v.linearVelocity, true)
+      if (validVector(v.angularVelocity)) body.setAngvel(v.angularVelocity, true)
+    }
+    const record = value as Record<string, unknown>
+    if (Array.isArray(record.machines)) for (const raw of record.machines.slice(0, 128)) {
+      if (!raw || typeof raw !== 'object') continue
+      const machine = raw as Record<string, unknown>
+      if (typeof machine.motorKey !== 'string') continue
+      const c = this.contraptions.get(machine.motorKey)
+      if (!c) continue
+      pose(c.rotorBody, machine.rotor)
+      pose(c.chassisBody, machine.chassis)
+      if (Number.isFinite(Number(machine.angle))) c.angle = Number(machine.angle)
+      if (Number.isFinite(Number(machine.speed))) c.speed = Number(machine.speed)
+    }
+    if (Array.isArray(record.falling)) {
+      const byKey = new Map<string, FallingBody>()
+      for (const body of this.fallingBodies) for (const block of body.blocks) byKey.set(block.originKey, body)
+      for (const raw of record.falling.slice(0, 128)) {
+        if (!raw || typeof raw !== 'object') continue
+        const item = raw as Record<string, unknown>
+        if (!Array.isArray(item.keys)) continue
+        const key = item.keys.find((entry) => !!entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).originKey === 'string') as Record<string, unknown> | undefined
+        if (!key) continue
+        const body = byKey.get(String(key.originKey))
+        if (body) pose(body.body, item)
+      }
+    }
+    if (this.rigidPhysics.ready) this.syncRigidTransforms()
   }
 
   private syncRigidTransforms() {
