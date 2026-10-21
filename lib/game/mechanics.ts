@@ -342,7 +342,8 @@ export class Mechanics {
       return state.switchOn
     }
     for (const c of this.contraptions.values()) {
-      const block = c.byKey.get(key) ?? c.chassisByKey.get(key)
+      const extraBlock = (c.extraRotors ?? []).map((rotor) => rotor.byKey.get(key)).find(Boolean)
+      const block = c.byKey.get(key) ?? c.chassisByKey.get(key) ?? extraBlock
       if (block?.id !== B.SWITCH) continue
       block.state = { ...(block.state ?? {}), switchOn: !Boolean(block.state?.switchOn) }
       const model = this.models.get(key)
@@ -470,7 +471,7 @@ export class Mechanics {
 
   private lookup(key: string): { id: number; state?: BlockState } {
     for (const c of this.contraptions.values()) {
-      const b = c.byKey.get(key)
+      const b = c.byKey.get(key) ?? c.chassisByKey.get(key) ?? (c.extraRotors ?? []).map((rotor) => rotor.byKey.get(key)).find(Boolean)
       if (b) return b
     }
     const [x, y, z] = parseKey(key)
@@ -526,6 +527,9 @@ export class Mechanics {
     for (const c of this.contraptions.values()) {
       for (const block of c.blocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
       for (const block of c.chassisBlocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
+      for (const extra of c.extraRotors ?? []) {
+        for (const block of extra.blocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
+      }
       // The motor itself is the joint between the moving electrical assembly
       // and the rotating rotor, and is no longer a voxel in World.
       electricalBlocks.set(c.motorKey, { id: B.MOTOR, state: c.motorState })
@@ -1093,6 +1097,13 @@ export class Mechanics {
     }
 
     const placements: { x: number; y: number; z: number; id: number; state?: BlockState; orig: string }[] = []
+    const extraPoses = (c.extraRotors ?? []).map((extra) => {
+      const t = extra.rotorBody.translation()
+      const pivot = new THREE.Vector3(t.x, t.y, t.z)
+      const turns = ((Math.round(extra.angle / HALF_PI) % 4) + 4) % 4
+      const rotation = new THREE.Quaternion().setFromAxisAngle(extra.axis, turns * HALF_PI)
+      return { extra, pivot, rotation }
+    })
     const pushPlacement = (rel: [number, number, number], pivot: THREE.Vector3, rotation: THREE.Quaternion, id: number, state: BlockState | undefined, orig: string) => {
       const center = new THREE.Vector3(...rel).applyQuaternion(rotation).add(pivot)
       placements.push({
@@ -1103,6 +1114,9 @@ export class Mechanics {
     for (const b of c.blocks) pushPlacement(b.rel, rotorPivot, q, b.id, b.state, b.origKey)
     for (const b of c.chassisBlocks) pushPlacement(b.rel, chassisPivot, chassisQ, b.id, b.state, b.origKey)
     pushPlacement([0, 0, 0], chassisPivot, chassisQ, B.MOTOR, c.motorState, c.motorKey)
+    for (const pose of extraPoses) for (const block of pose.extra.blocks) {
+      pushPlacement(block.rel, pose.pivot, pose.rotation, block.id, block.state, block.origKey)
+    }
 
     // Preserve the entire rigid assembly if snapping it back to voxel cells
     // would intersect something. Lift the whole assembly as one unit.
@@ -1121,6 +1135,11 @@ export class Mechanics {
       c.chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
       c.rotorBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
       c.joint.configureMotorVelocity(0, 1)
+      for (const extra of c.extraRotors ?? []) {
+        extra.rotorBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
+        extra.rotorBody.setAngvel({ x: 0, y: 0, z: 0 }, true)
+        extra.joint.configureMotorVelocity(0, 1)
+      }
       return null
     }
     for (const p of placements) p.y += shiftY
@@ -1150,8 +1169,13 @@ export class Mechanics {
     }
     preserveChildren(c.group, c.blocks.map((b) => b.origKey))
     preserveChildren(c.chassisGroup, [c.motorKey, ...c.chassisBlocks.map((b) => b.origKey)])
+    for (const extra of c.extraRotors ?? []) preserveChildren(extra.group, extra.blocks.map((b) => b.origKey))
     disposeObject(c.group)
     disposeObject(c.chassisGroup)
+    for (const extra of c.extraRotors ?? []) {
+      disposeObject(extra.group)
+      this.rigidPhysics.removeRigidBody(extra.rotorBody)
+    }
     this.rigidPhysics.removeRigidBody(c.rotorBody)
     this.rigidPhysics.removeRigidBody(c.chassisBody)
     this.contraptions.delete(c.motorKey)
@@ -1199,6 +1223,15 @@ export class Mechanics {
         else { we.wire.b = newKey; we.wire.pb.copy(point) }
       }
     }
+    for (const pose of extraPoses) for (const we of pose.extra.wireEnds) {
+      const key = we.end === 'a' ? we.wire.a : we.wire.b
+      const newKey = keyMap.get(key)
+      if (newKey) {
+        const point = we.local.clone().applyQuaternion(pose.rotation).add(pose.pivot).add(new THREE.Vector3(0, shiftY, 0))
+        if (we.end === 'a') { we.wire.a = newKey; we.wire.pa.copy(point) }
+        else { we.wire.b = newKey; we.wire.pb.copy(point) }
+      }
+    }
     for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
     this.rebuildGlue()
     this.powerDirty = true
@@ -1206,7 +1239,7 @@ export class Mechanics {
     this.physicsDirty = true
     if (this.networkAuthority && this.networkBlockPublisher) {
       const destinationKeys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
-      const originalKeys = new Set([c.motorKey, ...c.blocks.map((b) => b.origKey), ...c.chassisBlocks.map((b) => b.origKey)])
+      const originalKeys = new Set([c.motorKey, ...c.blocks.map((b) => b.origKey), ...c.chassisBlocks.map((b) => b.origKey), ...(c.extraRotors ?? []).flatMap((extra) => extra.blocks.map((b) => b.origKey))])
       const owners = new Map<string, string | null>()
       for (const key of originalKeys) {
         const [x, y, z] = parseKey(key)
@@ -1833,6 +1866,10 @@ export class Mechanics {
         add(x, y, z, b.id, b.state)
       }
       for (const b of c.chassisBlocks) {
+        const [x, y, z] = parseKey(b.origKey)
+        add(x, y, z, b.id, b.state)
+      }
+      for (const extra of c.extraRotors ?? []) for (const b of extra.blocks) {
         const [x, y, z] = parseKey(b.origKey)
         add(x, y, z, b.id, b.state)
       }
