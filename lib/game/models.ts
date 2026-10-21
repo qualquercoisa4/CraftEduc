@@ -141,6 +141,24 @@ export function setBatteryCount(model: BatteryBoxModel, count: number) {
   })
 }
 
+/** Visible polarity markers on the two exposed LED terminals. */
+export interface LedTerminalModel {
+  group: THREE.Group
+}
+
+export function createLedTerminalModel(): LedTerminalModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  const terminal = (x: number, material: THREE.Material) => {
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.075, 8, 6), material)
+    mesh.position.set(x, 0.5, 0.5)
+    group.add(mesh)
+  }
+  terminal(1.015, m.red) // anode (+)
+  terminal(-0.015, m.batteryBlack) // cathode (−)
+  return { group }
+}
+
 /* ---------------- Wires ---------------- */
 
 export function wireCurve(a: THREE.Vector3, b: THREE.Vector3) {
