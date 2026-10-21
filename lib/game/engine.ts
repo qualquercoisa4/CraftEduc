@@ -49,7 +49,7 @@ export interface Hit {
 let current: Engine | null = null
 export const getEngine = () => current
 
-const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, B.WHEEL])
+const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, B.WHEEL, B.SWITCH])
 
 interface MultiplayerBridge {
   isHost: boolean
@@ -835,6 +835,16 @@ export class Engine {
       return
     }
 
+    // Toggle a switch without disassembling the moving assembly it belongs to.
+    if (hit?.moving && hit.id === B.SWITCH && (item === null || item === 'switch')) {
+      const enabled = this.mech.toggleSwitchAtKey(hit.moving.key)
+      if (enabled !== null) {
+        sfx.click()
+        showToast('Interruptor ' + (enabled ? 'ligado' : 'desligado'))
+      }
+      return
+    }
+
     // Dynamic bodies are interactive, but voxel placement/wiring still uses
     // the world's integer grid. Resolve the source identity before editing.
     if (hit?.moving) {
@@ -879,6 +889,17 @@ export class Engine {
     }
 
     if (!hit) return
+
+    if (hit.id === B.SWITCH && (item === null || item === 'switch')) {
+      const enabled = this.mech.toggleSwitchAtKey(posKey(hit.x, hit.y, hit.z))
+      if (enabled !== null) {
+        const state = this.world.getState(hit.x, hit.y, hit.z)
+        this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, B.SWITCH, state ? { ...state } : undefined)
+        sfx.click()
+        showToast('Interruptor ' + (enabled ? 'ligado' : 'desligado'))
+      }
+      return
+    }
 
     if (item === 'glue') {
       const on = this.mech.toggleGlue(hit.x, hit.y, hit.z, hit.face)

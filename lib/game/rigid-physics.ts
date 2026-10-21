@@ -22,6 +22,7 @@ export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.COMPONENT]: 0.28,
   [B.LED]: 0.12,
   [B.WHEEL]: 0.32,
+  [B.SWITCH]: 0.22,
   [B.GEAR]: 0.42,
   [B.BATTERY_BOX]: 0.65,
   [B.ROBOTICS]: 0.9,

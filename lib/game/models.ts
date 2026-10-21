@@ -22,6 +22,10 @@ function createMaterials() {
     tire: new THREE.MeshLambertMaterial({ color: 0x171719 }),
     yellow: new THREE.MeshLambertMaterial({ color: 0xffc400 }),
     tread: new THREE.MeshLambertMaterial({ color: 0x29292b }),
+    switchBoard: new THREE.MeshLambertMaterial({ color: 0x087eaf }),
+    switchHousing: new THREE.MeshLambertMaterial({ color: 0x202125 }),
+    switchRock: new THREE.MeshLambertMaterial({ color: 0x383a40 }),
+    switchMark: new THREE.MeshLambertMaterial({ color: 0xf0f1f3 }),
   }
 }
 
@@ -201,6 +205,54 @@ export function createLedTerminalModel(): LedTerminalModel {
   terminal(1.015, m.red) // anode (+)
   terminal(-0.015, m.batteryBlack) // cathode (−)
   return { group }
+}
+
+export interface SwitchModel {
+  group: THREE.Group
+  rocker: THREE.Group
+}
+
+/** Compact rocker switch with four independently wired contacts. */
+export function createSwitchModel(enabled = false): SwitchModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  const box = (width: number, height: number, depth: number, x: number, y: number, z: number, material: THREE.Material) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material)
+    mesh.position.set(x, y, z)
+    group.add(mesh)
+    return mesh
+  }
+  box(0.94, 0.055, 0.92, 0.5, 0.105, 0.5, m.switchBoard)
+  for (const x of [0.12, 0.88]) for (const z of [0.13, 0.87]) {
+    const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.009, 10), m.steel)
+    screw.position.set(x, 0.137, z)
+    group.add(screw)
+  }
+  for (const z of [0.32, 0.68]) {
+    box(0.13, 0.035, 0.055, 0.035, 0.115, z, m.copper)
+    box(0.13, 0.035, 0.055, 0.965, 0.115, z, m.copper)
+    box(0.075, 0.018, 0.045, 0.035, 0.139, z, m.solder)
+    box(0.075, 0.018, 0.045, 0.965, 0.139, z, m.solder)
+  }
+  box(0.73, 0.15, 0.5, 0.5, 0.205, 0.5, m.switchHousing)
+  const rocker = new THREE.Group()
+  rocker.position.set(0.5, 0.29, 0.5)
+  rocker.add(new THREE.Mesh(new THREE.BoxGeometry(0.57, 0.075, 0.34), m.switchRock))
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.042, 0.064, 12), m.switchMark)
+  ring.rotation.x = -Math.PI / 2
+  ring.position.set(-0.155, 0.04, 0)
+  rocker.add(ring)
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.012, 0.025), m.switchMark)
+  bar.position.set(0.155, 0.04, 0)
+  rocker.add(bar)
+  group.add(rocker)
+  const model = { group, rocker }
+  setSwitchState(model, enabled)
+  return model
+}
+
+export function setSwitchState(model: SwitchModel, enabled: boolean) {
+  model.rocker.rotation.z = enabled ? -0.16 : 0.16
 }
 
 /* ---------------- Wires ---------------- */

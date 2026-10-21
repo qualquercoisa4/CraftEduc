@@ -61,7 +61,7 @@ async function main() {
   // an immovable world collider. A moving wooden arm must wake it into Rapier
   // when the arm is travelling into it, then push the now-dynamic aluminum.
   const blockMap = new Map<string, number>()
-  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number }>()
+  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number; switchOn?: boolean }>()
   const chunks = new Map([['0,0', { cx: 0, cz: 0, maxY: 8 }]])
   let mechanicsRef: Mechanics | null = null
   const mockGameWorld = {
@@ -77,7 +77,7 @@ async function main() {
       if (!state) { state = {}; stateMap.set(key, state) }
       return state
     },
-    setBlock(x: number, y: number, z: number, id: number, state?: { glue?: number; facing?: number; batteries?: number }) {
+    setBlock(x: number, y: number, z: number, id: number, state?: { glue?: number; facing?: number; batteries?: number; switchOn?: boolean }) {
       const key = posKey(x, y, z)
       const oldId = blockMap.get(key) ?? B.AIR
       const oldState = stateMap.get(key)
@@ -141,7 +141,8 @@ async function main() {
   const noseKey = posKey(3, 5, 2)
   const motorKey = posKey(4, 5, 2)
   const targetKey = posKey(5, 5, 4)
-  const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number }) => {
+  const switchKey = posKey(4, 6, 2)
+  const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number; switchOn?: boolean }) => {
     const key = posKey(x, y, z)
     blockMap.set(key, id)
     stateMap.set(key, { ...state })
@@ -149,7 +150,8 @@ async function main() {
   putTestBlock(2, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 2) })
   putTestBlock(2, 6, 2, B.BATTERY_BOX, { glue: 1 << 3, batteries: 3 })
   putTestBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
-  putTestBlock(4, 5, 2, B.MOTOR, { facing: 0, glue: (1 << 0) | (1 << 1) })
+  putTestBlock(4, 5, 2, B.MOTOR, { facing: 0, glue: (1 << 0) | (1 << 1) | (1 << 2) })
+  putTestBlock(4, 6, 2, B.SWITCH, { switchOn: true, glue: 1 << 3 })
   putTestBlock(5, 5, 2, B.WOOD, { glue: (1 << 1) | (1 << 2) })
   putTestBlock(5, 6, 2, B.WOOD, { glue: (1 << 3) | (1 << 2) })
   putTestBlock(5, 7, 2, B.WOOD, { glue: 1 << 3 })
@@ -186,8 +188,9 @@ async function main() {
   }
   mechanics.wires = [
     makeTestWire(101, batteryKey, '+', baseKey, 'face:0'),
-    makeTestWire(102, baseKey, 'face:1', motorKey, 'A'),
+    makeTestWire(102, baseKey, 'face:1', switchKey, 'in1'),
     makeTestWire(103, batteryKey, '-', motorKey, 'B'),
+    makeTestWire(104, switchKey, 'out1', motorKey, 'A'),
   ] as never
 
   // Simulate the real powered assembly transition. tryAssemble removes all
@@ -215,6 +218,14 @@ async function main() {
   }
   assert.equal(mechanics.contraptions.has(motorKey), true,
     'a powered assembly must not leave the active-contraption state during circuit refresh')
+
+  // Verify the switch can interrupt and restore current while inside a moving chassis.
+  assert.equal(mechanics.toggleSwitchAtKey(switchKey), false, 'switch should turn off')
+  recomputePower()
+  assert.equal(mechanics.motorPower.get(motorKey) ?? 0, 0, 'an open switch must interrupt motor power')
+  assert.equal(mechanics.toggleSwitchAtKey(switchKey), true, 'switch should turn on again')
+  recomputePower()
+  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7, 'a closed switch must restore motor power')
 
   // Exercise the production frame update for two seconds: the motor must keep
   // applying torque, the chassis/rotor must stay assembled, and no re-grid

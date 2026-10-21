@@ -314,6 +314,22 @@ function drawItemPixels(item: ItemId, px: Px) {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px(x + i, y + j, c)
   }
   switch (item) {
+    case 'switch': {
+      // Pixel-art rocker, four contacts and a blue circuit board.
+      rect(1, 4, 14, 10, [15, 113, 163])
+      rect(0, 7, 3, 2, [193, 135, 65])
+      rect(13, 7, 3, 2, [193, 135, 65])
+      rect(3, 3, 10, 10, [25, 26, 29])
+      rect(4, 4, 8, 8, [54, 55, 60])
+      rect(4, 4, 8, 1, [83, 84, 90])
+      rect(5, 6, 2, 4, [235, 237, 240])
+      px(4, 6, [235, 237, 240])
+      px(7, 6, [235, 237, 240])
+      rect(9, 6, 2, 1, [235, 237, 240])
+      rect(9, 6, 1, 4, [235, 237, 240])
+      rect(9, 9, 2, 1, [235, 237, 240])
+      break
+    }
     case 'motor': {
       rect(2, 4, 9, 8, [185, 190, 196])
       rect(3, 3, 7, 1, [150, 155, 162])

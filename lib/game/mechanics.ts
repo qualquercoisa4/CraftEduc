@@ -8,7 +8,9 @@ import {
   type MotorModel,
   type LedTerminalModel,
   type WheelModel,
+  type SwitchModel,
   createBatteryBoxModel,
+  createSwitchModel,
   createGlowSprite,
   createLedTerminalModel,
   createArduinoWheelModel,
@@ -17,6 +19,7 @@ import {
   disposeObject,
   setBatteryCount,
   setMotorFacing,
+  setSwitchState,
   facingQuaternion,
   updateWireMesh,
 } from './models'
@@ -31,6 +34,7 @@ type ModelEntry =
   | { type: 'box'; model: BatteryBoxModel }
   | { type: 'led'; model: LedTerminalModel }
   | { type: 'wheel'; model: WheelModel; spin: number }
+  | { type: 'switch'; model: SwitchModel }
 
 export interface Wire {
   id: number
@@ -165,7 +169,7 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -206,10 +210,17 @@ export class Mechanics {
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'wheel', model, spin: 0 })
+    } else if (newId === B.SWITCH) {
+      const state = this.world.ensureState(x, y, z)
+      state.switchOn ??= false
+      const model = createSwitchModel(state.switchOn)
+      model.group.position.set(x, y, z)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'switch', model })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    const electrical = (id: number) => id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    const electrical = (id: number) => id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
     if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
     this.physicsDirty = true
@@ -222,6 +233,7 @@ export class Mechanics {
     const model = this.models.get(key)
     if (id === B.MOTOR && model?.type === 'motor' && next?.facing !== undefined) setMotorFacing(model.model, next.facing)
     if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
+    if (id === B.SWITCH && model?.type === 'switch') setSwitchState(model.model, Boolean(next?.switchOn))
     if (id === B.WHEEL && model?.type === 'wheel' && next?.facing !== undefined) {
       const replacement = createArduinoWheelModel(next.facing)
       replacement.group.position.copy(model.model.group.position)
@@ -239,7 +251,7 @@ export class Mechanics {
       disposeObject(mounted.model.group)
       this.mountedWheels.delete(key)
     }
-    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
+    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
       this.powerDirty = true
       this.mechDirty = true
     }
@@ -248,7 +260,7 @@ export class Mechanics {
   }
 
   private isElectricalBlock(id: number) {
-    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON
+    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON
       || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
   }
 
@@ -297,6 +309,33 @@ export class Mechanics {
     return Boolean(st.glue & (1 << face))
   }
 
+  /** Toggle the rocker on a fixed or moving block without disassembling the machine. */
+  toggleSwitchAtKey(key: string): boolean | null {
+    const [x, y, z] = parseKey(key)
+    if (this.world.getBlock(x, y, z) === B.SWITCH) {
+      const state = this.world.ensureState(x, y, z)
+      state.switchOn = !Boolean(state.switchOn)
+      const model = this.models.get(key)
+      if (model?.type === 'switch') setSwitchState(model.model, state.switchOn)
+      this.powerDirty = true
+      this.mechDirty = true
+      this.powerCooldown = 0
+      return state.switchOn
+    }
+    for (const c of this.contraptions.values()) {
+      const block = c.byKey.get(key) ?? c.chassisByKey.get(key)
+      if (block?.id !== B.SWITCH) continue
+      block.state = { ...(block.state ?? {}), switchOn: !Boolean(block.state?.switchOn) }
+      const model = this.models.get(key)
+      if (model?.type === 'switch') setSwitchState(model.model, Boolean(block.state.switchOn))
+      this.powerDirty = true
+      this.mechDirty = true
+      this.powerCooldown = 0
+      return Boolean(block.state.switchOn)
+    }
+    return null
+  }
+
   /** Resolve an exposed electrical terminal, never an arbitrary point inside a block. */
   resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
     const [x, y, z] = parseKey(key)
@@ -317,6 +356,16 @@ export class Mechanics {
         terminal: side < 0 ? 'A' : 'B',
         point: new THREE.Vector3(0.14 * side, 0.1, -0.46).applyQuaternion(q).add(center),
       }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
+    }
+    if (id === B.SWITCH) {
+      const terminals = [
+        { terminal: 'in1', point: new THREE.Vector3(x + 0.02, y + 0.115, z + 0.32) },
+        { terminal: 'in2', point: new THREE.Vector3(x + 0.02, y + 0.115, z + 0.68) },
+        { terminal: 'out1', point: new THREE.Vector3(x + 0.98, y + 0.115, z + 0.32) },
+        { terminal: 'out2', point: new THREE.Vector3(x + 0.98, y + 0.115, z + 0.68) },
+      ]
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
     }
@@ -466,6 +515,14 @@ export class Mechanics {
     // Conductive blocks connect their six face terminals internally. This
     // includes aluminum/iron/component blocks inside moving chassis or rotors.
     for (const [key, block] of electricalBlocks) {
+      if (block.id === B.SWITCH) {
+        for (const terminal of ['in1', 'out1', 'in2', 'out2']) allNodes.add(node(key, terminal))
+        if (block.state?.switchOn) {
+          // Each pole closes independently; the switch itself does not bridge the two poles.
+          union(node(key, 'in1'), node(key, 'out1'))
+          union(node(key, 'in2'), node(key, 'out2'))
+        }
+      }
       if ((BLOCK_CONDUCTIVITY[block.id] ?? 0) <= 0) continue
       const faces = DIRS.map((_, i) => node(key, `face:${i}`))
       for (const face of faces) allNodes.add(face)
@@ -727,7 +784,8 @@ export class Mechanics {
     ]
     const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
     const chassisBody = this.rigidPhysics.createRigidBody(chassisVoxels, pivot, {
-      lockRotation: true, canSleep: false, linearDamping: 0.12, angularDamping: 1,
+      // A chassis carrying a wheel must react to the traction torque.
+      lockRotation: !Boolean(motorState?.mountedWheel), canSleep: false, linearDamping: 0.12, angularDamping: 0.65,
     })
     const rotorBody = this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
       canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
@@ -1351,6 +1409,48 @@ export class Mechanics {
     return keyMap
   }
 
+  /** Apply ground force through the mounted wheel; an off-centre contact creates chassis yaw. */
+  private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
+    if (power <= 0 || !this.mountedWheels.has(c.motorKey)) return
+    const t = c.chassisBody.translation()
+    const r = c.chassisBody.rotation()
+    const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+    const axle = c.axis.clone().applyQuaternion(rotation).normalize()
+    const horizontalAxle = Math.hypot(axle.x, axle.z)
+    if (horizontalAxle < 0.65) return
+
+    const drive = new THREE.Vector3(0, 1, 0).cross(axle)
+    drive.y = 0
+    if (drive.lengthSq() < 1e-8) return
+    drive.normalize().multiplyScalar(direction < 0 ? -1 : 1)
+
+    const center = new THREE.Vector3(t.x, t.y, t.z).addScaledVector(axle, 0.64)
+    const bottomY = center.y - 0.41 * horizontalAxle
+    const cellX = Math.floor(center.x)
+    const cellZ = Math.floor(center.z)
+    let supportY = GROUND_LEVEL
+    for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(bottomY + 0.24)); y >= GROUND_LEVEL - 1; y--) {
+      if (this.world.getBlock(cellX, y, cellZ) !== B.AIR) {
+        supportY = y + 1
+        break
+      }
+    }
+    const gap = bottomY - supportY
+    if (gap > 0.22 || gap < -0.22) return
+
+    const velocity = c.chassisBody.linvel()
+    const forwardSpeed = velocity.x * drive.x + velocity.z * drive.z
+    const targetSpeed = Math.max(0.8, Math.min(3.2, power * 1.05))
+    const effort = Math.max(0, Math.min(1.35, 1 - forwardSpeed / targetSpeed))
+    const force = Math.min(36, power * 12) * effort
+    if (force <= 0.05) return
+    c.chassisBody.addForceAtPoint(
+      { x: drive.x * force, y: 0, z: drive.z * force },
+      { x: center.x, y: bottomY, z: center.z },
+      true,
+    )
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
@@ -1432,6 +1532,7 @@ export class Mechanics {
       const motor = this.models.get(c.motorKey)
       if (power > 0) {
         const direction = this.motorDirection.get(c.motorKey) ?? 1
+        this.applyMountedWheelTraction(c, power, direction)
         c.speed = power * 1.05 * direction
         c.unpoweredTime = 0
         // Torque is applied through the shaft joint. Rapier computes the
