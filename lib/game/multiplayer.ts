@@ -345,8 +345,10 @@ export class MultiplayerClient {
   }
 
   private wireSignature(wire: Wire) {
+    // Ignore microscopic physics jitter so we don't flood the room event stream.
+    const q = (n: number) => Math.round(n * 20) / 20
     return JSON.stringify({ a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
-      pa: [wire.pa.x, wire.pa.y, wire.pa.z], pb: [wire.pb.x, wire.pb.y, wire.pb.z] })
+      pa: [q(wire.pa.x), q(wire.pa.y), q(wire.pa.z)], pb: [q(wire.pb.x), q(wire.pb.y), q(wire.pb.z)] })
   }
   private async publishWire(wire: Wire) {
     const wireId = typeof (wire as Wire & { networkId?: string }).networkId === 'string'
