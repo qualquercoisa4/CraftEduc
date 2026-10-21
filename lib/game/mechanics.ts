@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { B, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
+import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
   type BatteryBoxModel,
@@ -11,6 +11,7 @@ import {
   disposeObject,
   setBatteryCount,
   setMotorFacing,
+  facingQuaternion,
   updateWireMesh,
 } from './models'
 import type { BlockState, World } from './world'
@@ -28,6 +29,8 @@ export interface Wire {
   b: string
   pa: THREE.Vector3
   pb: THREE.Vector3
+  ta: string
+  tb: string
   mesh: THREE.Group
 }
 
@@ -141,10 +144,50 @@ export class Mechanics {
     return Boolean(st.glue & (1 << face))
   }
 
-  addWire(a: string, pa: THREE.Vector3, b: string, pb: THREE.Vector3) {
+  /** Resolve an exposed electrical terminal, never an arbitrary point inside a block. */
+  resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
+    const [x, y, z] = parseKey(key)
+    const id = this.world.getBlock(x, y, z)
+    if (id === B.BATTERY_BOX) {
+      const terminals = [
+        { terminal: '+', point: new THREE.Vector3(x + 0.82, y + 0.12, z + 0.97) },
+        { terminal: '-', point: new THREE.Vector3(x + 0.70, y + 0.12, z + 0.97) },
+      ]
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.3 ? terminals[0] : null
+    }
+    if (id === B.MOTOR) {
+      const facing = this.world.getState(x, y, z)?.facing ?? 2
+      const q = facingQuaternion(facing)
+      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      const terminals = [-1, 1].map((side) => ({
+        terminal: side < 0 ? 'A' : 'B',
+        point: new THREE.Vector3(0.14 * side, 0.1, -0.46).applyQuaternion(q).add(center),
+      }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
+    }
+    if (id === B.LED) {
+      const terminals = [
+        { terminal: 'anode', point: new THREE.Vector3(x + 1, y + 0.5, z + 0.5) },
+        { terminal: 'cathode', point: new THREE.Vector3(x, y + 0.5, z + 0.5) },
+      ]
+      const expected = face === 0 ? terminals[0] : face === 1 ? terminals[1] : null
+      return expected && expected.point.distanceTo(hitPoint) <= 0.6 ? expected : null
+    }
+    const conductivity = BLOCK_CONDUCTIVITY[id] ?? 0
+    if (conductivity <= 0) return null
+    const normal = DIRS[face]
+    if (!normal) return null
+    const point = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      .add(new THREE.Vector3(normal[0], normal[1], normal[2]).multiplyScalar(0.5))
+    return { terminal: `face:${face}`, point }
+  }
+
+  addWire(a: string, pa: THREE.Vector3, ta: string, b: string, pb: THREE.Vector3, tb: string) {
     const mesh = createWireMesh(pa, pb)
     this.scene.add(mesh)
-    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), mesh })
+    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), ta, tb, mesh })
     this.powerDirty = true
     this.mechDirty = true
   }
@@ -196,6 +239,8 @@ export class Mechanics {
   }
 
   private recomputePower() {
+    // Each terminal is a separate node. Wires connect only the two terminals
+    // explicitly selected by the player; conductive materials bridge their faces.
     const parent = new Map<string, string>()
     const find = (k: string): string => {
       let p = parent.get(k) ?? k
@@ -210,31 +255,73 @@ export class Mechanics {
       const rb = find(b)
       if (ra !== rb) parent.set(ra, rb)
     }
-    const nodes = new Set<string>()
+    const node = (key: string, terminal: string) => `${key}|${terminal}`
+    const allNodes = new Set<string>()
     for (const w of this.wires) {
-      nodes.add(w.a)
-      nodes.add(w.b)
-      union(w.a, w.b)
+      const a = node(w.a, w.ta)
+      const b = node(w.b, w.tb)
+      allNodes.add(a)
+      allNodes.add(b)
+      union(a, b)
     }
-    const charge = new Map<string, number>()
-    const info = new Map<string, { id: number; state?: BlockState }>()
-    for (const n of nodes) {
-      const b = this.lookup(n)
-      info.set(n, b)
-      if (b.id === B.BATTERY_BOX) {
-        const root = find(n)
-        charge.set(root, Math.max(charge.get(root) ?? 0, b.state?.batteries ?? 0))
+
+    // Conductive blocks connect their six face terminals internally. Wood and
+    // other insulators deliberately do not provide a path through the block.
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const id = this.world.getBlock(x, y, z)
+        if ((BLOCK_CONDUCTIVITY[id] ?? 0) <= 0) continue
+        const key = posKey(x, y, z)
+        const faces = DIRS.map((_, i) => node(key, `face:${i}`))
+        for (const n of faces) allNodes.add(n)
+        for (let i = 1; i < faces.length; i++) union(faces[0], faces[i])
       }
     }
+
+    const terminalRoot = (key: string, terminal: string) => find(node(key, terminal))
+    const boxes: { key: string; positive: string; negative: string; batteries: number }[] = []
+    const devices: { key: string; id: number; a: string; b: string }[] = []
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const id = this.world.getBlock(x, y, z)
+        const key = posKey(x, y, z)
+        if (id === B.BATTERY_BOX) {
+          const count = this.world.getState(x, y, z)?.batteries ?? 0
+          if (count > 0) {
+            const positive = node(key, '+')
+            const negative = node(key, '-')
+            allNodes.add(positive); allNodes.add(negative)
+            boxes.push({ key, positive, negative, batteries: count })
+          }
+        } else if (id === B.LED || id === B.MOTOR) {
+          const a = node(key, id === B.LED ? 'anode' : 'A')
+          const b = node(key, id === B.LED ? 'cathode' : 'B')
+          allNodes.add(a); allNodes.add(b)
+          devices.push({ key, id, a, b })
+        }
+      }
+    }
+
+    // Create roots for terminals that have not yet been connected by a wire.
+    for (const n of allNodes) find(n)
+    const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
+    const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
+    const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
     const leds = new Set<string>()
     this.motorPower.clear()
-    for (const n of nodes) {
-      const level = charge.get(find(n)) ?? 0
-      if (level <= 0) continue
-      const b = info.get(n)!
-      if (b.id === B.LED) leds.add(n)
-      if (b.id === B.MOTOR) this.motorPower.set(n, level)
+    for (const d of devices) {
+      const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
+      const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
+      const source = activeBoxes.reduce((max, b) => Math.max(max, b.batteries), 0)
+      if (source <= 0 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
+      if (d.id === B.LED && plusA) leds.add(d.key)
+      if (d.id === B.MOTOR) this.motorPower.set(d.key, source)
     }
+
     const prev = this.world.poweredLeds
     for (const k of prev) {
       if (!leds.has(k)) {
@@ -251,10 +338,10 @@ export class Mechanics {
       const [x, y, z] = parseKey(k)
       if (!prev.has(k)) this.world.markBlockDirty(x, y, z)
       if (!this.glows.has(k) && this.world.getBlock(x, y, z) === B.LED) {
-        const s = createGlowSprite()
-        s.position.set(x + 0.5, y + 0.5, z + 0.5)
-        this.scene.add(s)
-        this.glows.set(k, s)
+        const glow = createGlowSprite()
+        glow.position.set(x + 0.5, y + 0.5, z + 0.5)
+        this.scene.add(glow)
+        this.glows.set(k, glow)
       }
     }
     this.world.poweredLeds = leds
