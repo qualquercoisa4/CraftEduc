@@ -94,6 +94,9 @@ export class Mechanics {
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
+  private physicsDirty = true
+  private physicsScanCooldown = 0
+  private powerCooldown = 0
 
   constructor(
     private world: World,
@@ -627,7 +630,9 @@ export class Mechanics {
    */
   private updateGravity(dt: number) {
     this.gravityTimer += dt
-    if (this.physicsDirty && this.gravityTimer >= 0.12) {
+    this.physicsScanCooldown -= dt
+    if (this.physicsDirty && this.physicsScanCooldown <= 0) {
+      this.physicsScanCooldown = 0.35
       this.gravityTimer = 0
       this.physicsDirty = false
       this.detectUnsupportedBodies()
@@ -799,7 +804,9 @@ export class Mechanics {
 
   update(dt: number) {
     this.updateGravity(dt)
-    if (this.powerDirty) {
+    this.powerCooldown -= dt
+    if (this.powerDirty && this.powerCooldown <= 0) {
+      this.powerCooldown = 0.08
       this.powerDirty = false
       this.recomputePower()
       this.mechDirty = true
