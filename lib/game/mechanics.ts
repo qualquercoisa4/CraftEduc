@@ -127,7 +127,8 @@ export class Mechanics {
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
   private networkAuthority = true
-  private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState) => void) | null = null
+  private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState, ownerKey?: string | null) => void) | null = null
+  private networkBlockOwner: ((x: number, y: number, z: number) => string | null) | null = null
   private networkFallingVisuals = new Map<string, { group: THREE.Group; keys: string[]; signature: string }>()
 
   constructor(
@@ -314,8 +315,12 @@ export class Mechanics {
     return true
   }
 
-  setNetworkBlockPublisher(publisher: ((x: number, y: number, z: number, block: number, state?: BlockState) => void) | null) {
+  setNetworkBlockPublisher(
+    publisher: ((x: number, y: number, z: number, block: number, state?: BlockState, ownerKey?: string | null) => void) | null,
+    ownerLookup: ((x: number, y: number, z: number) => string | null) | null = null,
+  ) {
     this.networkBlockPublisher = publisher
+    this.networkBlockOwner = ownerLookup
   }
 
   /* ---------------- Glue rendering ---------------- */
@@ -875,12 +880,19 @@ export class Mechanics {
     if (this.networkAuthority && this.networkBlockPublisher) {
       const destinationKeys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
       const originalKeys = new Set([c.motorKey, ...c.blocks.map((b) => b.origKey), ...c.chassisBlocks.map((b) => b.origKey)])
+      const owners = new Map<string, string | null>()
+      for (const key of originalKeys) {
+        const [x, y, z] = parseKey(key)
+        owners.set(key, this.networkBlockOwner?.(x, y, z) ?? null)
+      }
       for (const key of originalKeys) {
         if (destinationKeys.has(key)) continue
         const [x, y, z] = parseKey(key)
         this.networkBlockPublisher(x, y, z, B.AIR)
       }
-      for (const p of placements) this.networkBlockPublisher(p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined)
+      for (const p of placements) this.networkBlockPublisher(
+        p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined, owners.get(p.orig) ?? null,
+      )
     }
     return keyMap
   }
@@ -1268,12 +1280,19 @@ export class Mechanics {
     this.physicsDirty = true
     if (this.networkAuthority && this.networkBlockPublisher) {
       const placedKeys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
+      const owners = new Map<string, string | null>()
+      for (const block of body.blocks) {
+        const [x, y, z] = parseKey(block.originKey)
+        owners.set(block.originKey, this.networkBlockOwner?.(x, y, z) ?? null)
+      }
       for (const block of body.blocks) {
         if (placedKeys.has(block.originKey)) continue
         const [x, y, z] = parseKey(block.originKey)
         this.networkBlockPublisher(x, y, z, B.AIR)
       }
-      for (const p of placements) this.networkBlockPublisher(p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined)
+      for (const p of placements) this.networkBlockPublisher(
+        p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined, owners.get(p.orig) ?? null,
+      )
     }
     return keyMap
   }
