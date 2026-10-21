@@ -1394,7 +1394,7 @@ export class Mechanics {
           const neighbor = posKey(x + d[0], y + d[1], z + d[2])
           if (this.world.getBlock(x + d[0], y + d[1], z + d[2]) === B.MOTOR && (this.motorPower.get(neighbor) ?? 0) > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * (this.motorPower.get(neighbor) ?? 0)
         }
-        if (this.networkAuthority) e.spin += drive * dt * 5
+        if (this.networkAuthority || this.desiredNetworkMachines !== null) e.spin += drive * dt * 5
         e.model.rim.rotation.z = e.spin
         continue
       }
@@ -1404,12 +1404,12 @@ export class Mechanics {
       if (c) {
         e.model.shaft.rotation.z = c.angle
       } else if (power > 0 && e.status !== 'stalled') {
-        if (this.networkAuthority) e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
+        if (this.networkAuthority || this.desiredNetworkMachines !== null) e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
       }
       const mounted = this.mountedWheels.get(key)
       if (mounted) {
-        if (this.networkAuthority) mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
+        if (this.networkAuthority || this.desiredNetworkMachines !== null) mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
         mounted.model.rim.rotation.z = mounted.spin
         // The wheel is visual here. Do not translate/disassemble the voxel
         // assembly from this legacy traction path: the continuous rigid-body
