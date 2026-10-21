@@ -969,10 +969,10 @@ export class Engine {
         const d = dx * dx + dz * dz
         if (d > R * R) continue
         const c = this.world.getChunk(pcx + dx, pcz + dz)
-        if (!c || !c.mesh || c.dirty) pending.push({ cx: pcx + dx, cz: pcz + dz, d: c?.mesh ? -1 : d })
+        if (!c || c.dirty) pending.push({ cx: pcx + dx, cz: pcz + dz, d: c?.mesh ? -1 : d })
       }
     pending.sort((a, b) => a.d - b.d)
-    let budget = 2
+    let budget = 1
     for (const p of pending) {
       const c = this.world.ensureChunk(p.cx, p.cz)
       if (budget-- <= 0) break
