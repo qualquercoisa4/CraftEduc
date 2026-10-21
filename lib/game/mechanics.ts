@@ -57,13 +57,17 @@ interface FallingBlock {
   y: number
   z: number
   originKey: string
+  localOrigin: THREE.Vector3
   mesh: THREE.Mesh
 }
 
 interface FallingBody {
   blocks: FallingBlock[]
-  velocity: THREE.Vector3
-  settled: boolean
+  body: RAPIER.RigidBody
+  group: THREE.Group
+  pivot: THREE.Vector3
+  wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
+  settledTime: number
 }
 
 interface Contraption {
