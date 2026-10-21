@@ -357,56 +357,60 @@ export class Mechanics {
       union(a, b)
     }
 
-    // Conductive blocks connect their six face terminals internally. Wood and
-    // other insulators deliberately do not provide a path through the block.
+    // Build one logical electrical view from the static grid and every active
+    // contraption. Rigid assemblies are removed from World while simulated, but
+    // their original voxel keys remain the stable identities used by wires.
+    // Omitting these blocks here makes their battery source and conductors vanish
+    // as soon as the motor assembles, cutting its power and causing an
+    // assemble/disassemble loop that can gradually snap the machine upward.
+    const electricalBlocks = new Map<string, { id: number; state?: BlockState }>()
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16
       const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
-        const id = this.world.getBlock(x, y, z)
-        if ((BLOCK_CONDUCTIVITY[id] ?? 0) <= 0) continue
-        const key = posKey(x, y, z)
-        const faces = DIRS.map((_, i) => node(key, `face:${i}`))
-        for (const n of faces) allNodes.add(n)
-        for (let i = 1; i < faces.length; i++) union(faces[0], faces[i])
+      for (let y = GROUND_LEVEL; y <= Math.min(chunk.maxY, WORLD_HEIGHT - 1); y++) {
+        for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+          const id = this.world.getBlock(x, y, z)
+          if (id === B.AIR) continue
+          const key = posKey(x, y, z)
+          electricalBlocks.set(key, { id, state: this.world.getState(x, y, z) })
+        }
       }
+    }
+    for (const c of this.contraptions.values()) {
+      for (const block of c.blocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
+      for (const block of c.chassisBlocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
+      // The motor itself is the joint between the moving electrical assembly
+      // and the rotating rotor, and is no longer a voxel in World.
+      electricalBlocks.set(c.motorKey, { id: B.MOTOR, state: c.motorState })
+    }
+
+    // Conductive blocks connect their six face terminals internally. This
+    // includes aluminum/iron/component blocks inside moving chassis or rotors.
+    for (const [key, block] of electricalBlocks) {
+      if ((BLOCK_CONDUCTIVITY[block.id] ?? 0) <= 0) continue
+      const faces = DIRS.map((_, i) => node(key, `face:${i}`))
+      for (const face of faces) allNodes.add(face)
+      for (let i = 1; i < faces.length; i++) union(faces[0], faces[i])
     }
 
     const terminalRoot = (key: string, terminal: string) => find(node(key, terminal))
     const boxes: { key: string; positive: string; negative: string; batteries: number }[] = []
     const devices: { key: string; id: number; a: string; b: string }[] = []
-    for (const chunk of this.world.chunks.values()) {
-      const minX = chunk.cx * 16
-      const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
-        const id = this.world.getBlock(x, y, z)
-        const key = posKey(x, y, z)
-        if (id === B.BATTERY_BOX) {
-          const count = this.world.getState(x, y, z)?.batteries ?? 0
-          if (count > 0) {
-            const positive = node(key, '+')
-            const negative = node(key, '-')
-            allNodes.add(positive); allNodes.add(negative)
-            boxes.push({ key, positive, negative, batteries: count })
-          }
-        } else if (id === B.LED || id === B.MOTOR) {
-          const a = node(key, id === B.LED ? 'anode' : 'A')
-          const b = node(key, id === B.LED ? 'cathode' : 'B')
-          allNodes.add(a); allNodes.add(b)
-          devices.push({ key, id, a, b })
+    for (const [key, block] of electricalBlocks) {
+      if (block.id === B.BATTERY_BOX) {
+        const count = block.state?.batteries ?? 0
+        if (count > 0) {
+          const positive = node(key, '+')
+          const negative = node(key, '-')
+          allNodes.add(positive); allNodes.add(negative)
+          boxes.push({ key, positive, negative, batteries: count })
         }
+      } else if (block.id === B.LED || block.id === B.MOTOR) {
+        const a = node(key, block.id === B.LED ? 'anode' : 'A')
+        const b = node(key, block.id === B.LED ? 'cathode' : 'B')
+        allNodes.add(a); allNodes.add(b)
+        devices.push({ key, id: block.id, a, b })
       }
-    }
-
-    // Motors inside moving contraptions are no longer present in the static
-    // voxel grid, but remain electrical devices at their original circuit key.
-    for (const [key, entry] of this.models) {
-      if (entry.type !== 'motor' || this.world.getBlock(...parseKey(key)) === B.MOTOR) continue
-      if (![...this.contraptions.values()].some((c) => c.motorKey === key)) continue
-      const a = node(key, 'A')
-      const b = node(key, 'B')
-      allNodes.add(a); allNodes.add(b)
-      devices.push({ key, id: B.MOTOR, a, b })
     }
 
     // Create roots for terminals that have not yet been connected by a wire.
@@ -415,18 +419,14 @@ export class Mechanics {
     const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
     const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
 
-    // Conductivity acts as efficiency along a circuit: every conductive block
-    // contributes its material factor (e.g. iron 0.90, aluminum 0.95).
+    // Include every conductive block exactly once, including those temporarily
+    // removed from the static voxel grid for rigid-body simulation.
     const efficiencyByRoot = new Map<string, number>()
-    for (const chunk of this.world.chunks.values()) {
-      const minX = chunk.cx * 16
-      const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
-        const conductivity = BLOCK_CONDUCTIVITY[this.world.getBlock(x, y, z)] ?? 0
-        if (conductivity <= 0) continue
-        const root = find(node(posKey(x, y, z), 'face:0'))
-        efficiencyByRoot.set(root, (efficiencyByRoot.get(root) ?? 1) * conductivity)
-      }
+    for (const [key, block] of electricalBlocks) {
+      const conductivity = BLOCK_CONDUCTIVITY[block.id] ?? 0
+      if (conductivity <= 0) continue
+      const root = find(node(key, 'face:0'))
+      efficiencyByRoot.set(root, (efficiencyByRoot.get(root) ?? 1) * conductivity)
     }
     const efficiency = (terminal: string) => efficiencyByRoot.get(find(terminal)) ?? 1
     const leds = new Set<string>()
