@@ -854,61 +854,34 @@ export class Mechanics {
    * Motion is integrated every frame, not teleported between grid cells.
    */
   private updateGravity(dt: number) {
-    this.gravityTimer += dt
+    if (!this.rigidPhysics.ready) return
     this.physicsScanCooldown -= dt
     if (this.physicsDirty && this.physicsScanCooldown <= 0) {
-      this.physicsScanCooldown = 0.35
-      this.gravityTimer = 0
+      this.physicsScanCooldown = 0.25
       this.physicsDirty = false
       this.detectUnsupportedBodies()
     }
-    if (!this.fallingBodies.length) return
-    const step = Math.min(dt, 0.05)
+
+    // Rapier resolves motion and contacts. A body is written back to the voxel
+    // grid only after the solver has allowed it to sleep on a stable surface.
     for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
       const body = this.fallingBodies[i]
-      body.velocity.y = Math.max(-14, body.velocity.y - this.gravity * step)
-      const dy = body.velocity.y * step
-      let allowed = dy
-      if (dy < 0) {
-        let floorDistance = Infinity
-        for (const b of body.blocks) {
-          const currentCellY = Math.floor(b.y - 0.5 - 1e-4)
-          const nextBottom = b.y - 0.5 + dy
-          const nextCellY = Math.floor(nextBottom - 1e-4)
-          if (nextCellY < currentCellY) {
-            for (let y = currentCellY - 1; y >= nextCellY; y--) {
-              const key = posKey(Math.round(b.x), y, Math.round(b.z))
-              if (this.world.getBlock(Math.round(b.x), y, Math.round(b.z)) !== B.AIR && !this.fallingKeys.has(key)) {
-                floorDistance = Math.min(floorDistance, b.y - 0.5 - (y + 1))
-                break
-              }
-            }
-          }
-          if (b.y + dy - 0.5 <= GROUND_LEVEL) floorDistance = Math.min(floorDistance, b.y - 0.5 - GROUND_LEVEL)
-        }
-        if (floorDistance !== Infinity && -dy >= floorDistance) {
-          allowed = -Math.max(0, floorDistance)
-          body.velocity.y = 0
-          body.settled = true
-        }
-      }
-      for (const b of body.blocks) {
-        b.y += allowed
-        b.mesh.position.set(b.x + 0.5, b.y, b.z + 0.5)
-      }
-      if (body.settled) {
-        this.landBody(body)
-        this.fallingBodies.splice(i, 1)
+      if (body.body.isSleeping()) body.settledTime += dt
+      else body.settledTime = 0
+      if (body.settledTime >= 0.35) {
+        if (this.landBody(body)) this.fallingBodies.splice(i, 1)
+        else body.settledTime = 0
       }
     }
   }
 
   private detectUnsupportedBodies() {
+    if (!this.rigidPhysics.ready) { this.physicsDirty = true; return }
     const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
     const occupied = new Set<string>()
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16, minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) {
+      for (let y = GROUND_LEVEL; y <= Math.min(63, chunk.maxY); y++) {
         for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
           const id = this.world.getBlock(x, y, z)
           if (id === B.AIR) continue
@@ -918,56 +891,199 @@ export class Mechanics {
         }
       }
     }
-    const byKey = new Map(blocks.map(b => [b.key, b]))
+    const byKey = new Map(blocks.map((b) => [b.key, b]))
     const visited = new Set<string>()
     const fallingGroups: typeof blocks[] = []
-    for (const b of blocks) {
-      if (visited.has(b.key) || this.fallingKeys.has(b.key)) continue
+    for (const block of blocks) {
+      if (visited.has(block.key) || this.fallingKeys.has(block.key)) continue
       const group: typeof blocks = []
-      const queue = [b]
-      visited.add(b.key)
+      const queue = [block]
+      visited.add(block.key)
       while (queue.length) {
-        const cur = queue.pop()!
-        group.push(cur)
-        for (let d = 0; d < 6; d++) {
-          if (!this.isGlued(cur.x, cur.y, cur.z, d)) continue
-          const n = DIRS[d], key = posKey(cur.x + n[0], cur.y + n[1], cur.z + n[2])
+        const current = queue.pop()!
+        group.push(current)
+        for (let face = 0; face < 6; face++) {
+          if (!this.isGlued(current.x, current.y, current.z, face)) continue
+          const dir = DIRS[face]
+          const key = posKey(current.x + dir[0], current.y + dir[1], current.z + dir[2])
           const next = byKey.get(key)
           if (next && !visited.has(key)) { visited.add(key); queue.push(next) }
         }
       }
-      if (group.some(v => v.id === B.MOTOR || v.id === B.BATTERY_BOX || v.id === B.LED || this.wiresAt(v.key).length || this.contraptionsHasBlock(v.key))) continue
-      const keys = new Set(group.map(v => v.key))
-      const supported = group.some(v => v.y <= GROUND_LEVEL || (() => {
-        const below = posKey(v.x, v.y - 1, v.z)
+      const keys = new Set(group.map((item) => item.key))
+      const supported = group.some((item) => item.y <= GROUND_LEVEL || (() => {
+        const below = posKey(item.x, item.y - 1, item.z)
         return occupied.has(below) && !keys.has(below)
       })())
+      // A connected glue component is one rigid body. Unconnected blocks are
+      // independent bodies and still collide with each other in Rapier.
       if (!supported) fallingGroups.push(group)
     }
-    for (const group of fallingGroups) {
+
+    for (const blocksInGroup of fallingGroups) {
+      const pivot = new THREE.Vector3()
+      for (const b of blocksInGroup) pivot.add(new THREE.Vector3(b.x + 0.5, b.y + 0.5, b.z + 0.5))
+      pivot.multiplyScalar(1 / blocksInGroup.length)
+      const physicsBody = this.rigidPhysics.createRigidBody(
+        blocksInGroup.map((b) => ({ x: b.x, y: b.y, z: b.z, id: b.id })),
+        pivot,
+        { canSleep: true, linearDamping: 0.04, angularDamping: 0.08 },
+      )
+      if (!physicsBody) { this.physicsDirty = true; continue }
+
+      const group = new THREE.Group()
+      group.position.copy(pivot)
       const falling: FallingBlock[] = []
-      for (const b of group) {
-        const cubeBuffers = newBuffers()
-        emitCube(cubeBuffers, 0, 0, 0, b.id, false, () => false)
-        const geometry = buffersToGeometry(cubeBuffers)
-        const mesh = new THREE.Mesh(geometry, this.blockMaterial)
-        mesh.position.set(b.x + 0.5, b.y + 0.5, b.z + 0.5)
+      const keys = new Set(blocksInGroup.map((b) => b.key))
+      for (const b of blocksInGroup) {
+        const buffers = newBuffers()
+        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false)
+        const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
+        mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
         mesh.castShadow = true
         mesh.receiveShadow = true
-        this.scene.add(mesh)
-        falling.push({ id: b.id, state: b.state ? { ...b.state } : undefined, x: b.x, y: b.y + 0.5, z: b.z, originKey: b.key, mesh })
+        group.add(mesh)
+        falling.push({
+          id: b.id, state: b.state ? { ...b.state } : undefined,
+          x: b.x, y: b.y, z: b.z, originKey: b.key,
+          localOrigin: new THREE.Vector3(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z),
+          mesh,
+        })
+        const model = this.models.get(b.key)
+        if (model) {
+          model.model.group.position.sub(pivot)
+          group.add(model.model.group)
+        }
+        const glow = this.glows.get(b.key)
+        if (glow) {
+          glow.position.sub(pivot)
+          group.add(glow)
+        }
         this.fallingKeys.add(b.key)
       }
+      const wireEnds: FallingBody['wireEnds'] = []
+      for (const wire of this.wires) {
+        if (keys.has(wire.a)) wireEnds.push({ wire, end: 'a', local: wire.pa.clone().sub(pivot), orig: wire.pa.clone() })
+        if (keys.has(wire.b)) wireEnds.push({ wire, end: 'b', local: wire.pb.clone().sub(pivot), orig: wire.pb.clone() })
+      }
       this.suppress = true
-      for (const b of group) this.world.setBlock(b.x, b.y, b.z, B.AIR)
+      for (const b of blocksInGroup) this.world.setBlock(b.x, b.y, b.z, B.AIR)
       this.suppress = false
-      this.fallingBodies.push({ blocks: falling, velocity: new THREE.Vector3(0, 0, 0), settled: false })
+      this.scene.add(group)
+      this.fallingBodies.push({ blocks: falling, body: physicsBody, group, pivot, wireEnds, settledTime: 0 })
     }
     if (fallingGroups.length) {
       this.rebuildGlue()
       this.powerDirty = true
       this.mechDirty = true
     }
+  }
+
+  private landBody(body: FallingBody) {
+    const translation = body.body.translation()
+    const rotation = body.body.rotation()
+    const pivot = new THREE.Vector3(translation.x, translation.y, translation.z)
+    const q = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+    const rotateDirection = (dir: number) => {
+      const v = new THREE.Vector3(...DIRS[dir]).applyQuaternion(q)
+      const r = [Math.round(v.x), Math.round(v.y), Math.round(v.z)]
+      return DIRS.findIndex((d) => d[0] === r[0] && d[1] === r[1] && d[2] === r[2])
+    }
+    const placements = body.blocks.map((b) => {
+      const center = b.localOrigin.clone().applyQuaternion(q).add(pivot)
+      const state: BlockState | undefined = b.state ? { ...b.state } : undefined
+      if (state?.facing !== undefined) state.facing = rotateDirection(state.facing)
+      if (state?.glue) {
+        let mask = 0
+        for (let face = 0; face < 6; face++) if (state.glue & (1 << face)) {
+          const rotated = rotateDirection(face)
+          if (rotated >= 0) mask |= 1 << rotated
+        }
+        state.glue = mask
+      }
+      return {
+        x: Math.round(center.x - 0.5),
+        y: Math.round(center.y - 0.5),
+        z: Math.round(center.z - 0.5),
+        id: b.id,
+        state: state && Object.keys(state).length ? state : undefined,
+        orig: b.originKey,
+      }
+    })
+
+    const keys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
+    if (keys.size !== placements.length) return false
+    let shiftY = Math.max(0, GROUND_LEVEL - Math.min(...placements.map((p) => p.y)))
+    const fits = (offset: number) => placements.every((p) =>
+      p.y + offset < WORLD_HEIGHT && this.world.getBlock(p.x, p.y + offset, p.z) === B.AIR)
+    let attempts = 0
+    while (!fits(shiftY) && attempts < 24) { shiftY++; attempts++ }
+    if (!fits(shiftY)) return false
+    for (const p of placements) p.y += shiftY
+
+    body.group.updateMatrixWorld(true)
+    for (const b of body.blocks) {
+      const model = this.models.get(b.originKey)
+      if (model && model.model.group.parent === body.group) {
+        const pos = model.model.group.getWorldPosition(new THREE.Vector3())
+        const rot = model.model.group.getWorldQuaternion(new THREE.Quaternion())
+        body.group.remove(model.model.group)
+        this.scene.add(model.model.group)
+        model.model.group.position.copy(pos)
+        model.model.group.quaternion.copy(rot)
+      }
+      const glow = this.glows.get(b.originKey)
+      if (glow && glow.parent === body.group) {
+        const pos = glow.getWorldPosition(new THREE.Vector3())
+        body.group.remove(glow)
+        this.scene.add(glow)
+        glow.position.copy(pos)
+      }
+      this.fallingKeys.delete(b.originKey)
+      b.mesh.geometry.dispose()
+      body.group.remove(b.mesh)
+    }
+    body.group.removeFromParent()
+    this.rigidPhysics.removeRigidBody(body.body)
+    this.suppress = true
+    const keyMap = new Map<string, string>()
+    for (const p of placements) {
+      const key = posKey(p.x, p.y, p.z)
+      this.world.setBlock(p.x, p.y, p.z, p.id, p.state)
+      keyMap.set(p.orig, key)
+    }
+    this.suppress = false
+
+    for (const [oldKey, newKey] of keyMap) {
+      const entry = this.models.get(oldKey)
+      if (entry) {
+        this.models.delete(oldKey)
+        this.models.set(newKey, entry)
+        const [x, y, z] = parseKey(newKey)
+        const state = this.world.getState(x, y, z)
+        if (entry.type === 'motor' && state?.facing !== undefined) setMotorFacing(entry.model, state.facing)
+        if (entry.type === 'box') setBatteryCount(entry.model, state?.batteries ?? 0)
+      }
+      const mounted = this.mountedWheels.get(oldKey)
+      if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
+      const glow = this.glows.get(oldKey)
+      if (glow) { this.glows.delete(oldKey); this.glows.set(newKey, glow) }
+    }
+    for (const we of body.wireEnds) {
+      const currentKey = we.end === 'a' ? we.wire.a : we.wire.b
+      const newKey = keyMap.get(currentKey)
+      if (!newKey) continue
+      const point = we.local.clone().applyQuaternion(q).add(pivot).add(new THREE.Vector3(0, shiftY, 0))
+      if (we.end === 'a') { we.wire.a = newKey; we.wire.pa.copy(point) }
+      else { we.wire.b = newKey; we.wire.pb.copy(point) }
+    }
+    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
+    disposeObject(body.group)
+    this.rebuildGlue()
+    this.powerDirty = true
+    this.mechDirty = true
+    this.physicsDirty = true
+    return true
   }
 
   private contraptionsHasBlock(key: string) {
