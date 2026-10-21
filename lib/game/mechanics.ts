@@ -5,9 +5,11 @@ import {
   type BatteryBoxModel,
   type MotorModel,
   type LedTerminalModel,
+  type WheelModel,
   createBatteryBoxModel,
   createGlowSprite,
   createLedTerminalModel,
+  createArduinoWheelModel,
   createMotorModel,
   createWireMesh,
   disposeObject,
@@ -25,6 +27,7 @@ type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'box'; model: BatteryBoxModel }
   | { type: 'led'; model: LedTerminalModel }
+  | { type: 'wheel'; model: WheelModel; spin: number }
 
 export interface Wire {
   id: number
@@ -102,7 +105,7 @@ export class Mechanics {
   onBlockChange(x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue = false, newHasGlue = false) {
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -136,6 +139,12 @@ export class Mechanics {
       model.group.position.set(x, y, z)
       this.scene.add(model.group)
       this.models.set(key, { type: 'led', model })
+    } else if (newId === B.WHEEL) {
+      const state = this.world.ensureState(x, y, z)
+      const model = createArduinoWheelModel(state.facing ?? 0)
+      model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'wheel', model, spin: 0 })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
@@ -790,6 +799,17 @@ export class Mechanics {
     }
 
     for (const [key, e] of this.models) {
+      if (e.type === 'wheel') {
+        const [x, y, z] = parseKey(key)
+        let drive = 0
+        for (const d of DIRS) {
+          const neighbor = posKey(x + d[0], y + d[1], z + d[2])
+          if (this.world.getBlock(x + d[0], y + d[1], z + d[2]) === B.MOTOR && (this.motorPower.get(neighbor) ?? 0) > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * (this.motorPower.get(neighbor) ?? 0)
+        }
+        e.spin += drive * dt * 5
+        e.model.rim.rotation.z = e.spin
+        continue
+      }
       if (e.type !== 'motor') continue
       const power = this.motorPower.get(key) ?? 0
       const c = this.contraptions.get(key)
