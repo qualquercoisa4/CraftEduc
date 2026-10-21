@@ -1,4 +1,4 @@
-name: Temporary Rapier physics build check
+name: Temporary Rapier physics build check (rerun)
 
 on:
   push:
