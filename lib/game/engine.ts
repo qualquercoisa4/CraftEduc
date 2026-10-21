@@ -485,6 +485,12 @@ export class Engine {
       return
     }
 
+    if (hit.id === B.MOTOR && item === 'wheel') {
+      const mounted = this.mech.mountWheel(hit.x, hit.y, hit.z)
+      showToast(mounted ? 'Roda encaixada no eixo do motor' : 'Este motor já tem uma roda encaixada')
+      return
+    }
+
     if (hit.id === B.MOTOR && (item === null || item === 'motor') && !this.player.sneaking) {
       const f = this.mech.rotateMotor(hit.x, hit.y, hit.z)
       sfx.rotate()
@@ -966,10 +972,10 @@ export class Engine {
         if (!c || !c.mesh || c.dirty) pending.push({ cx: pcx + dx, cz: pcz + dz, d: c?.mesh ? -1 : d })
       }
     pending.sort((a, b) => a.d - b.d)
-    let budget = 6
+    let budget = 2
     for (const p of pending) {
       const c = this.world.ensureChunk(p.cx, p.cz)
-      if (p.d >= 0 && budget-- <= 0) break
+      if (budget-- <= 0) break
       this.world.buildChunkMesh(c)
     }
 
