@@ -417,7 +417,7 @@ export class Engine {
           this.scene.remove(avatar.group)
           avatar.group.traverse((object) => {
             if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
-              object.geometry?.dispose?.()
+              if (object instanceof THREE.Mesh) object.geometry.dispose()
               const materials = Array.isArray(object.material) ? object.material : [object.material]
               for (const material of materials) {
                 if ('map' in material && material.map) material.map.dispose()
@@ -446,7 +446,7 @@ export class Engine {
       this.scene.remove(avatar.group)
       avatar.group.traverse((object) => {
         if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
-          object.geometry?.dispose?.()
+          if (object instanceof THREE.Mesh) object.geometry.dispose()
           const materials = Array.isArray(object.material) ? object.material : [object.material]
           for (const material of materials) {
             if ('map' in material && material.map) material.map.dispose()
