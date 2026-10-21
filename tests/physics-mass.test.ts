@@ -221,8 +221,10 @@ async function main() {
     'the motor must remain powered during physical simulation')
   const finalChassisY = machine.chassisBody.translation().y
   assert.ok(Number.isFinite(finalChassisY), 'chassis height must remain finite')
-  assert.ok(finalChassisY < initialChassisY + 2,
-    `chassis must not drift upward indefinitely (start=${initialChassisY.toFixed(3)}, end=${finalChassisY.toFixed(3)})`)
+  assert.ok(Math.abs(finalChassisY - initialChassisY) < 0.2,
+    `chassis must remain supported instead of being teleported or falling away (start=${initialChassisY.toFixed(3)}, end=${finalChassisY.toFixed(3)})`)
+  assert.equal(mockGameWorld.getBlock(2, 4, 2), B.IRON,
+    'a dynamic assembly must not wake and remove the ground support beneath its chassis')
   assert.ok(machine.angle > 0.15,
     `the powered motor must physically rotate its rotor (angle=${machine.angle.toFixed(3)} rad)`)
   console.log(`PASS: after 120 frames, rotor angle=${machine.angle.toFixed(3)} rad; chassis ΔY=${(finalChassisY - initialChassisY).toFixed(3)} m`)
