@@ -6,6 +6,7 @@ export interface BlockState {
   facing?: number
   batteries?: number
   glue?: number
+  mountedWheel?: boolean
 }
 
 const CS = CHUNK_SIZE
