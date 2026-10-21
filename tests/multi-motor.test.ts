@@ -115,7 +115,7 @@ async function main() {
     internals.rigidPhysics.removeRigidBody(active.chassisBody)
     for (const rotor of active.extraRotors) internals.rigidPhysics.removeRigidBody(rotor.rotorBody)
   }
-  for (const body of internals.fallingBodies) internals.rigidPhysics.removeRigidBody(body as never)
+  for (const body of internals.fallingBodies) internals.rigidPhysics.removeRigidBody(body.body as never)
   internals.rigidPhysics.dispose()
   scene.clear()
   console.log(`PASS: two independent rotors turned (primary=${machine.angle.toFixed(3)}, secondary=${extra.angle.toFixed(3)})`)
