@@ -66,6 +66,7 @@ jobs:
             fi
           done
           [[ "$bad" -eq 0 ]] || exit 17
+          mkdir -p /tmp/crafteduc
           cat uploads/part-*.b64 | base64 --decode > /tmp/crafteduc/source.tar.xz
           actual_archive="$(sha1sum /tmp/crafteduc/source.tar.xz | cut -d' ' -f1)"
           echo "ARCHIVE_SHA1 $actual_archive"
