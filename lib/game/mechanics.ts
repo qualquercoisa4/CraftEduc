@@ -128,6 +128,10 @@ export class Mechanics {
   private physicsSynced = false
   private networkAuthority = true
   private desiredNetworkMachines: Set<string> | null = null
+  // The authoritative hinge angle is replicated separately from the body's
+  // quaternion: deriving it from a client-side Rapier body can lose turns or
+  // use a slightly different joint reference frame.
+  private networkMachineAngles = new Map<string, number>()
   private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState, ownerKey?: string | null) => void) | null = null
   private networkBlockOwner: ((x: number, y: number, z: number) => string | null) | null = null
   private networkFallingVisuals = new Map<string, {
@@ -1681,7 +1685,11 @@ export class Mechanics {
       if (!c) continue
       queuePose(`machine:${c.motorKey}:rotor`, c.rotorBody, machine.rotor)
       queuePose(`machine:${c.motorKey}:chassis`, c.chassisBody, machine.chassis)
-      if (Number.isFinite(Number(machine.angle))) c.angle = Number(machine.angle)
+      if (Number.isFinite(Number(machine.angle))) {
+        const angle = Number(machine.angle)
+        if (!this.networkMachineAngles.has(c.motorKey)) c.angle = angle
+        this.networkMachineAngles.set(c.motorKey, angle)
+      }
       if (Number.isFinite(Number(machine.speed))) c.speed = Number(machine.speed)
     }
     const incomingFalling = Array.isArray(record.falling) ? record.falling.slice(0, 128) : []
@@ -1794,6 +1802,9 @@ export class Mechanics {
         }
       }
     }
+    for (const key of this.networkMachineAngles.keys()) {
+      if (!activeMachineKeys.has(key)) this.networkMachineAngles.delete(key)
+    }
     for (const key of this.networkBodyTargets.keys()) {
       if (key.startsWith('machine:') && !activeNetworkBodyKeys.has(key)) this.networkBodyTargets.delete(key)
       if (key.startsWith('falling:') && !activeNetworkFallingKeys.has(key)) this.networkBodyTargets.delete(key)
@@ -1830,6 +1841,15 @@ export class Mechanics {
       }
       return { position: predictedPosition, rotation: predictedRotation }
     }
+    for (const [key, targetAngle] of this.networkMachineAngles) {
+      const machine = this.contraptions.get(key)
+      if (!machine) continue
+      // Interpolate the unwrapped authoritative angle independently of the
+      // physics quaternion so shaft visuals continue rotating through full turns.
+      let delta = targetAngle - machine.angle
+      delta = ((delta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI
+      machine.angle += delta * blend
+    }
     for (const target of this.networkBodyTargets.values()) {
       const body = target.body
       const predicted = extrapolatedPose(target.position, target.rotation, target.linearVelocity, target.angularVelocity, target.receivedAt)
@@ -1860,10 +1880,12 @@ export class Mechanics {
     for (const c of this.contraptions.values()) {
       syncGroup(c.chassisGroup, c.chassisBody)
       syncGroup(c.group, c.rotorBody)
-      const rotation = c.rotorBody.rotation()
-      const projected = rotation.x * c.axis.x + rotation.y * c.axis.y + rotation.z * c.axis.z
-      c.angle = 2 * Math.atan2(projected, rotation.w)
-      if (c.angle < 0) c.angle += Math.PI * 2
+      if (this.networkAuthority) {
+        const rotation = c.rotorBody.rotation()
+        const projected = rotation.x * c.axis.x + rotation.y * c.axis.y + rotation.z * c.axis.z
+        c.angle = 2 * Math.atan2(projected, rotation.w)
+        if (c.angle < 0) c.angle += Math.PI * 2
+      }
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor') motor.model.shaft.rotation.z = c.angle
       for (const end of c.wireEnds) {
