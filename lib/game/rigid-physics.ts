@@ -11,6 +11,30 @@ export interface PhysicsVoxel {
   key?: string
 }
 
+/**
+ * Relative block mass in kilograms per voxel. Density is applied to each
+ * Rapier collider, so multi-block assemblies get their mass and inertia from
+ * the actual material mix instead of treating every block as equally heavy.
+ */
+export const BLOCK_MASS: Readonly<Record<number, number>> = {
+  [B.AIR]: 0,
+  [B.ALUMINUM]: 0.18,
+  [B.COMPONENT]: 0.28,
+  [B.LED]: 0.12,
+  [B.WHEEL]: 0.32,
+  [B.GEAR]: 0.42,
+  [B.BATTERY_BOX]: 0.65,
+  [B.ROBOTICS]: 0.9,
+  [B.WOOD]: 1.2,
+  [B.MOTOR]: 1.4,
+  [B.IRON]: 2.6,
+}
+
+export function blockMass(id: number) {
+  return BLOCK_MASS[id] ?? 0.8
+}
+
+
 export interface PhysicsBodyOptions {
   lockRotation?: boolean
   canSleep?: boolean
@@ -128,6 +152,9 @@ export class RigidPhysics {
       this.rapierWorld.createCollider(
         RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
+          // Rapier derives the body's total mass and inertia from every
+          // block collider, so light aluminum can be lifted by a wood arm.
+          .setDensity(blockMass(voxel.id))
           .setFriction(0.82)
           .setRestitution(0.01),
         body,
