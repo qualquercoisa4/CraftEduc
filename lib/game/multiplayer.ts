@@ -183,9 +183,9 @@ export class MultiplayerClient {
     }
     this.players = payload.players ?? []
     for (const message of payload.chat ?? []) {
-      if (!this.seenChatIds.has(message.id)) {
+      if (!this.seenChatIds.has(message.id) && this.callbacks.onChat) {
         this.seenChatIds.add(message.id)
-        this.callbacks.onChat?.(message)
+        this.callbacks.onChat(message)
       }
     }
     this.callbacks.onRules?.(this.rules)
