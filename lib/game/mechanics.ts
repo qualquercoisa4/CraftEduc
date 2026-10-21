@@ -1281,6 +1281,11 @@ export class Mechanics {
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
+    if (this.rigidPhysics.ready && !this.physicsSynced) {
+      this.physicsSynced = true
+      this.physicsDirty = true
+      this.mechDirty = true
+    }
     this.updateGravity(dt)
     this.powerCooldown -= dt
     if (this.powerDirty && this.powerCooldown <= 0) {
@@ -1334,177 +1339,82 @@ export class Mechanics {
     }
 
     for (const c of [...this.contraptions.values()]) {
-      const [mx, my, mz] = c.motorPos
-      const motorAlive = this.contraptions.has(c.motorKey) && this.models.get(c.motorKey)?.type === 'motor'
-      const power = motorAlive ? (this.motorPower.get(c.motorKey) ?? 0) : 0
+      const motorAlive = this.models.get(c.motorKey)?.type === 'motor'
       if (!motorAlive) {
         this.disassemble(c, Math.round(c.angle / HALF_PI) % 4)
         continue
       }
+      const power = this.motorPower.get(c.motorKey) ?? 0
+      const motor = this.models.get(c.motorKey)
       if (power > 0) {
-        const model = this.models.get(c.motorKey)
         const direction = this.motorDirection.get(c.motorKey) ?? 1
-        const nextSpeed = power * 1.05 * direction
-        let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
-        if (nextAngle < 0) nextAngle += Math.PI * 2
-        if (model?.type === 'motor' && !this.canRotateContraption(c, nextAngle)) {
-          // If the arm is trying to penetrate the floor, the ground reaction
-          // lifts the complete machine. Never allow rotor blocks to be clipped
-          // away by the floor's static voxel layer.
-          const qNext = new THREE.Quaternion().setFromAxisAngle(c.axis, nextAngle)
-          const pivot = c.group.position.clone()
-          let floorContact = false
-          for (const b of c.blocks) {
-            const center = new THREE.Vector3(...b.rel).applyQuaternion(qNext).add(pivot)
-            const ex = new THREE.Vector3(1,0,0).applyQuaternion(qNext)
-            const ey = new THREE.Vector3(0,1,0).applyQuaternion(qNext)
-            const ez = new THREE.Vector3(0,0,1).applyQuaternion(qNext)
-            const halfY=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
-            if (center.y-halfY < GROUND_LEVEL-1e-4) { floorContact=true; break }
-          }
-          if (floorContact) {
-            // Resolve the impact at the attempted angle BEFORE lifting. The
-            // old code lifted vertically first, which removed ground contact
-            // before the horizontal reaction had a chance to move the chassis.
-            let pushX = 0, pushZ = 0, pushWeight = 0
-            for (const b of c.blocks) {
-              const rel = new THREE.Vector3(...b.rel).applyQuaternion(qNext)
-              const center = rel.clone().add(pivot)
-              const ex = new THREE.Vector3(1,0,0).applyQuaternion(qNext)
-              const ey = new THREE.Vector3(0,1,0).applyQuaternion(qNext)
-              const ez = new THREE.Vector3(0,0,1).applyQuaternion(qNext)
-              const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
-              const bottom = center.y - halfY
-              const tangent = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(nextSpeed)
-              if (bottom <= GROUND_LEVEL + 0.12 && tangent.y < -0.01) {
-                pushX -= tangent.x
-                pushZ -= tangent.z
-                pushWeight += 1
-              }
-            }
-            if (pushWeight) { pushX /= pushWeight; pushZ /= pushWeight }
-            let moved = false
-            if (pushWeight && Math.hypot(pushX,pushZ) > 0.01) {
-              const dx = Math.abs(pushX) >= Math.abs(pushZ) ? Math.sign(pushX) : 0
-              const dz = dx ? 0 : Math.sign(pushZ)
-              // Move opposite the arm sweep while raising the entire machine;
-              // this creates a real step instead of erasing/clipping the arm.
-              if (dx || dz) moved = this.translateContraption(c,dx,1,dz,nextAngle)
-            }
-            if (!moved) moved = this.translateContraption(c,0,1,0,nextAngle)
-            if (moved) {
-              c.speed = nextSpeed
-              c.angle = nextAngle
-              const movedModel=this.models.get(c.motorKey)
-              if (movedModel?.type==='motor') movedModel.status='driving'
-            } else {
-              model.status = 'stalled'
-              c.speed = 0
-            }
-          } else {
-            c.speed = nextSpeed
-            c.angle = nextAngle
-            if (model?.type === 'motor') model.status = 'driving'
-          }
-        } else {
-          c.speed = nextSpeed
-          c.angle = nextAngle
-          if (model?.type === 'motor') model.status = 'driving'
-        }
+        c.speed = power * 1.05 * direction
+        c.unpoweredTime = 0
+        // Torque is applied through the shaft joint. Rapier computes the
+        // resulting rotation, chassis reaction, and every contact impulse.
+        c.joint.configureMotorVelocity(c.speed, Math.max(3, power * 16))
+        if (motor?.type === 'motor') motor.status = 'driving'
       } else {
-        const direction = Math.sign(c.speed || 1)
-        const target = direction > 0
-          ? Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
-          : Math.floor(c.angle / HALF_PI + 1e-4) * HALF_PI
-        const step = direction * Math.max(Math.abs(c.speed), 1.2) * dt
-        c.angle = direction > 0 ? Math.min(target, c.angle + step) : Math.max(target, c.angle + step)
-        const reached = direction > 0 ? c.angle >= target - 1e-5 : c.angle <= target + 1e-5
-        if (reached) {
-          this.disassemble(c, ((Math.round(target / HALF_PI) % 4) + 4) % 4)
-          continue
+        c.unpoweredTime += dt
+        c.joint.configureMotorVelocity(0, 6)
+        if (motor?.type === 'motor') motor.status = 'idle'
+        const angular = c.rotorBody.angvel()
+        const spin = Math.hypot(angular.x, angular.y, angular.z)
+        if (c.unpoweredTime >= 0.55 && spin < 0.65) {
+          this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
         }
-      }
-      c.group.quaternion.setFromAxisAngle(c.axis, c.angle)
-      // Continuous rigid-body motion: the entire glued assembly leaves the
-      // voxel grid while the motor is powered. Floor contact applies equal and
-      // opposite force; gravity and inertia keep motion smooth between contacts.
-      if (Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
-        const pivot = c.group.position.clone()
-        const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
-        const ex = new THREE.Vector3(1,0,0).applyQuaternion(q)
-        const ey = new THREE.Vector3(0,1,0).applyQuaternion(q)
-        const ez = new THREE.Vector3(0,0,1).applyQuaternion(q)
-        const halfY = 0.5 * (Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
-        let contacts = 0
-        const reaction = new THREE.Vector3()
-        let upward = 0
-        for (const b of c.blocks) {
-          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
-          const center = rel.clone().add(pivot)
-          const bottom = center.y - halfY
-          const tangent = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
-          if (bottom <= GROUND_LEVEL + 0.1 && bottom >= GROUND_LEVEL - 0.12 && tangent.y < -0.01) {
-            // Ground force opposes the arm's tangential movement. Keep its
-            // horizontal and vertical components; do not teleport any blocks.
-            reaction.x -= tangent.x
-            reaction.z -= tangent.z
-            upward += -tangent.y
-            contacts++
-          }
-        }
-        if (contacts > 0 && power > 0) {
-          reaction.multiplyScalar(1 / contacts)
-          const mass = Math.max(1, c.blocks.length * 0.35 + 1)
-          c.velocity.x += reaction.x * dt * 2.2 / mass
-          c.velocity.z += reaction.z * dt * 2.2 / mass
-          c.velocity.y += Math.min(5, upward / contacts * 0.9) * dt
-        }
-        // Gravity and drag apply continuously, even when the arms are not in
-        // contact. This is what makes the assembly fall back down naturally.
-        c.velocity.y -= 9.81 * dt
-        c.velocity.x *= Math.exp(-0.65 * dt)
-        c.velocity.z *= Math.exp(-0.65 * dt)
-        // Accumulate physical displacement, then move the motor + non-rotating
-        // chassis by whole voxels. The rotor keeps its independent continuous
-        // angle around the translated pivot, without turning the chassis.
-        c.travel.addScaledVector(c.velocity, dt)
-        const axesToMove: { axis: 'x' | 'y' | 'z'; dx: number; dy: number; dz: number }[] = [
-          { axis: 'x', dx: 1, dy: 0, dz: 0 },
-          { axis: 'y', dx: 0, dy: 1, dz: 0 },
-          { axis: 'z', dx: 0, dy: 0, dz: 1 },
-        ]
-        for (const axisMove of axesToMove) {
-          let steps = 0
-          while (Math.abs(c.travel[axisMove.axis]) >= 1 && steps < 2) {
-            const sign = Math.sign(c.travel[axisMove.axis])
-            const moved = this.translateContraption(
-              c,
-              axisMove.dx * sign,
-              axisMove.dy * sign,
-              axisMove.dz * sign,
-              c.angle,
-            )
-            if (!moved) {
-              c.travel[axisMove.axis] = 0
-              c.velocity[axisMove.axis] = 0
-              break
-            }
-            c.travel[axisMove.axis] -= sign
-            steps++
-          }
-        }
-      }
-      if (c.wireEnds.length) {
-        c.group.updateMatrixWorld(true)
-        for (const we of c.wireEnds) {
-          const p = c.group.localToWorld(we.local.clone())
-          if (we.end === 'a') we.wire.pa.copy(p)
-          else we.wire.pb.copy(p)
-        }
-        const touched = new Set(c.wireEnds.map((w) => w.wire))
-        for (const w of touched) updateWireMesh(w.mesh, w.pa, w.pb)
       }
     }
+
+    // All dynamic voxel groups and motor rotors use this one solver. No
+    // rotation-specific floor correction or per-motor translation branch.
+    if (this.rigidPhysics.ready) {
+      this.rigidPhysics.step(dt)
+      this.syncRigidTransforms()
+    }
+  }
+
+  private syncRigidTransforms() {
+    const syncGroup = (group: THREE.Group, body: RAPIER.RigidBody) => {
+      const position = body.translation()
+      const rotation = body.rotation()
+      group.position.set(position.x, position.y, position.z)
+      group.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w)
+      group.updateMatrixWorld(true)
+    }
+    const touchedWires = new Set<Wire>()
+    for (const c of this.contraptions.values()) {
+      syncGroup(c.chassisGroup, c.chassisBody)
+      syncGroup(c.group, c.rotorBody)
+      const rotation = c.rotorBody.rotation()
+      const projected = rotation.x * c.axis.x + rotation.y * c.axis.y + rotation.z * c.axis.z
+      c.angle = 2 * Math.atan2(projected, rotation.w)
+      if (c.angle < 0) c.angle += Math.PI * 2
+      const motor = this.models.get(c.motorKey)
+      if (motor?.type === 'motor') motor.model.shaft.rotation.z = c.angle
+      for (const end of c.wireEnds) {
+        const point = c.group.localToWorld(end.local.clone())
+        if (end.end === 'a') end.wire.pa.copy(point)
+        else end.wire.pb.copy(point)
+        touchedWires.add(end.wire)
+      }
+      for (const end of c.chassisWireEnds) {
+        const point = c.chassisGroup.localToWorld(end.local.clone())
+        if (end.end === 'a') end.wire.pa.copy(point)
+        else end.wire.pb.copy(point)
+        touchedWires.add(end.wire)
+      }
+    }
+    for (const body of this.fallingBodies) {
+      syncGroup(body.group, body.body)
+      for (const end of body.wireEnds) {
+        const point = body.group.localToWorld(end.local.clone())
+        if (end.end === 'a') end.wire.pa.copy(point)
+        else end.wire.pb.copy(point)
+        touchedWires.add(end.wire)
+      }
+    }
+    for (const wire of touchedWires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
   }
 
   /**
