@@ -1290,8 +1290,10 @@ export class Mechanics {
     if (this.powerDirty && this.powerCooldown <= 0) {
       this.powerCooldown = 0.08
       this.powerDirty = false
-      this.recomputePower()
-      this.mechDirty = true
+      if (this.networkAuthority) {
+        this.recomputePower()
+        this.mechDirty = true
+      }
     }
 
     if (this.mechDirty) {
@@ -1318,7 +1320,7 @@ export class Mechanics {
           const neighbor = posKey(x + d[0], y + d[1], z + d[2])
           if (this.world.getBlock(x + d[0], y + d[1], z + d[2]) === B.MOTOR && (this.motorPower.get(neighbor) ?? 0) > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * (this.motorPower.get(neighbor) ?? 0)
         }
-        e.spin += drive * dt * 5
+        if (this.networkAuthority) e.spin += drive * dt * 5
         e.model.rim.rotation.z = e.spin
         continue
       }
@@ -1328,12 +1330,12 @@ export class Mechanics {
       if (c) {
         e.model.shaft.rotation.z = c.angle
       } else if (power > 0 && e.status !== 'stalled') {
-        e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
+        if (this.networkAuthority) e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
       }
       const mounted = this.mountedWheels.get(key)
       if (mounted) {
-        mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
+        if (this.networkAuthority) mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
         mounted.model.rim.rotation.z = mounted.spin
         // The wheel is visual here. Do not translate/disassemble the voxel
         // assembly from this legacy traction path: the continuous rigid-body
@@ -1454,7 +1456,16 @@ export class Mechanics {
       a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
       pa: this.vectorSnapshot(wire.pa), pb: this.vectorSnapshot(wire.pb),
     }))
-    return { version: 1, machines, falling, wires }
+    const motorVisuals = [...this.models.entries()].flatMap(([key, entry]) => entry.type === 'motor'
+      ? [{ key, spin: entry.spin, status: entry.status }] : [])
+    const wheelVisuals = [...this.models.entries()].flatMap(([key, entry]) => entry.type === 'wheel'
+      ? [{ key, spin: entry.spin }] : [])
+    const mountedWheelVisuals = [...this.mountedWheels.entries()].map(([key, entry]) => ({ key, spin: entry.spin }))
+    return {
+      version: 1, machines, falling, wires, motorVisuals, wheelVisuals, mountedWheelVisuals,
+      motorPower: [...this.motorPower.entries()], motorDirection: [...this.motorDirection.entries()],
+      poweredLeds: [...this.world.poweredLeds],
+    }
   }
 
   applyNetworkSnapshot(value: Record<string, unknown>) {
@@ -1472,6 +1483,51 @@ export class Mechanics {
       if (validVector(v.angularVelocity)) body.setAngvel(v.angularVelocity, true)
     }
     const record = value as Record<string, unknown>
+    const previousPowered = new Set(this.world.poweredLeds)
+    if (Array.isArray(record.poweredLeds)) {
+      this.world.poweredLeds.clear()
+      for (const key of record.poweredLeds.slice(0, 10000)) if (typeof key === 'string' && /^-?\\d+,-?\\d+,-?\\d+$/.test(key)) this.world.poweredLeds.add(key)
+      if (previousPowered.size !== this.world.poweredLeds.size || [...previousPowered].some((key) => !this.world.poweredLeds.has(key))) {
+        for (const chunk of this.world.chunks.values()) chunk.dirty = true
+      }
+    }
+    const setNumericMap = (field: string, target: Map<string, number>, min: number, max: number) => {
+      const next = new Map<string, number>()
+      const values = record[field]
+      if (Array.isArray(values)) for (const entry of values.slice(0, 4096)) {
+        if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== 'string' || !Number.isFinite(Number(entry[1]))) continue
+        next.set(entry[0], Math.max(min, Math.min(max, Number(entry[1]))))
+      }
+      target.clear()
+      for (const [key, number] of next) target.set(key, number)
+    }
+    setNumericMap('motorPower', this.motorPower, 0, 100)
+    setNumericMap('motorDirection', this.motorDirection, -1, 1)
+    this.powerDirty = false
+    if (Array.isArray(record.motorVisuals)) for (const raw of record.motorVisuals.slice(0, 2048)) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      if (typeof item.key !== 'string') continue
+      const entry = this.models.get(item.key)
+      if (entry?.type !== 'motor') continue
+      if (Number.isFinite(Number(item.spin))) entry.spin = Number(item.spin)
+      if (item.status === 'idle' || item.status === 'stalled' || item.status === 'driving') entry.status = item.status
+      if (!this.contraptions.has(item.key)) entry.model.shaft.rotation.z = entry.spin
+    }
+    if (Array.isArray(record.wheelVisuals)) for (const raw of record.wheelVisuals.slice(0, 2048)) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      if (typeof item.key !== 'string' || !Number.isFinite(Number(item.spin))) continue
+      const entry = this.models.get(item.key)
+      if (entry?.type === 'wheel') { entry.spin = Number(item.spin); entry.model.rim.rotation.z = entry.spin }
+    }
+    if (Array.isArray(record.mountedWheelVisuals)) for (const raw of record.mountedWheelVisuals.slice(0, 2048)) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      if (typeof item.key !== 'string' || !Number.isFinite(Number(item.spin))) continue
+      const entry = this.mountedWheels.get(item.key)
+      if (entry) { entry.spin = Number(item.spin); entry.model.rim.rotation.z = entry.spin }
+    }
     const incomingMachines = Array.isArray(record.machines) ? record.machines.slice(0, 128) : []
     const activeMachineKeys = new Set(incomingMachines.flatMap((raw) =>
       raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).motorKey === 'string'
@@ -1574,6 +1630,7 @@ export class Mechanics {
         if (body) pose(body.body, item)
       }
     }
+    this.mechDirty = true
     if (this.rigidPhysics.ready) this.syncRigidTransforms()
   }
 
