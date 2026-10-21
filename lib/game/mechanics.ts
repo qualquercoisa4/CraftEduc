@@ -1650,25 +1650,34 @@ export class Mechanics {
       if (typeof item.key !== 'string') continue
       const entry = this.models.get(item.key)
       if (entry?.type !== 'motor') continue
-      // Keep the client's visual rotation advancing locally between HTTP snapshots.
-      // Replacing spin every poll (140 ms) caused a visible stop/start jerk even
-      // though motor power and direction are already authoritative in this snapshot.
+      // A motor that belongs to an articulated machine gets its angle from the
+      // machine's authoritative rigid-body snapshot below. Only standalone motor
+      // shafts consume this visual angle, preventing two competing rotations.
+      if (!this.contraptions.has(item.key)) {
+        if (Number.isFinite(Number(item.spin))) entry.spin = Number(item.spin)
+        entry.model.shaft.rotation.z = entry.spin
+      }
       if (item.status === 'idle' || item.status === 'stalled' || item.status === 'driving') entry.status = item.status
     }
     if (Array.isArray(record.wheelVisuals)) for (const raw of record.wheelVisuals.slice(0, 2048)) {
       if (!raw || typeof raw !== 'object') continue
       const item = raw as Record<string, unknown>
       if (typeof item.key !== 'string' || !Number.isFinite(Number(item.spin))) continue
-      // Wheel rotation is advanced from the synchronized motorPower/direction
-      // every frame. Do not snap the rendered angle back to a 7 Hz-ish snapshot.
+      const entry = this.models.get(item.key)
+      if (entry?.type === 'wheel') {
+        entry.spin = Number(item.spin)
+        entry.model.rim.rotation.z = entry.spin
+      }
     }
     if (Array.isArray(record.mountedWheelVisuals)) for (const raw of record.mountedWheelVisuals.slice(0, 2048)) {
       if (!raw || typeof raw !== 'object') continue
       const item = raw as Record<string, unknown>
       if (typeof item.key !== 'string' || !Number.isFinite(Number(item.spin))) continue
       const entry = this.mountedWheels.get(item.key)
-      // Mounted wheels use the same continuous local visual integration as
-      // regular wheels; snapshots supply the state, not a periodic visual reset.
+      if (entry) {
+        entry.spin = Number(item.spin)
+        entry.model.rim.rotation.z = entry.spin
+      }
     }
     const incomingMachines = Array.isArray(record.machines) ? record.machines.slice(0, 128) : []
     const activeMachineKeys = new Set(incomingMachines.flatMap((raw) =>
