@@ -17,7 +17,7 @@ import {
 } from './constants'
 import { Mechanics } from './mechanics'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { createBatteryBoxModel, createMotorModel, wireCurve } from './models'
+import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, wireCurve } from './models'
 import { Particles } from './particles'
 import { Player } from './player'
 import { HORIZON_COLOR, createSky } from './sky'
@@ -45,7 +45,7 @@ export interface Hit {
 let current: Engine | null = null
 export const getEngine = () => current
 
-const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS])
+const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, B.WHEEL])
 
 export class Engine {
   renderer: THREE.WebGLRenderer
@@ -502,7 +502,7 @@ export class Engine {
     if (py < 0 || py >= WORLD_HEIGHT) return
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
-    const state = block === B.MOTOR ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
+    const state = block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
     this.world.setBlock(px, py, pz, block, state)
     sfx.place(METAL.has(block))
     this.lastUseWasPlace = true
@@ -644,6 +644,15 @@ export class Engine {
       g.scale.setScalar(0.5)
       g.position.set(0.48, -0.42, -0.75)
       g.rotation.set(0.1, 0.5, 0)
+      return g
+    }
+    if (item === 'wheel') {
+      const m = createArduinoWheelModel(0).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.7)
+      g.position.set(0.48, -0.45, -0.78)
+      g.rotation.set(0.2, 0.5, 0)
       return g
     }
     if (item === 'battery_box') {

@@ -14,6 +14,7 @@ export const B = {
   BATTERY_BOX: 7,
   ALUMINUM: 8,
   GEAR: 9,
+  WHEEL: 10,
 } as const
 
 export type BlockId = number
@@ -33,6 +34,7 @@ export const BLOCK_CONDUCTIVITY: Readonly<Record<number, number>> = {
   [B.BATTERY_BOX]: 0,
   [B.ALUMINUM]: 0.95,
   [B.GEAR]: 0.90,
+  [B.WHEEL]: 0,
 }
 
 export function blockConductivity(id: number) {
@@ -52,11 +54,11 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX
+  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL
 }
 
 export function isModelBlock(id: number) {
-  return id === B.MOTOR || id === B.BATTERY_BOX
+  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
@@ -81,6 +83,7 @@ export type ItemId =
   | 'glue'
   | 'battery_box'
   | 'battery'
+  | 'wheel'
 
 export type CategoryId = 'all' | 'blocks' | 'components' | 'motors' | 'wiring' | 'tools' | 'power'
 
@@ -123,6 +126,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     block: B.ALUMINUM,
   },
   gear: { name: 'Bloco de Engrenagem', description: 'Engrenagens de latão. Condutividade: 90%.', category: 'blocks', block: B.GEAR },
+  wheel: { name: 'Roda de Arduino', description: 'Roda de borracha com aro amarelo de cinco raios e boa aderência para veículos robóticos.', category: 'motors', block: B.WHEEL },
   led: {
     name: 'LED',
     description: 'LED polarizado: ânodo (+) e cátodo (−). Só acende com a polaridade correta.',
@@ -171,6 +175,7 @@ export const ITEM_ORDER: ItemId[] = [
   'glue',
   'battery_box',
   'battery',
+  'wheel',
 ]
 
 export const BLOCK_TO_ITEM: Record<number, ItemId> = {
@@ -183,6 +188,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.LED]: 'led',
   [B.MOTOR]: 'motor',
   [B.BATTERY_BOX]: 'battery_box',
+  [B.WHEEL]: 'wheel',
 }
 
 export const DEFAULT_HOTBAR: (ItemId | null)[] = [
@@ -195,6 +201,7 @@ export const DEFAULT_HOTBAR: (ItemId | null)[] = [
   'glue',
   'battery_box',
   'battery',
+  'wheel',
 ]
 
 export const posKey = (x: number, y: number, z: number) => `${x},${y},${z}`

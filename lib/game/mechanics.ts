@@ -5,9 +5,11 @@ import {
   type BatteryBoxModel,
   type MotorModel,
   type LedTerminalModel,
+  type WheelModel,
   createBatteryBoxModel,
   createGlowSprite,
   createLedTerminalModel,
+  createArduinoWheelModel,
   createMotorModel,
   createWireMesh,
   disposeObject,
@@ -25,6 +27,7 @@ type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'box'; model: BatteryBoxModel }
   | { type: 'led'; model: LedTerminalModel }
+  | { type: 'wheel'; model: WheelModel; spin: number }
 
 export interface Wire {
   id: number
@@ -42,6 +45,22 @@ interface CBlock {
   id: number
   state?: BlockState
   origKey: string
+}
+
+interface FallingBlock {
+  id: number
+  state?: BlockState
+  x: number
+  y: number
+  z: number
+  originKey: string
+  mesh: THREE.Mesh
+}
+
+interface FallingBody {
+  blocks: FallingBlock[]
+  velocity: THREE.Vector3
+  settled: boolean
 }
 
 interface Contraption {
@@ -70,6 +89,9 @@ export class Mechanics {
   private mechDirty = true
   private wireId = 0
   private gravityTimer = 0
+  private fallingBodies: FallingBody[] = []
+  private fallingKeys = new Set<string>()
+  private readonly gravity = 18
 
   constructor(
     private world: World,
@@ -83,7 +105,7 @@ export class Mechanics {
   onBlockChange(x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue = false, newHasGlue = false) {
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -117,6 +139,12 @@ export class Mechanics {
       model.group.position.set(x, y, z)
       this.scene.add(model.group)
       this.models.set(key, { type: 'led', model })
+    } else if (newId === B.WHEEL) {
+      const state = this.world.ensureState(x, y, z)
+      const model = createArduinoWheelModel(state.facing ?? 0)
+      model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'wheel', model, spin: 0 })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
@@ -575,79 +603,149 @@ export class Mechanics {
   }
 
   /**
-   * Discrete voxel gravity for loose parts and glued assemblies. A connected
-   * glue group moves as one unit; groups touching the floor or another
-   * assembly remain supported. Wired/model blocks are left in place until
-   * their terminals and model transforms can be moved atomically.
+   * Rigid-body-like voxel gravity. Unsupported glued components are removed
+   * from the static world and rendered as real moving meshes until they land.
+   * Motion is integrated every frame, not teleported between grid cells.
    */
   private updateGravity(dt: number) {
     this.gravityTimer += dt
-    if (this.gravityTimer < 0.16) return
-    this.gravityTimer = 0
+    if (this.gravityTimer >= 0.22) {
+      this.gravityTimer = 0
+      this.detectUnsupportedBodies()
+    }
+    if (!this.fallingBodies.length) return
+    const step = Math.min(dt, 0.05)
+    for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
+      const body = this.fallingBodies[i]
+      body.velocity.y = Math.max(-14, body.velocity.y - this.gravity * step)
+      const dy = body.velocity.y * step
+      let allowed = dy
+      if (dy < 0) {
+        let floorDistance = Infinity
+        for (const b of body.blocks) {
+          const currentCellY = Math.floor(b.y - 0.5 - 1e-4)
+          const nextBottom = b.y - 0.5 + dy
+          const nextCellY = Math.floor(nextBottom - 1e-4)
+          if (nextCellY < currentCellY) {
+            for (let y = currentCellY - 1; y >= nextCellY; y--) {
+              const key = posKey(Math.round(b.x), y, Math.round(b.z))
+              if (this.world.getBlock(Math.round(b.x), y, Math.round(b.z)) !== B.AIR && !this.fallingKeys.has(key)) {
+                floorDistance = Math.min(floorDistance, b.y - 0.5 - (y + 1))
+                break
+              }
+            }
+          }
+          if (b.y + dy - 0.5 <= GROUND_LEVEL + 1) floorDistance = Math.min(floorDistance, b.y - 0.5 - (GROUND_LEVEL + 1))
+        }
+        if (floorDistance !== Infinity && -dy >= floorDistance) {
+          allowed = -Math.max(0, floorDistance)
+          body.velocity.y = 0
+          body.settled = true
+        }
+      }
+      for (const b of body.blocks) {
+        b.y += allowed
+        b.mesh.position.set(b.x + 0.5, b.y, b.z + 0.5)
+      }
+      if (body.settled) {
+        this.landBody(body)
+        this.fallingBodies.splice(i, 1)
+      }
+    }
+  }
 
-    const occupied = new Set<string>()
+  private detectUnsupportedBodies() {
     const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
+    const occupied = new Set<string>()
     for (const chunk of this.world.chunks.values()) {
-      const minX = chunk.cx * 16
-      const minZ = chunk.cz * 16
+      const minX = chunk.cx * 16, minZ = chunk.cz * 16
       for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) {
-        for (let z = minZ; z < minZ + 16; z++) {
-          for (let x = minX; x < minX + 16; x++) {
-            const id = this.world.getBlock(x, y, z)
-            if (id === B.AIR) continue
-            const key = posKey(x, y, z)
-            occupied.add(key)
-            blocks.push({ key, x, y, z, id, state: this.world.getState(x, y, z) })
-          }
+        for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+          const id = this.world.getBlock(x, y, z)
+          if (id === B.AIR) continue
+          const key = posKey(x, y, z)
+          occupied.add(key)
+          blocks.push({ key, x, y, z, id, state: this.world.getState(x, y, z) })
         }
       }
     }
-
-    const byKey = new Map(blocks.map((b) => [b.key, b]))
+    const byKey = new Map(blocks.map(b => [b.key, b]))
     const visited = new Set<string>()
-    const movable: (typeof blocks)[] = []
-    for (const block of blocks) {
-      if (visited.has(block.key)) continue
+    const fallingGroups: typeof blocks[] = []
+    for (const b of blocks) {
+      if (visited.has(b.key) || this.fallingKeys.has(b.key)) continue
       const group: typeof blocks = []
-      const queue = [block]
-      visited.add(block.key)
+      const queue = [b]
+      visited.add(b.key)
       while (queue.length) {
-        const current = queue.pop()!
-        group.push(current)
+        const cur = queue.pop()!
+        group.push(cur)
         for (let d = 0; d < 6; d++) {
-          if (!this.isGlued(current.x, current.y, current.z, d)) continue
-          const n = DIRS[d]
-          const nk = posKey(current.x + n[0], current.y + n[1], current.z + n[2])
-          const next = byKey.get(nk)
-          if (next && !visited.has(nk)) {
-            visited.add(nk)
-            queue.push(next)
-          }
+          if (!this.isGlued(cur.x, cur.y, cur.z, d)) continue
+          const n = DIRS[d], key = posKey(cur.x + n[0], cur.y + n[1], cur.z + n[2])
+          const next = byKey.get(key)
+          if (next && !visited.has(key)) { visited.add(key); queue.push(next) }
         }
       }
-      if (group.some((b) => this.wiresAt(b.key).length > 0)) continue
-      const groupKeys = new Set(group.map((b) => b.key))
-      const supported = group.some((b) => {
-        if (b.y <= GROUND_LEVEL) return true
-        const below = posKey(b.x, b.y - 1, b.z)
-        return occupied.has(below) && !groupKeys.has(below)
-      })
-      if (!supported) movable.push(group)
+      if (group.some(v => v.id === B.MOTOR || v.id === B.BATTERY_BOX || v.id === B.LED || this.wiresAt(v.key).length || this.contraptionsHasBlock(v.key))) continue
+      const keys = new Set(group.map(v => v.key))
+      const supported = group.some(v => v.y <= GROUND_LEVEL + 1 || (() => {
+        const below = posKey(v.x, v.y - 1, v.z)
+        return occupied.has(below) && !keys.has(below)
+      })())
+      if (!supported) fallingGroups.push(group)
     }
-
-    // Move from lower groups first to avoid a falling stack blocking itself.
-    movable.sort((a, b) => Math.min(...a.map((v) => v.y)) - Math.min(...b.map((v) => v.y)))
-    for (const group of movable) {
-      const groupKeys = new Set(group.map((b) => b.key))
-      if (group.some((b) => b.y <= GROUND_LEVEL || this.wiresAt(b.key).length > 0)) continue
-      const blocked = group.some((b) => {
-        const below = posKey(b.x, b.y - 1, b.z)
-        return occupied.has(below) && !groupKeys.has(below)
-      })
-      if (blocked) continue
+    for (const group of fallingGroups) {
+      const falling: FallingBlock[] = []
+      for (const b of group) {
+        const cubeBuffers = newBuffers()
+        emitCube(cubeBuffers, 0, 0, 0, b.id, false, () => false)
+        const geometry = buffersToGeometry(cubeBuffers)
+        const mesh = new THREE.Mesh(geometry, this.blockMaterial)
+        mesh.position.set(b.x + 0.5, b.y + 0.5, b.z + 0.5)
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+        this.scene.add(mesh)
+        falling.push({ id: b.id, state: b.state ? { ...b.state } : undefined, x: b.x, y: b.y + 0.5, z: b.z, originKey: b.key, mesh })
+        this.fallingKeys.add(b.key)
+      }
+      this.suppress = true
       for (const b of group) this.world.setBlock(b.x, b.y, b.z, B.AIR)
-      for (const b of group) this.world.setBlock(b.x, b.y - 1, b.z, b.id, b.state)
+      this.suppress = false
+      this.fallingBodies.push({ blocks: falling, velocity: new THREE.Vector3(0, 0, 0), settled: false })
     }
+    if (fallingGroups.length) {
+      this.rebuildGlue()
+      this.powerDirty = true
+      this.mechDirty = true
+    }
+  }
+
+  private contraptionsHasBlock(key: string) {
+    for (const c of this.contraptions.values()) if (c.byKey.has(key)) return true
+    return false
+  }
+
+  private landBody(body: FallingBody) {
+    const occupied = new Set<string>()
+    for (const b of body.blocks) {
+      const x = Math.round(b.x), z = Math.round(b.z)
+      let y = Math.max(GROUND_LEVEL + 1, Math.floor(b.y + 0.5))
+      while (y > GROUND_LEVEL && this.world.getBlock(x, y - 1, z) === B.AIR) y--
+      while (this.world.getBlock(x, y, z) !== B.AIR && y < 63) y++
+      const key = posKey(x, y, z)
+      if (occupied.has(key)) continue
+      occupied.add(key)
+      this.suppress = true
+      this.world.setBlock(x, y, z, b.id, b.state)
+      this.suppress = false
+      this.fallingKeys.delete(b.originKey)
+      b.mesh.geometry.dispose()
+      this.scene.remove(b.mesh)
+    }
+    this.rebuildGlue()
+    this.powerDirty = true
+    this.mechDirty = true
   }
 
   private canRotateContraption(c: Contraption, angle: number) {
@@ -701,6 +799,17 @@ export class Mechanics {
     }
 
     for (const [key, e] of this.models) {
+      if (e.type === 'wheel') {
+        const [x, y, z] = parseKey(key)
+        let drive = 0
+        for (const d of DIRS) {
+          const neighbor = posKey(x + d[0], y + d[1], z + d[2])
+          if (this.world.getBlock(x + d[0], y + d[1], z + d[2]) === B.MOTOR && (this.motorPower.get(neighbor) ?? 0) > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * (this.motorPower.get(neighbor) ?? 0)
+        }
+        e.spin += drive * dt * 5
+        e.model.rim.rotation.z = e.spin
+        continue
+      }
       if (e.type !== 'motor') continue
       const power = this.motorPower.get(key) ?? 0
       const c = this.contraptions.get(key)
