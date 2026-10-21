@@ -703,76 +703,145 @@ export class Mechanics {
 
   private disassemble(c: Contraption, quarterTurns: number) {
     const q = new THREE.Quaternion().setFromAxisAngle(c.axis, quarterTurns * HALF_PI)
-    const pivot = c.group.position.clone()
-    const rotDir = (dir: number) => {
-      const v = new THREE.Vector3(...DIRS[dir]).applyQuaternion(q)
+    const rotorTranslation = c.rotorBody.translation()
+    const chassisTranslation = c.chassisBody.translation()
+    const rotorPivot = new THREE.Vector3(rotorTranslation.x, rotorTranslation.y, rotorTranslation.z)
+    const chassisPivot = new THREE.Vector3(chassisTranslation.x, chassisTranslation.y, chassisTranslation.z)
+    const chassisQ = new THREE.Quaternion()
+    const rotateDirection = (dir: number, rotation: THREE.Quaternion) => {
+      const v = new THREE.Vector3(...DIRS[dir]).applyQuaternion(rotation)
       const r = [Math.round(v.x), Math.round(v.y), Math.round(v.z)]
       return DIRS.findIndex((d) => d[0] === r[0] && d[1] === r[1] && d[2] === r[2])
     }
-    const keyMap = new Map<string, string | null>()
-
-    disposeObject(c.group)
-    this.contraptions.delete(c.motorKey)
+    const rotatedState = (source?: BlockState, rotation = q) => {
+      if (!source) return undefined
+      const state: BlockState = { ...source }
+      if (state.facing !== undefined) state.facing = rotateDirection(state.facing, rotation)
+      if (state.glue) {
+        let mask = 0
+        for (let face = 0; face < 6; face++) {
+          if (state.glue & (1 << face)) {
+            const rotated = rotateDirection(face, rotation)
+            if (rotated >= 0) mask |= 1 << rotated
+          }
+        }
+        state.glue = mask
+      }
+      return Object.keys(state).length ? state : undefined
+    }
 
     const placements: { x: number; y: number; z: number; id: number; state?: BlockState; orig: string }[] = []
-    for (const b of c.blocks) {
-      const v = new THREE.Vector3(...b.rel).applyQuaternion(q)
-      const x = Math.round(pivot.x - 0.5 + v.x)
-      const y = Math.round(pivot.y - 0.5 + v.y)
-      const z = Math.round(pivot.z - 0.5 + v.z)
-      let state = b.state ? { ...b.state } : undefined
-      if (state) {
-        if (state.facing !== undefined) state.facing = rotDir(state.facing)
-        if (state.glue) {
-          let m = 0
-          for (let i = 0; i < 6; i++) if (state.glue & (1 << i)) m |= 1 << rotDir(i)
-          state.glue = m
-        }
-        if (Object.keys(state).length === 0) state = undefined
-      }
-      placements.push({ x, y, z, id: b.id, state, orig: b.origKey })
+    const pushPlacement = (rel: [number, number, number], pivot: THREE.Vector3, rotation: THREE.Quaternion, id: number, state: BlockState | undefined, orig: string) => {
+      const center = new THREE.Vector3(...rel).applyQuaternion(rotation).add(pivot)
+      placements.push({
+        x: Math.round(center.x - 0.5), y: Math.round(center.y - 0.5), z: Math.round(center.z - 0.5),
+        id, state: rotatedState(state, rotation), orig,
+      })
     }
-    for (const p of placements) {
-      if (this.world.getBlock(p.x, p.y, p.z) === B.AIR && p.y >= GROUND_LEVEL) {
-        this.world.setBlock(p.x, p.y, p.z, p.id, p.state)
-        if (p.id === B.MOTOR || p.id === B.BATTERY_BOX) {
-          const e = this.models.get(posKey(p.x, p.y, p.z))
-          if (e?.type === 'motor' && p.state?.facing !== undefined) setMotorFacing(e.model, p.state.facing)
-          if (e?.type === 'box') setBatteryCount(e.model, p.state?.batteries ?? 0)
+    for (const b of c.blocks) pushPlacement(b.rel, rotorPivot, q, b.id, b.state, b.origKey)
+    for (const b of c.chassisBlocks) pushPlacement(b.rel, chassisPivot, chassisQ, b.id, b.state, b.origKey)
+    pushPlacement([0, 0, 0], chassisPivot, chassisQ, B.MOTOR, rotatedState(c.motorState, chassisQ), c.motorKey)
+
+    // Preserve the entire rigid assembly if snapping it back to voxel cells
+    // would intersect something. Lift the whole assembly as one unit.
+    const destinationKeys = new Set<string>()
+    for (const p of placements) destinationKeys.add(posKey(p.x, p.y, p.z))
+    if (destinationKeys.size !== placements.length) return
+    let shiftY = Math.max(0, GROUND_LEVEL - Math.min(...placements.map((p) => p.y)))
+    const fits = (offset: number) => {
+      if (placements.some((p) => p.y + offset >= WORLD_HEIGHT)) return false
+      return placements.every((p) => this.world.getBlock(p.x, p.y + offset, p.z) === B.AIR)
+    }
+    let attempts = 0
+    while (!fits(shiftY) && attempts < 24) { shiftY++; attempts++ }
+    if (!fits(shiftY)) {
+      // Leave it as a live physics object rather than deleting blocks.
+      c.chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      c.rotorBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      c.joint.configureMotorVelocity(0, 1)
+      return
+    }
+    for (const p of placements) p.y += shiftY
+
+    // Detach model meshes from the groups before disposing voxel render
+    // geometry, so component models remain usable after landing.
+    const preserveChildren = (group: THREE.Group, keys: string[]) => {
+      group.updateMatrixWorld(true)
+      for (const key of keys) {
+        const entry = this.models.get(key)
+        if (entry && entry.model.group.parent === group) {
+          const pos = entry.model.group.getWorldPosition(new THREE.Vector3())
+          const rot = entry.model.group.getWorldQuaternion(new THREE.Quaternion())
+          group.remove(entry.model.group)
+          this.scene.add(entry.model.group)
+          entry.model.group.position.copy(pos)
+          entry.model.group.quaternion.copy(rot)
         }
-        keyMap.set(p.orig, posKey(p.x, p.y, p.z))
-      } else {
-        keyMap.set(p.orig, null)
+        const glow = this.glows.get(key)
+        if (glow && glow.parent === group) {
+          const pos = glow.getWorldPosition(new THREE.Vector3())
+          group.remove(glow)
+          this.scene.add(glow)
+          glow.position.copy(pos)
+        }
       }
+    }
+    preserveChildren(c.group, c.blocks.map((b) => b.origKey))
+    preserveChildren(c.chassisGroup, [c.motorKey, ...c.chassisBlocks.map((b) => b.origKey)])
+    disposeObject(c.group)
+    disposeObject(c.chassisGroup)
+    this.rigidPhysics.removeRigidBody(c.rotorBody)
+    this.rigidPhysics.removeRigidBody(c.chassisBody)
+    this.contraptions.delete(c.motorKey)
+
+    const keyMap = new Map<string, string>()
+    this.suppress = true
+    for (const p of placements) {
+      const newKey = posKey(p.x, p.y, p.z)
+      this.world.setBlock(p.x, p.y, p.z, p.id, p.state)
+      keyMap.set(p.orig, newKey)
+    }
+    this.suppress = false
+
+    // Re-key models and mounted accessories to their snapped positions.
+    for (const [oldKey, newKey] of keyMap) {
+      const entry = this.models.get(oldKey)
+      if (entry) {
+        this.models.delete(oldKey)
+        this.models.set(newKey, entry)
+        const [x, y, z] = parseKey(newKey)
+        if (entry.type === 'motor' && this.world.getState(x, y, z)?.facing !== undefined) setMotorFacing(entry.model, this.world.getState(x, y, z)!.facing!)
+        if (entry.type === 'box') setBatteryCount(entry.model, this.world.getState(x, y, z)?.batteries ?? 0)
+      }
+      const mounted = this.mountedWheels.get(oldKey)
+      if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
+      const glow = this.glows.get(oldKey)
+      if (glow) { this.glows.delete(oldKey); this.glows.set(newKey, glow) }
     }
 
-    const doomed = new Set<Wire>()
     for (const we of c.wireEnds) {
-      const newKey = keyMap.get(we.end === 'a' ? we.wire.a : we.wire.b)
-      if (!newKey) {
-        doomed.add(we.wire)
-        continue
-      }
-      const np = we.orig.clone().sub(pivot).applyQuaternion(q).add(pivot)
-      if (we.end === 'a') {
-        we.wire.a = newKey
-        we.wire.pa.copy(np)
-      } else {
-        we.wire.b = newKey
-        we.wire.pb.copy(np)
+      const key = we.end === 'a' ? we.wire.a : we.wire.b
+      const newKey = keyMap.get(key)
+      if (newKey) {
+        const point = we.local.clone().applyQuaternion(q).add(rotorPivot).add(new THREE.Vector3(0, shiftY, 0))
+        if (we.end === 'a') { we.wire.a = newKey; we.wire.pa.copy(point) }
+        else { we.wire.b = newKey; we.wire.pb.copy(point) }
       }
     }
-    for (const we of c.wireEnds) {
-      if (doomed.has(we.wire)) continue
-      updateWireMesh(we.wire.mesh, we.wire.pa, we.wire.pb)
+    for (const we of c.chassisWireEnds) {
+      const key = we.end === 'a' ? we.wire.a : we.wire.b
+      const newKey = keyMap.get(key)
+      if (newKey) {
+        const point = we.local.clone().applyQuaternion(chassisQ).add(chassisPivot).add(new THREE.Vector3(0, shiftY, 0))
+        if (we.end === 'a') { we.wire.a = newKey; we.wire.pa.copy(point) }
+        else { we.wire.b = newKey; we.wire.pb.copy(point) }
+      }
     }
-    if (doomed.size) {
-      for (const w of doomed) disposeObject(w.mesh)
-      this.wires = this.wires.filter((w) => !doomed.has(w))
-    }
+    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
     this.rebuildGlue()
     this.powerDirty = true
     this.mechDirty = true
+    this.physicsDirty = true
   }
 
   /**
