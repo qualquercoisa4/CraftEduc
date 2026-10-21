@@ -17,7 +17,7 @@ import {
 } from './constants'
 import { Mechanics } from './mechanics'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { createBatteryBoxModel, createMotorModel, wireCurve } from './models'
+import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, wireCurve } from './models'
 import { Particles } from './particles'
 import { Player } from './player'
 import { HORIZON_COLOR, createSky } from './sky'
