@@ -1011,14 +1011,49 @@ export class Mechanics {
             const halfY=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
             if (center.y-halfY < GROUND_LEVEL-1e-4) { floorContact=true; break }
           }
-          if (floorContact && this.translateContraption(c,0,1,0,nextAngle)) {
+          if (floorContact) {
+            // Resolve the impact at the attempted angle BEFORE lifting. The
+            // old code lifted vertically first, which removed ground contact
+            // before the horizontal reaction had a chance to move the chassis.
+            let pushX = 0, pushZ = 0, pushWeight = 0
+            for (const b of c.blocks) {
+              const rel = new THREE.Vector3(...b.rel).applyQuaternion(qNext)
+              const center = rel.clone().add(pivot)
+              const ex = new THREE.Vector3(1,0,0).applyQuaternion(qNext)
+              const ey = new THREE.Vector3(0,1,0).applyQuaternion(qNext)
+              const ez = new THREE.Vector3(0,0,1).applyQuaternion(qNext)
+              const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
+              const bottom = center.y - halfY
+              const tangent = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(nextSpeed)
+              if (bottom <= GROUND_LEVEL + 0.12 && tangent.y < -0.01) {
+                pushX -= tangent.x
+                pushZ -= tangent.z
+                pushWeight += 1
+              }
+            }
+            if (pushWeight) { pushX /= pushWeight; pushZ /= pushWeight }
+            let moved = false
+            if (pushWeight && Math.hypot(pushX,pushZ) > 0.01) {
+              const dx = Math.abs(pushX) >= Math.abs(pushZ) ? Math.sign(pushX) : 0
+              const dz = dx ? 0 : Math.sign(pushZ)
+              // Move opposite the arm sweep while raising the entire machine;
+              // this creates a real step instead of erasing/clipping the arm.
+              if (dx || dz) moved = this.translateContraption(c,dx,1,dz,nextAngle)
+            }
+            if (!moved) moved = this.translateContraption(c,0,1,0,nextAngle)
+            if (moved) {
+              c.speed = nextSpeed
+              c.angle = nextAngle
+              const movedModel=this.models.get(c.motorKey)
+              if (movedModel?.type==='motor') movedModel.status='driving'
+            } else {
+              model.status = 'stalled'
+              c.speed = 0
+            }
+          } else {
             c.speed = nextSpeed
             c.angle = nextAngle
-            const movedModel=this.models.get(c.motorKey)
-            if (movedModel?.type==='motor') movedModel.status='driving'
-          } else {
-            model.status = 'stalled'
-            c.speed = 0
+            if (model?.type === 'motor') model.status = 'driving'
           }
         } else {
           c.speed = nextSpeed
