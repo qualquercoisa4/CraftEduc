@@ -707,8 +707,8 @@ export class Mechanics {
         continue
       }
       if (power > 0) {
-        const model = this.models.get(key)
-        const direction = this.motorDirection.get(key) ?? 1
+        const model = this.models.get(c.motorKey)
+        const direction = this.motorDirection.get(c.motorKey) ?? 1
         const nextSpeed = power * 1.05 * direction
         let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
         if (nextAngle < 0) nextAngle += Math.PI * 2
