@@ -47,8 +47,8 @@ export class RigidPhysics {
           .setRestitution(0.02),
         this.fixedBody,
       )
-      this.rebuildStaticColliders()
       this.initialized = true
+      this.rebuildStaticColliders()
     })
   }
 
@@ -104,12 +104,8 @@ export class RigidPhysics {
       for (let y = GROUND_LEVEL; y <= maxY; y++) {
         for (let z = minZ; z < minZ + 16; z++) {
           for (let x = minX; x < minX + 16; x++) {
-            if (!isOpaque(this.voxelWorld.getBlock(x, y, z)) && this.voxelWorld.getBlock(x, y, z) !== B.MOTOR &&
-                this.voxelWorld.getBlock(x, y, z) !== B.BATTERY_BOX && this.voxelWorld.getBlock(x, y, z) !== B.WHEEL) {
-              // Model blocks are solid for physics even though their voxel face mesh is hidden.
-              const id = this.voxelWorld.getBlock(x, y, z)
-              if (id === B.AIR) continue
-            }
+            // Model blocks also receive full-sized colliders even when their
+            // voxel face mesh is hidden; every non-air block is solid physics.
             if (this.voxelWorld.getBlock(x, y, z) === B.AIR) continue
             this.syncStaticBlock(x, y, z)
           }
