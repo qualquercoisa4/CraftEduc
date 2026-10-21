@@ -33,6 +33,8 @@ jobs:
       - name: Type-check
         run: pnpm exec tsc --noEmit
       - name: Physics regression tests
-        run: pnpm dlx tsx tests/physics-mass.test.ts
+        run: |
+          pnpm exec tsc tests/physics-mass.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck
+          node .test-dist/tests/physics-mass.test.js
       - name: Production build
         run: pnpm build
