@@ -1377,6 +1377,17 @@ export class Mechanics {
         new THREE.Vector3(rotorW.x, rotorW.y, rotorW.z),
         c.blocks.map((b) => ({ centerOffset: new THREE.Vector3(...b.rel), key: b.origKey })),
       )
+      for (const extra of c.extraRotors ?? []) {
+        const t = extra.rotorBody.translation(), r = extra.rotorBody.rotation()
+        const v = extra.rotorBody.linvel(), w = extra.rotorBody.angvel()
+        inspectBody(
+          new THREE.Vector3(t.x, t.y, t.z),
+          new THREE.Quaternion(r.x, r.y, r.z, r.w),
+          new THREE.Vector3(v.x, v.y, v.z),
+          new THREE.Vector3(w.x, w.y, w.z),
+          extra.blocks.map((b) => ({ centerOffset: new THREE.Vector3(...b.rel), key: b.origKey })),
+        )
+      }
       const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
       const chassisV = c.chassisBody.linvel(), chassisW = c.chassisBody.angvel()
       inspectBody(
@@ -1961,6 +1972,17 @@ export class Mechanics {
         linearVelocity: this.vectorSnapshot(c.chassisBody.linvel()),
         angularVelocity: this.vectorSnapshot(c.chassisBody.angvel()),
       },
+      extraRotors: (c.extraRotors ?? []).map((extra) => ({
+        motorKey: extra.motorKey,
+        angle: extra.angle,
+        speed: extra.speed,
+        rotor: {
+          position: this.vectorSnapshot(extra.rotorBody.translation()),
+          rotation: this.rotationSnapshot(extra.rotorBody.rotation()),
+          linearVelocity: this.vectorSnapshot(extra.rotorBody.linvel()),
+          angularVelocity: this.vectorSnapshot(extra.rotorBody.angvel()),
+        },
+      })),
     }))
     const falling = this.fallingBodies.slice(0, 128).map((body) => ({
       keys: body.blocks.slice(0, 400).map((block) => ({
@@ -1982,7 +2004,8 @@ export class Mechanics {
       // For an assembled rotor, the visible shaft angle belongs to the
       // authoritative rigid body; entry.spin is used only before assembly.
       const machine = this.contraptions.get(key)
-      return [{ key, spin: machine?.angle ?? entry.spin, status: entry.status }]
+      const extra = this.findExtraRotor(key)?.rotor
+      return [{ key, spin: machine?.angle ?? extra?.angle ?? entry.spin, status: entry.status }]
     })
     const wheelVisuals = [...this.models.entries()].flatMap(([key, entry]) => entry.type === 'wheel'
       ? [{ key, spin: entry.spin }] : [])
@@ -2066,7 +2089,7 @@ export class Mechanics {
       // A motor that belongs to an articulated machine gets its angle from the
       // machine's authoritative rigid-body snapshot below. Only standalone motor
       // shafts consume this visual angle, preventing two competing rotations.
-      if (!this.contraptions.has(item.key)) {
+      if (!this.contraptions.has(item.key) && !this.findExtraRotor(item.key)) {
         if (Number.isFinite(Number(item.spin))) entry.spin = Number(item.spin)
         entry.model.shaft.rotation.z = entry.spin
       }
@@ -2103,6 +2126,16 @@ export class Mechanics {
       activeNetworkBodyKeys.add(`machine:${key}:rotor`)
       activeNetworkBodyKeys.add(`machine:${key}:chassis`)
     }
+    for (const raw of incomingMachines) {
+      if (!raw || typeof raw !== 'object') continue
+      const machine = raw as Record<string, unknown>
+      if (typeof machine.motorKey !== 'string' || !Array.isArray(machine.extraRotors)) continue
+      for (const rawExtra of machine.extraRotors.slice(0, 32)) {
+        if (rawExtra && typeof rawExtra === 'object' && typeof (rawExtra as Record<string, unknown>).motorKey === 'string') {
+          activeNetworkBodyKeys.add(`machine:${machine.motorKey}:extra:${String((rawExtra as Record<string, unknown>).motorKey)}`)
+        }
+      }
+    }
     const activeNetworkFallingKeys = new Set<string>()
     // The host is authoritative for starting/stopping articulated machines too.
     for (const c of [...this.contraptions.values()]) {
@@ -2122,6 +2155,16 @@ export class Mechanics {
         this.networkMachineAngles.set(c.motorKey, angle)
       }
       if (Number.isFinite(Number(machine.speed))) c.speed = Number(machine.speed)
+      if (Array.isArray(machine.extraRotors)) for (const rawExtra of machine.extraRotors.slice(0, 32)) {
+        if (!rawExtra || typeof rawExtra !== 'object') continue
+        const extraRecord = rawExtra as Record<string, unknown>
+        if (typeof extraRecord.motorKey !== 'string') continue
+        const extra = (c.extraRotors ?? []).find((entry) => entry.motorKey === extraRecord.motorKey)
+        if (!extra) continue
+        queuePose('machine:' + c.motorKey + ':extra:' + extra.motorKey, extra.rotorBody, extraRecord.rotor)
+        if (Number.isFinite(Number(extraRecord.angle))) extra.angle = Number(extraRecord.angle)
+        if (Number.isFinite(Number(extraRecord.speed))) extra.speed = Number(extraRecord.speed)
+      }
     }
     const incomingFalling = Array.isArray(record.falling) ? record.falling.slice(0, 128) : []
     const liveVisualIds = new Set<string>()
@@ -2310,6 +2353,24 @@ export class Mechanics {
       if (c.angle < 0) c.angle += Math.PI * 2
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor') motor.model.shaft.rotation.z = c.angle
+      const chassisR = c.chassisBody.rotation()
+      const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
+      for (const extra of c.extraRotors ?? []) {
+        syncGroup(extra.group, extra.rotorBody)
+        const rr = extra.rotorBody.rotation()
+        const relative = chassisQ.clone().invert().multiply(new THREE.Quaternion(rr.x, rr.y, rr.z, rr.w))
+        const projectedExtra = relative.x * extra.axis.x + relative.y * extra.axis.y + relative.z * extra.axis.z
+        extra.angle = 2 * Math.atan2(projectedExtra, relative.w)
+        if (extra.angle < 0) extra.angle += Math.PI * 2
+        const extraMotor = this.models.get(extra.motorKey)
+        if (extraMotor?.type === 'motor') extraMotor.model.shaft.rotation.z = extra.angle
+        for (const end of extra.wireEnds) {
+          const point = extra.group.localToWorld(end.local.clone())
+          if (end.end === 'a') end.wire.pa.copy(point)
+          else end.wire.pb.copy(point)
+          touchedWires.add(end.wire)
+        }
+      }
       for (const end of c.wireEnds) {
         const point = c.group.localToWorld(end.local.clone())
         if (end.end === 'a') end.wire.pa.copy(point)
@@ -2411,6 +2472,18 @@ export class Mechanics {
       for (const block of c.blocks) {
         const center = new THREE.Vector3(...block.rel).applyQuaternion(rotorQ).add(rotorPivot)
         collideBlock(center, rotorQ, rotorPivot, rotorLinear, rotorAngular)
+      }
+      for (const extra of c.extraRotors ?? []) {
+        const t = extra.rotorBody.translation(), r = extra.rotorBody.rotation()
+        const pivot = new THREE.Vector3(t.x, t.y, t.z)
+        const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+        const v = extra.rotorBody.linvel(), w = extra.rotorBody.angvel()
+        const linear = new THREE.Vector3(v.x, v.y, v.z)
+        const angular = new THREE.Vector3(w.x, w.y, w.z)
+        for (const block of extra.blocks) {
+          const center = new THREE.Vector3(...block.rel).applyQuaternion(rotation).add(pivot)
+          collideBlock(center, rotation, pivot, linear, angular)
+        }
       }
 
       const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
@@ -2514,6 +2587,14 @@ export class Mechanics {
         new THREE.Quaternion(rotorR.x, rotorR.y, rotorR.z, rotorR.w),
         c.blocks.map((b) => ({ rel: b.rel, id: b.id, key: b.origKey, kind: 'rotor' as const })),
       )
+      for (const extra of c.extraRotors ?? []) {
+        const t = extra.rotorBody.translation(), r = extra.rotorBody.rotation()
+        testBody(
+          new THREE.Vector3(t.x, t.y, t.z),
+          new THREE.Quaternion(r.x, r.y, r.z, r.w),
+          extra.blocks.map((b) => ({ rel: b.rel, id: b.id, key: b.origKey, kind: 'rotor' as const })),
+        )
+      }
       const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
       testBody(
         new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z),
