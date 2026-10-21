@@ -61,6 +61,17 @@ interface FallingBlock {
   mesh: THREE.Mesh
 }
 
+export interface MovingBlockHit {
+  x: number
+  y: number
+  z: number
+  face: number
+  point: THREE.Vector3
+  id: number
+  dist: number
+  moving: { key: string; kind: 'rotor' | 'chassis' | 'falling' }
+}
+
 interface FallingBody {
   blocks: FallingBlock[]
   body: RAPIER.RigidBody
