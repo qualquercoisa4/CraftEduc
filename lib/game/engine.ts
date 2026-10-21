@@ -40,6 +40,7 @@ export interface Hit {
   point: THREE.Vector3
   id: number
   dist: number
+  moving?: { key: string; kind: 'rotor' | 'chassis' | 'falling' }
 }
 
 let current: Engine | null = null
@@ -434,9 +435,21 @@ export class Engine {
   use() {
     unlockAudio()
     const item = this.selectedItem()
-    const hit = this.target
+    let hit = this.target
     this.swing = 0
     this.lastUseWasPlace = false
+
+    // Dynamic bodies are interactive, but voxel placement/wiring still uses
+    // the world's integer grid. Resolve the source identity before editing.
+    if (hit?.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para editar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
+    }
 
     if (item === 'wire') {
       if (!hit) return
@@ -517,7 +530,7 @@ export class Engine {
   breakBlock() {
     unlockAudio()
     this.swing = 0
-    const hit = this.target
+    let hit = this.target
     const item = this.selectedItem()
     if (item === 'wire' && this.wireStart) {
       this.wireStart = null
@@ -532,6 +545,15 @@ export class Engine {
         showToast(removed === 1 ? '1 fio removido' : `${removed} fios removidos`)
         return
       }
+    }
+    if (hit.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para quebrar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
     }
     if (hit.y < GROUND_LEVEL) return
     this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
@@ -557,6 +579,10 @@ export class Engine {
   /* ---------------- Raycast ---------------- */
 
   raycast(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number): Hit | null {
+    // Dynamic body hits compete by distance with the static voxel DDA. This
+    // makes a moving rotor occlude blocks behind it instead of being ignored.
+    const moving = this.mech.raycastMoving(origin, dir, maxDist)
+    const limit = moving ? moving.dist : maxDist
     let ix = Math.floor(origin.x)
     let iy = Math.floor(origin.y)
     let iz = Math.floor(origin.z)
@@ -570,12 +596,12 @@ export class Engine {
     let tmy = sy > 0 ? (iy + 1 - origin.y) * tdy : sy < 0 ? (origin.y - iy) * tdy : Number.POSITIVE_INFINITY
     let tmz = sz > 0 ? (iz + 1 - origin.z) * tdz : sz < 0 ? (origin.z - iz) * tdz : Number.POSITIVE_INFINITY
     let t = 0
-    for (let i = 0; i < 64 && t <= maxDist; i++) {
+    for (let i = 0; i < 64 && t <= limit; i++) {
       if (iy >= 0 && iy < WORLD_HEIGHT) {
         const id = this.world.getBlock(ix, iy, iz)
         if (id !== B.AIR) {
-          const hit = this.rayBox(origin, dir, ix, iy, iz, id, maxDist)
-          if (hit) return hit
+          const hit = this.rayBox(origin, dir, ix, iy, iz, id, limit)
+          if (hit && (!moving || hit.dist <= moving.dist)) return hit
         }
       }
       if (tmx < tmy && tmx < tmz) {
@@ -592,7 +618,7 @@ export class Engine {
         tmz += tdz
       }
     }
-    return null
+    return moving as Hit | null
   }
 
   private rayBox(o: THREE.Vector3, d: THREE.Vector3, x: number, y: number, z: number, id: number, maxDist: number): Hit | null {
