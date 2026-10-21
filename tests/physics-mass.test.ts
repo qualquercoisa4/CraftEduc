@@ -140,7 +140,7 @@ async function main() {
   const batteryKey = posKey(2, 6, 2)
   const noseKey = posKey(3, 5, 2)
   const motorKey = posKey(4, 5, 2)
-  const targetKey = posKey(5, 6, 3)
+  const targetKey = posKey(5, 5, 4)
   const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number }) => {
     const key = posKey(x, y, z)
     blockMap.set(key, id)
@@ -155,10 +155,9 @@ async function main() {
   putTestBlock(5, 7, 2, B.WOOD, { glue: 1 << 3 })
   // A supported aluminum voxel is placed in the wood arm's circular sweep.
   // It should be pushed sideways by the actual motor/rotor simulation.
-  putTestBlock(5, 4, 3, B.IRON, {})
-  putTestBlock(5, 5, 3, B.IRON, {})
-  putTestBlock(5, 6, 3, B.ALUMINUM, {})
-  for (const [x, y, z] of [[5, 4, 3], [5, 5, 3], [5, 6, 3]] as const) {
+  putTestBlock(5, 4, 4, B.IRON, {})
+  putTestBlock(5, 5, 4, B.ALUMINUM, {})
+  for (const [x, y, z] of [[5, 4, 4], [5, 5, 4]] as const) {
     mechanicsPhysics.syncStaticBlock(x, y, z)
   }
 
@@ -224,7 +223,7 @@ async function main() {
   ;(mechanics as unknown as { fallingKeys: Set<string> }).fallingKeys.clear()
   const initialChassisY = machine.chassisBody.translation().y
   let maxTargetHorizontalTravel = 0
-  const targetOrigin = new THREE.Vector3(5.5, 6.5, 3.5)
+  const targetOrigin = new THREE.Vector3(5.5, 5.5, 4.5)
   const sampleTarget = () => {
     const active = (mechanics as unknown as { fallingBodies: { body: import('@dimforge/rapier3d-compat').RigidBody; blocks: { id: number; originKey: string }[] }[] }).fallingBodies
       .find((body) => body.blocks.some((block) => block.originKey === targetKey))
