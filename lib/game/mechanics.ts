@@ -80,7 +80,7 @@ export class Mechanics {
 
   /* ---------------- Block change hook ---------------- */
 
-  onBlockChange(x: number, y: number, z: number, oldId: number, newId: number) {
+  onBlockChange(x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue = false, newHasGlue = false) {
     if (this.suppress) return
     const key = posKey(x, y, z)
     if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED) {
@@ -118,7 +118,8 @@ export class Mechanics {
       this.scene.add(model.group)
       this.models.set(key, { type: 'led', model })
     }
-    this.rebuildGlue()
+    // Glue geometry is expensive: rebuild only when a glued block actually changes.
+    if (oldHadGlue || newHasGlue) this.rebuildGlue()
     this.powerDirty = true
     this.mechDirty = true
   }
