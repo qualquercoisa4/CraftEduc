@@ -208,6 +208,17 @@ export class MultiplayerClient {
     this.callbacks.onStatus?.(true)
   }
 
+  async syncInitialWorld(blocks: BlockEdit[], wires: NetworkWire[]) {
+    if (!this.isHost) throw new Error('Somente o anfitrião pode inicializar o mundo.')
+    if (blocks.length > 20000 || wires.length > 3000) throw new Error('O mundo inicial é grande demais para sincronizar.')
+    await this.request('sync_initial_world', { blocks, wires })
+    for (const block of blocks) {
+      const key = `${block.x},${block.y},${block.z}`
+      this.lastBlockOwners.set(key, this.playerKey)
+    }
+    for (const wire of wires) this.knownWireIds.add(wire.id)
+  }
+
   canBreakBlock(x: number, y: number, z: number, actorKey?: string) {
     if (!actorKey && this.isHost) return true
     const actor = actorKey ?? this.playerKey
