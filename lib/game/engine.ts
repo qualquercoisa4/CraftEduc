@@ -406,10 +406,16 @@ export class Engine {
 
   setMultiplayerBridge(bridge: MultiplayerBridge | null) {
     this.multiplayerBridge = bridge
+    this.mech.setNetworkAuthority(!bridge || bridge.isHost)
     this.mech.setNetworkBlockPublisher(
       bridge ? (x, y, z, block, state, ownerKey) => bridge.blockChanged(x, y, z, block, state, ownerKey) : null,
       bridge ? (x, y, z) => bridge.ownerForBlock(x, y, z) : null,
     )
+    if (!bridge) {
+      this.multiplayerCanFly = true
+      this.multiplayerRules = null
+      this.setRemotePlayers([])
+    }
   }
 
   setMultiplayerRules(rules: MultiplayerRules, isHost: boolean) {
