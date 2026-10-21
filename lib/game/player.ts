@@ -41,7 +41,9 @@ export class Player {
       for (let y = Math.floor(miny); y <= Math.floor(maxy - EPS); y++)
         for (let z = Math.floor(minz); z <= Math.floor(maxz - EPS); z++) {
           const id = this.world.getBlock(x, y, z)
-          if (id === B.AIR) continue
+          // Motors and wheels are mechanisms, not solid player barriers. In
+          // particular, a powered rotor must never pin or carry the player.
+          if (id === B.AIR || id === B.MOTOR || id === B.WHEEL) continue
           const b = blockBounds(id)
           out.push([x + b[0], y + b[1], z + b[2], x + b[3], y + b[4], z + b[5]])
         }
