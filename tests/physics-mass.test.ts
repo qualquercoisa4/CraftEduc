@@ -220,7 +220,7 @@ async function main() {
   ;(mechanics as unknown as { fallingKeys: Set<string> }).fallingKeys.clear()
   const initialChassisY = machine.chassisBody.translation().y
   let maxTargetHorizontalTravel = 0
-  const targetStart = new THREE.Vector3(4.5, 6.5, 1.5)
+  const targetOrigin = new THREE.Vector3(4.5, 6.5, 1.5)
   const sampleTarget = () => {
     const active = (mechanics as unknown as { fallingBodies: { body: import('@dimforge/rapier3d-compat').RigidBody; blocks: { id: number; originKey: string }[] }[] }).fallingBodies
       .find((body) => body.blocks.some((block) => block.originKey === targetKey))
@@ -232,16 +232,16 @@ async function main() {
       if (id !== B.ALUMINUM || key === baseKey || key === noseKey) continue
       const [x, y, z] = key.split(',').map(Number)
       const point = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
-      if (point.distanceTo(targetStart) < 4) return point
+      if (point.distanceTo(targetOrigin) < 4) return point
     }
-    return targetStart.clone()
+    return targetOrigin.clone()
   }
   for (let step = 0; step < 120; step++) {
     mechanics.update(1 / 60)
     const currentTarget = sampleTarget()
     maxTargetHorizontalTravel = Math.max(
       maxTargetHorizontalTravel,
-      Math.hypot(currentTarget.x - targetStart.x, currentTarget.z - targetStart.z),
+      Math.hypot(currentTarget.x - targetOrigin.x, currentTarget.z - targetOrigin.z),
     )
   }
   assert.equal(mechanics.contraptions.has(motorKey), true,
