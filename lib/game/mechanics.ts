@@ -1549,7 +1549,7 @@ export class Mechanics {
         const w = c.rotorBody.angvel()
         const v = c.rotorBody.linvel()
         lines.push(`  rotor vel=(${w.x.toFixed(2)},${w.y.toFixed(2)},${w.z.toFixed(2)}) lin=(${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}) sleep=${c.rotorBody.isSleeping()}`)
-        lines.push(`  motor axis=${c.facing} blocks=${c.blocks.length} chassis=${c.chassisBlocks.length}`)
+        lines.push(`  motor axis=${c.facing} targetSpeed=${c.speed.toFixed(2)} blocks=${c.blocks.length} chassis=${c.chassisBlocks.length}`)
       }
     }
     return lines.join('\n')
