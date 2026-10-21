@@ -1,5 +1,6 @@
 import type { Engine } from './engine'
 import type { BlockState } from './world'
+import type { ItemId } from './constants'
 import type { Wire } from './mechanics'
 import type { SkinConfig } from './multiplayer-types'
 
@@ -32,6 +33,17 @@ export interface NetworkWire {
   id: string; a: string; b: string; ta: string; tb: string
   pa: { x: number; y: number; z: number }; pb: { x: number; y: number; z: number }
   ownerKey?: string
+}
+
+export interface MovingActionIntent {
+  playerKey: string
+  playerName: string
+  action: 'break' | 'use'
+  movingKey: string
+  movingKind: 'rotor' | 'chassis' | 'falling'
+  face: number
+  item: ItemId | null
+  sneaking: boolean
 }
 export interface NetworkPayload {
   world: {
@@ -196,9 +208,12 @@ export class MultiplayerClient {
     this.callbacks.onStatus?.(true)
   }
 
-  canBreakBlock(x: number, y: number, z: number) {
-    if (this.isHost || !this.rules.playersCanOnlyDestroyOwnBlocks) return true
-    return this.lastBlockOwners.get(`${x},${y},${z}`) === this.playerKey
+  canBreakBlock(x: number, y: number, z: number, actorKey?: string) {
+    if (!actorKey && this.isHost) return true
+    const actor = actorKey ?? this.playerKey
+    if (actor === this.playerKey && this.isHost) return true
+    if (!this.rules.playersCanOnlyDestroyOwnBlocks) return true
+    return this.lastBlockOwners.get(`${x},${y},${z}`) === actor
   }
 
   start(engine: Engine, callbacks: MultiplayerCallbacks = {}) {
@@ -210,7 +225,8 @@ export class MultiplayerClient {
     engine.setMultiplayerBridge({
       isHost: this.isHost,
       canFly: () => this.isHost || this.rules.playersCanFly,
-      canBreakBlock: (x, y, z) => this.canBreakBlock(x, y, z),
+      canBreakBlock: (x, y, z, actorKey) => this.canBreakBlock(x, y, z, actorKey),
+      movingAction: (intent) => { void this.request('request_moving_action', { intent: { ...intent, playerKey: this.playerKey, playerName: this.playerName } }).catch((error) => this.callbacks.onError?.(error instanceof Error ? error.message : 'Não foi possível enviar a ação da máquina.')) },
       blockChanged: (x, y, z, block, state) => { void this.publishBlock(x, y, z, block, state) },
       wireCreated: (wire) => { void this.publishWire(wire) },
       wiresRemovedAt: (key) => { void this.removeWiresAt(key) },
@@ -251,6 +267,8 @@ export class MultiplayerClient {
         } else if (event.type === 'wire_remove' && p?.id) {
           this.knownWireIds.delete(String(p.id))
           this.engine?.removeMultiplayerWire(String(p.id))
+        } else if (event.type === 'action_intent' && this.isHost && p && p.playerKey !== this.playerKey) {
+          this.engine?.applyMultiplayerMovingAction(p as MovingActionIntent)
         } else if (event.type === 'rules') {
           this.rules = { ...DEFAULT_RULES, ...p }
           this.callbacks.onRules?.(this.rules)
