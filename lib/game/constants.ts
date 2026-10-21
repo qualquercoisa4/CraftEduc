@@ -200,7 +200,6 @@ export const DEFAULT_HOTBAR: (ItemId | null)[] = [
   'wire',
   'glue',
   'battery_box',
-  'battery',
   'wheel',
 ]
 
