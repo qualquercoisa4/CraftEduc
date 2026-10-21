@@ -1,4 +1,4 @@
-name: Temporary Rapier physics build check (supported API)
+name: Temporary Rapier physics build check (latest interaction pass)
 
 on:
   push:
