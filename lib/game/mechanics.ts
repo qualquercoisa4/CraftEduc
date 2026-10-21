@@ -1657,51 +1657,68 @@ export class Mechanics {
     return keyMap
   }
 
-  /** Apply ground force through the mounted wheel; an off-centre contact creates chassis yaw. */
+  /** Apply ground force through every mounted wheel in the shared chassis. */
   private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
-    if (!this.mountedWheels.has(c.motorKey)) return
-    // Rapier force/torque accumulators can persist; clear last frame's wheel input before computing the next one.
+    const extraWheels = (c.extraRotors ?? []).filter((extra) => this.mountedWheels.has(extra.motorKey))
+    const hasPrimaryWheel = this.mountedWheels.has(c.motorKey)
+    if (!hasPrimaryWheel && extraWheels.length === 0) return
+
+    // Clear only wheel input from the preceding physics frame, then combine all
+    // wheel forces before stepping so no wheel erases another wheel's torque.
     c.chassisBody.resetForces(true)
     c.chassisBody.resetTorques(true)
-    if (power <= 0) return
     const t = c.chassisBody.translation()
     const r = c.chassisBody.rotation()
+    const chassisPosition = new THREE.Vector3(t.x, t.y, t.z)
     const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
-    const axle = c.axis.clone().applyQuaternion(rotation).normalize()
-    const horizontalAxle = Math.hypot(axle.x, axle.z)
-    if (horizontalAxle < 0.65) return
+    const up = new THREE.Vector3(0, 1, 0)
 
-    // Ground traction opposes the wheel's bottom-surface motion.
-    const drive = axle.clone().cross(new THREE.Vector3(0, 1, 0))
-    drive.y = 0
-    if (drive.lengthSq() < 1e-8) return
-    drive.normalize().multiplyScalar(direction < 0 ? -1 : 1)
+    const applyWheel = (axisLocal: THREE.Vector3, offsetLocal: THREE.Vector3, wheelPower: number, wheelDirection: number) => {
+      if (wheelPower <= 0) return
+      const axle = axisLocal.clone().applyQuaternion(rotation).normalize()
+      const horizontalAxle = Math.hypot(axle.x, axle.z)
+      if (horizontalAxle < 0.65) return
+      const drive = axle.clone().cross(up)
+      drive.y = 0
+      if (drive.lengthSq() < 1e-8) return
+      drive.normalize().multiplyScalar(wheelDirection < 0 ? -1 : 1)
 
-    const center = new THREE.Vector3(t.x, t.y, t.z).addScaledVector(axle, 0.64)
-    const bottomY = center.y - 0.41 * horizontalAxle
-    const cellX = Math.floor(center.x)
-    const cellZ = Math.floor(center.z)
-    let supportY = GROUND_LEVEL
-    for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(bottomY + 0.24)); y >= GROUND_LEVEL - 1; y--) {
-      if (this.world.getBlock(cellX, y, cellZ) !== B.AIR) {
-        supportY = y + 1
-        break
+      const center = chassisPosition.clone().add(offsetLocal.clone().applyQuaternion(rotation))
+      const bottomY = center.y - 0.41 * horizontalAxle
+      const cellX = Math.floor(center.x)
+      const cellZ = Math.floor(center.z)
+      let supportY = GROUND_LEVEL
+      for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(bottomY + 0.24)); y >= GROUND_LEVEL - 1; y--) {
+        if (this.world.getBlock(cellX, y, cellZ) !== B.AIR) {
+          supportY = y + 1
+          break
+        }
       }
-    }
-    const gap = bottomY - supportY
-    if (gap > 0.22 || gap < -0.22) return
+      const gap = bottomY - supportY
+      if (gap > 0.22 || gap < -0.22) return
 
-    const velocity = c.chassisBody.linvel()
-    const forwardSpeed = velocity.x * drive.x + velocity.z * drive.z
-    const targetSpeed = Math.max(0.8, Math.min(3.2, power * 1.05))
-    const effort = Math.max(0, Math.min(1.35, 1 - forwardSpeed / targetSpeed))
-    const force = Math.min(36, power * 12) * effort
-    if (force <= 0.05) return
-    c.chassisBody.addForceAtPoint(
-      { x: drive.x * force, y: 0, z: drive.z * force },
-      { x: center.x, y: bottomY, z: center.z },
-      true,
-    )
+      const velocity = c.chassisBody.linvel()
+      const forwardSpeed = velocity.x * drive.x + velocity.z * drive.z
+      const targetSpeed = Math.max(0.8, Math.min(3.2, wheelPower * 1.05))
+      const effort = Math.max(0, Math.min(1.35, 1 - forwardSpeed / targetSpeed))
+      const force = Math.min(36, wheelPower * 12) * effort
+      if (force <= 0.05) return
+      c.chassisBody.addForceAtPoint(
+        { x: drive.x * force, y: 0, z: drive.z * force },
+        { x: center.x, y: bottomY, z: center.z },
+        true,
+      )
+    }
+
+    if (hasPrimaryWheel) {
+      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.64), power, direction)
+    }
+    for (const extra of extraWheels) {
+      const extraPower = this.motorPower.get(extra.motorKey) ?? 0
+      const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
+      const offset = new THREE.Vector3(...extra.motorOffset).addScaledVector(extra.axis, 0.64)
+      applyWheel(extra.axis, offset, extraPower, extraDirection)
+    }
   }
 
   /* ---------------- Frame update ---------------- */
@@ -1726,6 +1743,11 @@ export class Mechanics {
       this.mechDirty = false
       for (const [key, e] of this.models) {
         if (e.type !== 'motor') continue
+        const extra = this.findExtraRotor(key)
+        if (extra) {
+          e.status = (this.motorPower.get(key) ?? 0) > 0 ? 'driving' : 'idle'
+          continue
+        }
         const shouldAssemble = this.networkAuthority
           ? (this.motorPower.get(key) ?? 0) > 0
           : this.desiredNetworkMachines !== null
@@ -1758,7 +1780,10 @@ export class Mechanics {
       if (e.type !== 'motor') continue
       const power = this.motorPower.get(key) ?? 0
       const c = this.contraptions.get(key)
-      if (c) {
+      const extra = this.findExtraRotor(key)?.rotor
+      if (extra) {
+        e.model.shaft.rotation.z = extra.angle
+      } else if (c) {
         e.model.shaft.rotation.z = c.angle
       } else if (power > 0 && e.status !== 'stalled') {
         if (this.networkAuthority || this.desiredNetworkMachines !== null) e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
@@ -1821,8 +1846,38 @@ export class Mechanics {
         }, true)
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
-        if (c.unpoweredTime >= 0.55 && spin < 0.65) {
+        const otherMotorPowered = (c.extraRotors ?? []).some((extra) => (this.motorPower.get(extra.motorKey) ?? 0) > 0)
+        if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered) {
           this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
+        }
+      }
+
+      // Every secondary motor drives its own rotor against the same chassis.
+      const chassisRotation = c.chassisBody.rotation()
+      const chassisQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
+      for (const extra of c.extraRotors ?? []) {
+        const extraPower = this.motorPower.get(extra.motorKey) ?? 0
+        const extraMotor = this.models.get(extra.motorKey)
+        const worldAxis = extra.axis.clone().applyQuaternion(chassisQ).normalize()
+        if (extraPower > 0) {
+          const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
+          extra.speed = extraPower * 1.05 * extraDirection
+          extra.unpoweredTime = 0
+          extra.joint.configureMotorVelocity(extra.speed, 0.85)
+          const angular = extra.rotorBody.angvel()
+          const axialSpeed = angular.x * worldAxis.x + angular.y * worldAxis.y + angular.z * worldAxis.z
+          const maxTorque = Math.max(12, extraPower * 12)
+          const torque = Math.max(-maxTorque, Math.min(maxTorque, (extra.speed - axialSpeed) * 20))
+          extra.rotorBody.addTorque({ x: worldAxis.x * torque, y: worldAxis.y * torque, z: worldAxis.z * torque }, true)
+          if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
+        } else {
+          extra.unpoweredTime += dt
+          extra.joint.configureMotorVelocity(0, 0.95)
+          const angular = extra.rotorBody.angvel()
+          const axialSpeed = angular.x * worldAxis.x + angular.y * worldAxis.y + angular.z * worldAxis.z
+          const brake = Math.max(-8, Math.min(8, -axialSpeed * 12))
+          extra.rotorBody.addTorque({ x: worldAxis.x * brake, y: worldAxis.y * brake, z: worldAxis.z * brake }, true)
+          if (extraMotor?.type === 'motor') extraMotor.status = 'idle'
         }
       }
     }
