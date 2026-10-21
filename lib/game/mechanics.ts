@@ -1284,6 +1284,151 @@ export class Mechanics {
     }
   }
 
+  /**
+   * Raycast against currently simulated blocks, including articulated motor
+   * rotors, rigid chassis blocks, and falling glue assemblies. The hit keeps
+   * the source voxel key so edits can safely re-grid the assembly first.
+   */
+  raycastMoving(origin: THREE.Vector3, direction: THREE.Vector3, maxDistance: number): MovingBlockHit | null {
+    let best: MovingBlockHit | null = null
+    const rayDirection = direction.clone().normalize()
+
+    const testBody = (
+      pivot: THREE.Vector3,
+      rotation: THREE.Quaternion,
+      blocks: { rel: [number, number, number]; id: number; key: string; kind: MovingBlockHit['moving']['kind'] }[],
+    ) => {
+      const inverse = rotation.clone().invert()
+      const localOrigin = origin.clone().sub(pivot).applyQuaternion(inverse)
+      const localDirection = rayDirection.clone().applyQuaternion(inverse).normalize()
+      for (const block of blocks) {
+        const center = new THREE.Vector3(...block.rel)
+        const min = [center.x - 0.5, center.y - 0.5, center.z - 0.5]
+        const max = [center.x + 0.5, center.y + 0.5, center.z + 0.5]
+        const o = [localOrigin.x, localOrigin.y, localOrigin.z]
+        const d = [localDirection.x, localDirection.y, localDirection.z]
+        let tMin = Number.NEGATIVE_INFINITY
+        let tMax = Number.POSITIVE_INFINITY
+        let axis = -1
+        for (let a = 0; a < 3; a++) {
+          if (Math.abs(d[a]) < 1e-9) {
+            if (o[a] < min[a] || o[a] > max[a]) { tMax = Number.NEGATIVE_INFINITY; break }
+            continue
+          }
+          let t1 = (min[a] - o[a]) / d[a]
+          let t2 = (max[a] - o[a]) / d[a]
+          if (t1 > t2) [t1, t2] = [t2, t1]
+          if (t1 > tMin) { tMin = t1; axis = a }
+          tMax = Math.min(tMax, t2)
+        }
+        if (tMin > tMax || tMin < 0 || tMin > maxDistance || axis < 0) continue
+        if (best && tMin >= best.dist) continue
+        const localNormal = new THREE.Vector3()
+        const normalSign = d[axis] > 0 ? -1 : 1
+        if (axis === 0) localNormal.x = normalSign
+        else if (axis === 1) localNormal.y = normalSign
+        else localNormal.z = normalSign
+        const worldNormal = localNormal.applyQuaternion(rotation)
+        let face = 0
+        let faceDot = Number.NEGATIVE_INFINITY
+        for (let i = 0; i < DIRS.length; i++) {
+          const dir = DIRS[i]
+          const dot = worldNormal.x * dir[0] + worldNormal.y * dir[1] + worldNormal.z * dir[2]
+          if (dot > faceDot) { faceDot = dot; face = i }
+        }
+        const worldCenter = center.applyQuaternion(rotation).add(pivot)
+        best = {
+          x: Math.round(worldCenter.x - 0.5),
+          y: Math.round(worldCenter.y - 0.5),
+          z: Math.round(worldCenter.z - 0.5),
+          face,
+          id: block.id,
+          dist: tMin,
+          point: origin.clone().addScaledVector(rayDirection, tMin),
+          moving: { key: block.key, kind: block.kind },
+        }
+      }
+    }
+
+    for (const c of this.contraptions.values()) {
+      const rotorPose = c.rotorBody
+      const rotorT = rotorPose.translation(), rotorR = rotorPose.rotation()
+      testBody(
+        new THREE.Vector3(rotorT.x, rotorT.y, rotorT.z),
+        new THREE.Quaternion(rotorR.x, rotorR.y, rotorR.z, rotorR.w),
+        c.blocks.map((b) => ({ rel: b.rel, id: b.id, key: b.origKey, kind: 'rotor' as const })),
+      )
+      const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
+      testBody(
+        new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z),
+        new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
+        [
+          { rel: [0, 0, 0] as [number, number, number], id: B.MOTOR, key: c.motorKey, kind: 'chassis' as const },
+          ...c.chassisBlocks.map((b) => ({ rel: b.rel, id: b.id, key: b.origKey, kind: 'chassis' as const })),
+        ],
+      )
+    }
+
+    for (const body of this.fallingBodies) {
+      const t = body.body.translation(), r = body.body.rotation()
+      testBody(
+        new THREE.Vector3(t.x, t.y, t.z),
+        new THREE.Quaternion(r.x, r.y, r.z, r.w),
+        body.blocks.map((b) => ({
+          rel: [b.localOrigin.x, b.localOrigin.y, b.localOrigin.z] as [number, number, number],
+          id: b.id, key: b.originKey, kind: 'falling' as const,
+        })),
+      )
+    }
+    return best
+  }
+
+  /**
+   * Turn a moving assembly back into editable voxel cells. The edit is mapped
+   * from the original cell identity, not from its approximate rendered world
+   * position, so breaking/placing on a spinning block targets the intended cell.
+   */
+  releaseMovingBlock(key: string, kind: MovingBlockHit['moving']['kind']): { x: number; y: number; z: number; id: number } | null {
+    if (kind === 'falling') {
+      const index = this.fallingBodies.findIndex((body) => body.blocks.some((block) => block.originKey === key))
+      if (index < 0) return null
+      const body = this.fallingBodies[index]
+      const rotation = body.body.rotation()
+      const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w), 'XYZ')
+      euler.set(
+        Math.round(euler.x / HALF_PI) * HALF_PI,
+        Math.round(euler.y / HALF_PI) * HALF_PI,
+        Math.round(euler.z / HALF_PI) * HALF_PI,
+      )
+      body.body.setRotation(new THREE.Quaternion().setFromEuler(euler), true)
+      body.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
+      body.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
+      const keyMap = this.landBody(body)
+      if (!keyMap) return null
+      this.fallingBodies.splice(index, 1)
+      const target = keyMap.get(key)
+      if (!target) return null
+      const [x, y, z] = parseKey(target)
+      return { x, y, z, id: this.world.getBlock(x, y, z) }
+    }
+
+    for (const c of [...this.contraptions.values()]) {
+      const contains = kind === 'rotor'
+        ? c.blocks.some((block) => block.origKey === key)
+        : c.motorKey === key || c.chassisBlocks.some((block) => block.origKey === key)
+      if (!contains) continue
+      // Snapping to a quarter-turn makes the resulting voxels unambiguous while
+      // preserving the whole assembly; the motor can power it again next frame.
+      const turns = ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4
+      const keyMap = this.disassemble(c, turns)
+      const target = keyMap?.get(key)
+      if (!target) return null
+      const [x, y, z] = parseKey(target)
+      return { x, y, z, id: this.world.getBlock(x, y, z) }
+    }
+    return null
+  }
+
   isMotorDriving(key: string) {
     return this.contraptions.has(key)
   }
