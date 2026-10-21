@@ -74,6 +74,7 @@ interface Contraption {
   angle: number
   speed: number
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
+  reactionTravel: number
 }
 
 export class Mechanics {
@@ -545,6 +546,7 @@ export class Mechanics {
       angle: 0,
       speed: 0,
       wireEnds,
+      reactionTravel: 0,
     })
     return 'driving'
   }
@@ -791,12 +793,55 @@ export class Mechanics {
       const maxY = Math.floor(center.y + extent.y - 1e-5)
       const minZ = Math.floor(center.z - extent.z + 1e-5)
       const maxZ = Math.floor(center.z + extent.z - 1e-5)
-      if (minY < GROUND_LEVEL || maxY >= 64) return false
-      for (let y = minY; y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
+      if (minY < 0 || maxY >= 64) return false
+      // The ground is a support surface, not a wall that blocks the rotor.
+      // Ignore the fixed floor layers so an arm can press against them.
+      for (let y = Math.max(GROUND_LEVEL, minY); y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
         const key = posKey(x, y, z)
         if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
       }
     }
+    return true
+  }
+
+  /**
+   * Move the motor pivot and its rotating assembly as one voxel body. Used for
+   * ground-reaction locomotion; the assembly stays assembled and keeps its
+   * relative block layout instead of being torn down and rebuilt every step.
+   */
+  private translateContraption(c: Contraption, dx: number, dy: number, dz: number) {
+    const [mx, my, mz] = c.motorPos
+    const nx = mx + dx, ny = my + dy, nz = mz + dz
+    if (ny < GROUND_LEVEL || ny >= 63) return false
+    const targetKey = posKey(nx, ny, nz)
+    if (this.world.getBlock(nx, ny, nz) !== B.AIR && targetKey !== c.motorKey) return false
+    const state = this.world.getState(mx, my, mz)
+    this.suppress = true
+    this.world.setBlock(mx, my, mz, B.AIR)
+    this.world.setBlock(nx, ny, nz, B.MOTOR, state)
+    this.suppress = false
+    const oldKey = c.motorKey
+    const entry = this.models.get(oldKey)
+    if (entry?.type === 'motor') {
+      entry.model.group.position.set(nx + 0.5, ny + 0.5, nz + 0.5)
+      this.models.delete(oldKey)
+      this.models.set(targetKey, entry)
+    }
+    const mounted = this.mountedWheels.get(oldKey)
+    if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(targetKey, mounted) }
+    const power = this.motorPower.get(oldKey)
+    const direction = this.motorDirection.get(oldKey)
+    this.motorPower.delete(oldKey); this.motorDirection.delete(oldKey)
+    if (power !== undefined) this.motorPower.set(targetKey, power)
+    if (direction !== undefined) this.motorDirection.set(targetKey, direction)
+    this.tractionVelocity.delete(oldKey)
+    c.group.position.add(new THREE.Vector3(dx, dy, dz))
+    c.motorPos = [nx, ny, nz]
+    c.motorKey = targetKey
+    this.contraptions.delete(oldKey)
+    this.contraptions.set(targetKey, c)
+    this.physicsDirty = true
+    this.powerDirty = true
     return true
   }
 
@@ -950,6 +995,36 @@ export class Mechanics {
         }
       }
       c.group.quaternion.setFromAxisAngle(c.axis, c.angle)
+      // If a rotating arm is descending into the floor, the equal-and-opposite
+      // reaction moves the machine opposite to the arm's horizontal sweep.
+      // Quantized translation is intentional: blocks remain voxel-aligned.
+      if (power > 0 && Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
+        const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
+        const pivot = new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5)
+        let reactionX = 0, reactionZ = 0, pressing = false
+        for (const b of c.blocks) {
+          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
+          const center = rel.clone().add(pivot)
+          const halfY = 0.5 * (Math.abs(q.x * 0 + 1) + Math.abs(q.y * 0 + 1) + Math.abs(q.z * 0 + 1))
+          const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
+          if (center.y - halfY <= GROUND_LEVEL + 0.04 && tangential.y < -0.08) {
+            pressing = true
+            reactionX -= tangential.x
+            reactionZ -= tangential.z
+          }
+        }
+        if (pressing && Math.hypot(reactionX, reactionZ) > 0.02) {
+          c.reactionTravel += Math.min(1, Math.hypot(reactionX, reactionZ) * dt * 0.7)
+          if (c.reactionTravel >= 0.42) {
+            const dx = Math.abs(reactionX) > Math.abs(reactionZ) ? Math.sign(reactionX) : 0
+            const dz = dx ? 0 : Math.sign(reactionZ)
+            if (dx || dz) {
+              if (this.translateContraption(c, dx, 0, dz)) c.reactionTravel = 0
+              else c.reactionTravel *= 0.25
+            }
+          }
+        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.6)
+      }
       if (c.wireEnds.length) {
         c.group.updateMatrixWorld(true)
         for (const we of c.wireEnds) {
