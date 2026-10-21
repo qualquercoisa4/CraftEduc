@@ -933,68 +933,9 @@ export class Mechanics {
       if (mounted) {
         mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
         mounted.model.rim.rotation.z = mounted.spin
-        // Wheel torque becomes chassis traction when the motor is glued into
-        // a supported assembly. Friction and load limit acceleration.
-        const contraption = this.contraptions.get(key)
-        if (power > 0 && contraption && contraption.blocks.length) {
-          const [mx, my, mz] = contraption.motorPos
-          const facing = DIRS[contraption.facing] ?? DIRS[2]
-          const mass = Math.max(1, contraption.blocks.length + 1)
-          const force = power * 1.7 * (this.motorDirection.get(key) ?? 1) / Math.sqrt(mass)
-          const v = this.tractionVelocity.get(key) ?? new THREE.Vector3()
-          v.x += facing[0] * force * dt
-          v.z += facing[2] * force * dt
-          v.multiplyScalar(Math.max(0, 1 - 1.8 * dt))
-          this.tractionVelocity.set(key, v)
-          const stepX = Math.abs(v.x) > 0.9 ? Math.sign(v.x) : 0
-          const stepZ = Math.abs(v.z) > 0.9 ? Math.sign(v.z) : 0
-          if (stepX || stepZ) {
-            const dx = stepX, dz = stepZ
-            const moving = contraption.blocks.map(b => ({
-              b,
-              ox: Math.round(b.rel[0] + mx), oy: Math.round(b.rel[1] + my), oz: Math.round(b.rel[2] + mz),
-              x: Math.round(b.rel[0] + mx) + dx, y: Math.round(b.rel[1] + my), z: Math.round(b.rel[2] + mz) + dz,
-            }))
-            const motorState = this.world.getState(mx, my, mz)
-            const motorTarget = { x: mx + dx, y: my, z: mz + dz }
-            const occupied = new Set([...moving.map(b => posKey(b.ox,b.oy,b.oz)), posKey(mx,my,mz)])
-            const targets = [...moving.map(b => ({x:b.x,y:b.y,z:b.z})), motorTarget]
-            const canMove = targets.every(p => this.world.getBlock(p.x,p.y,p.z) === B.AIR || occupied.has(posKey(p.x,p.y,p.z)))
-            if (canMove) {
-              this.disassemble(contraption, Math.round(contraption.angle / HALF_PI) % 4)
-              this.suppress = true
-              for (const b of moving) this.world.setBlock(b.ox,b.oy,b.oz,B.AIR)
-              this.world.setBlock(mx,my,mz,B.AIR)
-              for (const b of moving) this.world.setBlock(b.x,b.y,b.z,b.b.id,b.b.state)
-              this.world.setBlock(motorTarget.x,motorTarget.y,motorTarget.z,B.MOTOR,motorState)
-              this.suppress = false
-
-              // Move the motor model and its mounted wheel with the voxel chassis.
-              const oldKey = key
-              const newKey = posKey(motorTarget.x, motorTarget.y, motorTarget.z)
-              const motorEntry = this.models.get(oldKey)
-              if (motorEntry?.type === 'motor') {
-                motorEntry.model.group.position.set(motorTarget.x + 0.5, motorTarget.y + 0.5, motorTarget.z + 0.5)
-                this.models.delete(oldKey)
-                this.models.set(newKey, motorEntry)
-              }
-              const mounted = this.mountedWheels.get(oldKey)
-              if (mounted) {
-                this.mountedWheels.delete(oldKey)
-                this.mountedWheels.set(newKey, mounted)
-              }
-              const velocity = this.tractionVelocity.get(oldKey) ?? new THREE.Vector3()
-              this.tractionVelocity.delete(oldKey)
-              this.tractionVelocity.set(newKey, velocity.set(0, 0, 0))
-              this.physicsDirty = true
-              this.powerDirty = true
-              this.mechDirty = true
-              break
-            } else {
-              v.multiplyScalar(-0.15)
-            }
-          }
-        }
+        // The wheel is visual here. Do not translate/disassemble the voxel
+        // assembly from this legacy traction path: the continuous rigid-body
+        // solver below must own both translation and rotation.
       }
     }
 
