@@ -86,6 +86,7 @@ export class Engine {
   private locked = false
   private lockFailed = false
   private debugTimer = 0
+  private physicsDebugLabel: HTMLPreElement | null = null
   private frames = 0
   private fps = 0
   private touchHolding = false
@@ -106,6 +107,27 @@ export class Engine {
 
     const { settings } = gameStore.get()
     if (isTouch && settings.renderDistance > 5) gameStore.set({ settings: { ...settings, renderDistance: 5 } })
+    if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+      const label = document.createElement('pre')
+      label.style.position = 'fixed'
+      label.style.left = '8px'
+      label.style.top = '8px'
+      label.style.zIndex = '99999'
+      label.style.margin = '0'
+      label.style.padding = '8px 10px'
+      label.style.maxWidth = 'calc(100vw - 16px)'
+      label.style.maxHeight = '34vh'
+      label.style.overflow = 'auto'
+      label.style.pointerEvents = 'none'
+      label.style.whiteSpace = 'pre-wrap'
+      label.style.font = '12px/1.35 monospace'
+      label.style.color = '#eaffea'
+      label.style.background = 'rgba(0,0,0,.78)'
+      label.style.border = '1px solid rgba(160,255,160,.5)'
+      label.textContent = 'Inicializando física...'
+      document.body.appendChild(label)
+      this.physicsDebugLabel = label
+    }
 
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 1000)
     this.camera.rotation.order = 'YXZ'
@@ -308,6 +330,8 @@ export class Engine {
   }
 
   dispose() {
+    this.physicsDebugLabel?.remove()
+    this.physicsDebugLabel = null
     cancelAnimationFrame(this.raf)
     for (const c of this.cleanup) c()
     this.releaseLock()
@@ -839,6 +863,7 @@ export class Engine {
     this.sky.material.uniforms.uTime.value = this.elapsed
     this.updateChunks(centerX, centerZ)
     this.particles.update(frozen ? 0 : dt, this.camera)
+    if (this.physicsDebugLabel) this.physicsDebugLabel.textContent = this.mech.physicsDebugText()
 
     this.renderer.clear()
     this.renderer.render(this.scene, this.camera)
