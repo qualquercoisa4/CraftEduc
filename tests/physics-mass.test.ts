@@ -187,7 +187,6 @@ async function main() {
     'a powered assembly must not leave the active-contraption state during circuit refresh')
 
   for (const wire of mechanics.wires) {
-    mechanicsPhysics.removeRigidBody(undefined)
     wire.mesh.traverse((obj) => {
       const mesh = obj as THREE.Mesh
       if (mesh.geometry) mesh.geometry.dispose()
