@@ -150,7 +150,6 @@ export class MultiplayerClient {
       seed: Math.floor(Math.random() * 0x7fffffff),
     })
     client.pendingPayload = payload
-    client.pendingPayload = payload
     client.applyPayload(payload)
     return { client, payload }
   }
@@ -160,6 +159,7 @@ export class MultiplayerClient {
     const playerKey = getPlayerKey()
     const client = new MultiplayerClient({ roomId: normalized, playerKey, playerName, isHost: false, skin })
     const payload = await client.request<NetworkPayload>('join', { playerKey, playerName: client.playerName, skin: client.skin })
+    client.pendingPayload = payload
     client.applyPayload(payload)
     return { client, payload }
   }
