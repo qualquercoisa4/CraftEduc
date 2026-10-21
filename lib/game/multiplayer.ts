@@ -43,6 +43,7 @@ export interface NetworkPayload {
   players: NetworkPlayer[]
   cursor: number
   playerSave?: { name: string; data: Record<string, unknown>; skin: SkinConfig } | null
+  chat?: { id: string; playerId: string; playerName: string; message: string; createdAt: string }[]
   isHost?: boolean
 }
 export interface MultiplayerCallbacks {
@@ -116,6 +117,7 @@ export class MultiplayerClient {
   private sessionReady = false
   private connected = false
   private pendingPayload: NetworkPayload | null = null
+  private seenChatIds = new Set<string>()
 
   private constructor(args: { roomId: string; playerKey: string; playerName: string; hostKey?: string; isHost: boolean; skin: SkinConfig }) {
     this.roomId = args.roomId.toLowerCase()
@@ -180,6 +182,12 @@ export class MultiplayerClient {
       engine.mech.applyNetworkSnapshot(payload.world?.sharedState ?? {})
     }
     this.players = payload.players ?? []
+    for (const message of payload.chat ?? []) {
+      if (!this.seenChatIds.has(message.id)) {
+        this.seenChatIds.add(message.id)
+        this.callbacks.onChat?.(message)
+      }
+    }
     this.callbacks.onRules?.(this.rules)
     this.callbacks.onPlayers?.(this.players.filter((p) => p.id !== this.playerKey))
     engine?.setRemotePlayers(this.players.filter((p) => p.id !== this.playerKey))
@@ -227,6 +235,7 @@ export class MultiplayerClient {
       const data = await this.request<{
         world: NetworkPayload['world']; events: { id: number; type: string; payload: any }[]
         players: NetworkPlayer[]; cursor: number
+        chat?: { id: string; playerId: string; playerName: string; message: string; createdAt: string }[]
       }>('poll', { cursor: this.cursor })
       for (const event of data.events ?? []) {
         const p = event.payload
@@ -247,6 +256,15 @@ export class MultiplayerClient {
           this.callbacks.onRules?.(this.rules)
           this.engine?.setMultiplayerRules(this.rules, this.isHost)
         }
+      }
+      for (const message of data.chat ?? []) {
+        if (this.seenChatIds.has(message.id)) continue
+        this.seenChatIds.add(message.id)
+        if (this.seenChatIds.size > 200) {
+          const oldest = this.seenChatIds.values().next().value
+          if (oldest) this.seenChatIds.delete(oldest)
+        }
+        this.callbacks.onChat?.(message)
       }
       this.cursor = Number.isFinite(data.cursor) ? data.cursor : this.cursor
       this.players = data.players ?? []
@@ -318,6 +336,7 @@ export class MultiplayerClient {
 
   async postChat(message: string) {
     const result = await this.request<{ chat: { id: string; playerId: string; playerName: string; message: string; createdAt: string } }>('post_chat', { message })
+    this.seenChatIds.add(result.chat.id)
     this.callbacks.onChat?.(result.chat)
   }
 
