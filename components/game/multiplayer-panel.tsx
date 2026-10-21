@@ -110,6 +110,15 @@ export function MultiplayerPanel({ open, session, onSessionChange, onClose }: Mu
       const result = kind === 'create'
         ? await MultiplayerClient.create(name, skin)
         : await MultiplayerClient.join(roomCode, name, skin)
+      if (kind === 'create') {
+        try {
+          const initialWorld = engine.exportNetworkWorld(result.client.playerKey)
+          await result.client.syncInitialWorld(initialWorld.blocks, initialWorld.wires)
+        } catch (syncError) {
+          await result.client.leave()
+          throw syncError
+        }
+      }
       result.client.start(engine, callbacks())
       onSessionChange(result.client)
       setRules({ ...result.client.rules })
