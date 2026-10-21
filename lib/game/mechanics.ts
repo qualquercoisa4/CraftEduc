@@ -70,6 +70,8 @@ interface Contraption {
   axis: THREE.Vector3
   facing: number
   blocks: CBlock[]
+  chassisBlocks: CBlock[]
+  travel: THREE.Vector3
   byKey: Map<string, CBlock>
   group: THREE.Group
   angle: number
@@ -558,6 +560,8 @@ export class Mechanics {
       axis: new THREE.Vector3(d[0], d[1], d[2]),
       facing,
       blocks,
+      chassisBlocks,
+      travel: new THREE.Vector3(),
       byKey,
       group,
       angle: 0,
@@ -827,59 +831,131 @@ export class Mechanics {
    * ground-reaction locomotion; the assembly stays assembled and keeps its
    * relative block layout instead of being torn down and rebuilt every step.
    */
+  /**
+   * Translate the motor and its non-rotating glued chassis together by one
+   * voxel while leaving the output-side rotor independently articulated.
+   * The rotor pivot remains grid-aligned during chassis movement.
+   */
   private translateContraption(c: Contraption, dx: number, dy: number, dz: number, angle = c.angle) {
     const [mx, my, mz] = c.motorPos
+    const delta = new THREE.Vector3(dx, dy, dz)
     const nx = mx + dx, ny = my + dy, nz = mz + dz
     if (ny < GROUND_LEVEL || ny >= 63) return false
+
+    const oldKey = c.motorKey
     const targetKey = posKey(nx, ny, nz)
-    if (this.world.getBlock(nx, ny, nz) !== B.AIR && targetKey !== c.motorKey) return false
-    // Validate every rotated block at the destination before moving anything.
+    const motorState = this.world.getState(mx, my, mz)
+    const moving: { oldKey: string; newKey: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
+    moving.push({ oldKey, newKey: targetKey, x: nx, y: ny, z: nz, id: B.MOTOR, state: motorState ? { ...motorState } : undefined })
+    for (const b of c.chassisBlocks) {
+      const x = mx + b.rel[0], y = my + b.rel[1], z = mz + b.rel[2]
+      const newX = x + dx, newY = y + dy, newZ = z + dz
+      if (newY < GROUND_LEVEL || newY >= 64) return false
+      const oldBlockKey = posKey(x, y, z)
+      const state = this.world.getState(x, y, z)
+      moving.push({
+        oldKey: oldBlockKey, newKey: posKey(newX, newY, newZ), x: newX, y: newY, z: newZ,
+        id: this.world.getBlock(x, y, z), state: state ? { ...state } : (b.state ? { ...b.state } : undefined),
+      })
+    }
+    const sourceKeys = new Set(moving.map((b) => b.oldKey))
+    const destinationKeys = new Set<string>()
+    for (const b of moving) {
+      if (destinationKeys.has(b.newKey)) return false
+      destinationKeys.add(b.newKey)
+      if (b.id === B.AIR) return false
+      if (!sourceKeys.has(b.newKey) && this.world.getBlock(b.x, b.y, b.z) !== B.AIR) return false
+    }
+
+    // Check the rotating output assembly at its new pivot before moving the
+    // motor/chassis. Chassis source cells are treated as part of this body.
     const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
     const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
-    const axes = [new THREE.Vector3(1,0,0).applyQuaternion(q), new THREE.Vector3(0,1,0).applyQuaternion(q), new THREE.Vector3(0,0,1).applyQuaternion(q)]
+    const axes = [
+      new THREE.Vector3(1, 0, 0).applyQuaternion(q),
+      new THREE.Vector3(0, 1, 0).applyQuaternion(q),
+      new THREE.Vector3(0, 0, 1).applyQuaternion(q),
+    ]
     const ext = new THREE.Vector3(
-      0.5 * axes.reduce((n,a)=>n+Math.abs(a.x),0),
-      0.5 * axes.reduce((n,a)=>n+Math.abs(a.y),0),
-      0.5 * axes.reduce((n,a)=>n+Math.abs(a.z),0),
+      0.5 * axes.reduce((n, a) => n + Math.abs(a.x), 0),
+      0.5 * axes.reduce((n, a) => n + Math.abs(a.y), 0),
+      0.5 * axes.reduce((n, a) => n + Math.abs(a.z), 0),
     )
     for (const b of c.blocks) {
-      const center = new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot).add(new THREE.Vector3(dx,dy,dz))
-      const minX=Math.floor(center.x-ext.x+1e-4), maxX=Math.floor(center.x+ext.x-1e-4)
-      const minY=Math.floor(center.y-ext.y+1e-4), maxY=Math.floor(center.y+ext.y-1e-4)
-      const minZ=Math.floor(center.z-ext.z+1e-4), maxZ=Math.floor(center.z+ext.z-1e-4)
+      const center = new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot).add(delta)
+      const minX = Math.floor(center.x - ext.x + 1e-4), maxX = Math.floor(center.x + ext.x - 1e-4)
+      const minY = Math.floor(center.y - ext.y + 1e-4), maxY = Math.floor(center.y + ext.y - 1e-4)
+      const minZ = Math.floor(center.z - ext.z + 1e-4), maxZ = Math.floor(center.z + ext.z - 1e-4)
       if (minY < GROUND_LEVEL || maxY >= 64) return false
-      for(let y=minY;y<=maxY;y++) for(let z=minZ;z<=maxZ;z++) for(let x=minX;x<=maxX;x++) {
-        // The pivot motor belongs to this same moving assembly.
-        if (posKey(x,y,z) === c.motorKey) continue
-        if (this.world.getBlock(x,y,z)!==B.AIR) return false
+      for (let y = minY; y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
+        const key = posKey(x, y, z)
+        if (sourceKeys.has(key) || key === oldKey) continue
+        if (this.world.getBlock(x, y, z) !== B.AIR) return false
       }
     }
-    const state = this.world.getState(mx, my, mz)
+
+    // Remove all moving voxels first so the assembly can move into its own
+    // former cells without overwriting a neighbouring chassis block.
     this.suppress = true
-    this.world.setBlock(mx, my, mz, B.AIR)
-    this.world.setBlock(nx, ny, nz, B.MOTOR, state)
-    this.suppress = false
-    const oldKey = c.motorKey
-    const entry = this.models.get(oldKey)
-    if (entry?.type === 'motor') {
-      // The motor model is a child of the rotating assembly; translating the
-      // assembly already moves it in world space. Keep its local pivot intact.
-      this.models.delete(oldKey)
-      this.models.set(targetKey, entry)
+    for (const b of moving) {
+      const [x, y, z] = parseKey(b.oldKey)
+      this.world.setBlock(x, y, z, B.AIR)
     }
-    const mounted = this.mountedWheels.get(oldKey)
-    if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(targetKey, mounted) }
+    for (const b of moving) this.world.setBlock(b.x, b.y, b.z, b.id, b.state)
+    this.suppress = false
+
+    const keyMap = new Map(moving.map((b) => [b.oldKey, b.newKey]))
+    for (const b of moving) {
+      const entry = this.models.get(b.oldKey)
+      if (entry) {
+        this.models.delete(b.oldKey)
+        this.models.set(b.newKey, entry)
+        // Motor and chassis-mounted component models translate but do not
+        // inherit the rotor's quaternion.
+        entry.model.group.position.add(delta)
+      }
+      const mounted = this.mountedWheels.get(b.oldKey)
+      if (mounted) {
+        this.mountedWheels.delete(b.oldKey)
+        this.mountedWheels.set(b.newKey, mounted)
+      }
+      const glow = this.glows.get(b.oldKey)
+      if (glow) {
+        this.glows.delete(b.oldKey)
+        glow.position.add(delta)
+        this.glows.set(b.newKey, glow)
+      }
+    }
+
+    for (const wire of this.wires) {
+      let changed = false
+      if (keyMap.has(wire.a)) { wire.a = keyMap.get(wire.a)!; wire.pa.add(delta); changed = true }
+      if (keyMap.has(wire.b)) { wire.b = keyMap.get(wire.b)!; wire.pb.add(delta); changed = true }
+      if (changed) updateWireMesh(wire.mesh, wire.pa, wire.pb)
+    }
+
+    // Keep the moving chassis records relative to the motor. Refresh their
+    // keys/states so later steps use the current world state.
+    for (const b of c.chassisBlocks) {
+      b.origKey = posKey(nx + b.rel[0], ny + b.rel[1], nz + b.rel[2])
+      const state = this.world.getState(nx + b.rel[0], ny + b.rel[1], nz + b.rel[2])
+      b.state = state ? { ...state } : undefined
+    }
+
     const power = this.motorPower.get(oldKey)
     const direction = this.motorDirection.get(oldKey)
-    this.motorPower.delete(oldKey); this.motorDirection.delete(oldKey)
+    this.motorPower.delete(oldKey)
+    this.motorDirection.delete(oldKey)
     if (power !== undefined) this.motorPower.set(targetKey, power)
     if (direction !== undefined) this.motorDirection.set(targetKey, direction)
     this.tractionVelocity.delete(oldKey)
-    c.group.position.add(new THREE.Vector3(dx, dy, dz))
+
+    c.group.position.copy(new THREE.Vector3(nx + 0.5, ny + 0.5, nz + 0.5))
     c.motorPos = [nx, ny, nz]
     c.motorKey = targetKey
     this.contraptions.delete(oldKey)
     this.contraptions.set(targetKey, c)
+    this.rebuildGlue()
     this.physicsDirty = true
     this.powerDirty = true
     return true
@@ -1071,18 +1147,34 @@ export class Mechanics {
         c.velocity.y -= 9.81 * dt
         c.velocity.x *= Math.exp(-0.65 * dt)
         c.velocity.z *= Math.exp(-0.65 * dt)
-        c.group.position.addScaledVector(c.velocity, dt)
-        // Static floor collision: clamp the whole body, never delete individual
-        // blocks that overlap the floor. Arms can push the pivot up next frame.
-        let minBottom = Infinity
-        for (const b of c.blocks) {
-          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
-          const center = rel.clone().add(c.group.position)
-          minBottom = Math.min(minBottom, center.y - halfY)
-        }
-        if (minBottom < GROUND_LEVEL) {
-          c.group.position.y += GROUND_LEVEL - minBottom
-          if (c.velocity.y < 0) c.velocity.y = 0
+        // Accumulate physical displacement, then move the motor + non-rotating
+        // chassis by whole voxels. The rotor keeps its independent continuous
+        // angle around the translated pivot, without turning the chassis.
+        c.travel.addScaledVector(c.velocity, dt)
+        const axesToMove: { axis: 'x' | 'y' | 'z'; dx: number; dy: number; dz: number }[] = [
+          { axis: 'x', dx: 1, dy: 0, dz: 0 },
+          { axis: 'y', dx: 0, dy: 1, dz: 0 },
+          { axis: 'z', dx: 0, dy: 0, dz: 1 },
+        ]
+        for (const axisMove of axesToMove) {
+          let steps = 0
+          while (Math.abs(c.travel[axisMove.axis]) >= 1 && steps < 2) {
+            const sign = Math.sign(c.travel[axisMove.axis])
+            const moved = this.translateContraption(
+              c,
+              axisMove.dx * sign,
+              axisMove.dy * sign,
+              axisMove.dz * sign,
+              c.angle,
+            )
+            if (!moved) {
+              c.travel[axisMove.axis] = 0
+              c.velocity[axisMove.axis] = 0
+              break
+            }
+            c.travel[axisMove.axis] -= sign
+            steps++
+          }
         }
       }
       if (c.wireEnds.length) {
