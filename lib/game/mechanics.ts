@@ -1039,13 +1039,13 @@ export class Mechanics {
         }
       }
       c.group.quaternion.setFromAxisAngle(c.axis, c.angle)
-      // If a rotating arm is descending into the floor, the equal-and-opposite
-      // reaction moves the machine opposite to the arm's horizontal sweep.
-      // Quantized translation is intentional: blocks remain voxel-aligned.
+      // Ground reaction acts for the entire interval in which a powered arm
+      // is touching the floor and its tangential velocity points into it.
+      // The equal-and-opposite impulse is opposite the arm's sweep.
       if (power > 0 && Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
         const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
         const pivot = new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5)
-        let reactionX = 0, reactionZ = 0, pressing = false
+        let reactionX = 0, reactionZ = 0, liftImpulse = 0
         for (const b of c.blocks) {
           const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
           const center = rel.clone().add(pivot)
@@ -1053,24 +1053,33 @@ export class Mechanics {
           const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
           const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
           const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
+          const bottom = center.y - halfY
           const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
-          if (center.y - halfY <= GROUND_LEVEL + 0.04 && tangential.y < -0.08) {
-            pressing = true
-            reactionX -= tangential.x
-            reactionZ -= tangential.z
+          const touchingFloor = bottom <= GROUND_LEVEL + 0.08 && bottom >= GROUND_LEVEL - 0.65
+          if (touchingFloor && tangential.y < -0.015) {
+            const depth = Math.max(0.15, Math.min(1, (GROUND_LEVEL + 0.08 - bottom) * 2 + 0.15))
+            reactionX -= tangential.x * depth
+            reactionZ -= tangential.z * depth
+            liftImpulse += -tangential.y * depth
           }
         }
-        if (pressing && Math.hypot(reactionX, reactionZ) > 0.02) {
-          c.reactionTravel += Math.min(1, Math.hypot(reactionX, reactionZ) * dt * 0.7)
-          if (c.reactionTravel >= 0.42) {
-            const dx = Math.abs(reactionX) > Math.abs(reactionZ) ? Math.sign(reactionX) : 0
+        const horizontalForce = Math.hypot(reactionX, reactionZ)
+        if (horizontalForce > 0.015) {
+          c.reactionTravel += Math.min(0.35, horizontalForce * dt * 0.95)
+          if (c.reactionTravel >= 0.28) {
+            const dx = Math.abs(reactionX) >= Math.abs(reactionZ) ? Math.sign(reactionX) : 0
             const dz = dx ? 0 : Math.sign(reactionZ)
             if (dx || dz) {
-              if (this.translateContraption(c, dx, 0, dz)) c.reactionTravel = 0
-              else c.reactionTravel *= 0.25
+              let moved = this.translateContraption(c, dx, 0, dz)
+              if (!moved && liftImpulse > 0.02) {
+                moved = this.translateContraption(c, 0, 1, 0)
+                if (moved) moved = this.translateContraption(c, dx, 0, dz)
+              }
+              if (moved) c.reactionTravel = Math.max(0, c.reactionTravel - 0.28)
+              else c.reactionTravel = Math.min(c.reactionTravel, 0.35)
             }
           }
-        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.6)
+        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.3)
       }
       if (c.wireEnds.length) {
         c.group.updateMatrixWorld(true)
