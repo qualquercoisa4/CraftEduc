@@ -140,6 +140,7 @@ async function main() {
   const batteryKey = posKey(2, 6, 2)
   const noseKey = posKey(3, 5, 2)
   const motorKey = posKey(4, 5, 2)
+  const targetKey = posKey(4, 6, 1)
   const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number }) => {
     const key = posKey(x, y, z)
     blockMap.set(key, id)
@@ -152,6 +153,10 @@ async function main() {
   putTestBlock(4, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 3) })
   putTestBlock(5, 6, 2, B.WOOD, { glue: (1 << 0) | (1 << 1) })
   putTestBlock(6, 6, 2, B.WOOD, { glue: 1 << 1 })
+  // A supported aluminum voxel is placed in the wood arm's circular sweep.
+  // It should be pushed sideways by the actual motor/rotor simulation.
+  putTestBlock(4, 5, 1, B.IRON, {})
+  putTestBlock(4, 6, 1, B.ALUMINUM, {})
 
   // The model visuals are irrelevant to this server-side regression; use a
   // minimal motor model so the production assembly code still builds its real
@@ -214,7 +219,31 @@ async function main() {
   ;(mechanics as unknown as { fallingBodies: unknown[] }).fallingBodies.length = 0
   ;(mechanics as unknown as { fallingKeys: Set<string> }).fallingKeys.clear()
   const initialChassisY = machine.chassisBody.translation().y
-  for (let step = 0; step < 120; step++) mechanics.update(1 / 60)
+  let maxTargetHorizontalTravel = 0
+  const targetStart = new THREE.Vector3(4.5, 6.5, 1.5)
+  const sampleTarget = () => {
+    const active = (mechanics as unknown as { fallingBodies: { body: import('@dimforge/rapier3d-compat').RigidBody; blocks: { id: number; originKey: string }[] }[] }).fallingBodies
+      .find((body) => body.blocks.some((block) => block.originKey === targetKey))
+    if (active) {
+      const t = active.body.translation()
+      return new THREE.Vector3(t.x, t.y, t.z)
+    }
+    for (const [key, id] of blockMap) {
+      if (id !== B.ALUMINUM || key === baseKey || key === noseKey) continue
+      const [x, y, z] = key.split(',').map(Number)
+      const point = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      if (point.distanceTo(targetStart) < 4) return point
+    }
+    return targetStart.clone()
+  }
+  for (let step = 0; step < 120; step++) {
+    mechanics.update(1 / 60)
+    const currentTarget = sampleTarget()
+    maxTargetHorizontalTravel = Math.max(
+      maxTargetHorizontalTravel,
+      Math.hypot(currentTarget.x - targetStart.x, currentTarget.z - targetStart.z),
+    )
+  }
   assert.equal(mechanics.contraptions.has(motorKey), true,
     'the powered motor must remain assembled across 120 physics frames')
   assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7,
@@ -227,7 +256,10 @@ async function main() {
     'a dynamic assembly must not wake and remove the ground support beneath its chassis')
   assert.ok(machine.angle > 0.15,
     `the powered motor must physically rotate its rotor (angle=${machine.angle.toFixed(3)} rad)`)
+  assert.ok(maxTargetHorizontalTravel > 0.1,
+    `the rotating three-block wood arm must push the aluminum target sideways (max horizontal travel=${maxTargetHorizontalTravel.toFixed(3)} m)`)
   console.log(`PASS: after 120 frames, rotor angle=${machine.angle.toFixed(3)} rad; chassis ΔY=${(finalChassisY - initialChassisY).toFixed(3)} m`)
+  console.log(`PASS: powered rotating arm pushed aluminum target ${maxTargetHorizontalTravel.toFixed(3)} m sideways`)
 
   for (const wire of mechanics.wires) {
     wire.mesh.traverse((obj) => {
