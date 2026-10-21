@@ -181,6 +181,7 @@ export class MultiplayerClient {
     if (Number.isFinite(payload.cursor)) this.cursor = payload.cursor
     const engine = this.engine
     if (engine) {
+      engine.setLocalMultiplayerPlayer(payload.playerSave?.data)
       for (const block of payload.blocks ?? []) {
         const key = `${block.x},${block.y},${block.z}`
         if (block.ownerKey) this.lastBlockOwners.set(key, block.ownerKey)
@@ -238,7 +239,10 @@ export class MultiplayerClient {
       canFly: () => this.isHost || this.rules.playersCanFly,
       canBreakBlock: (x, y, z, actorKey) => this.canBreakBlock(x, y, z, actorKey),
       movingAction: (intent) => { void this.request('request_moving_action', { intent: { ...intent, playerKey: this.playerKey, playerName: this.playerName } }).catch((error) => this.callbacks.onError?.(error instanceof Error ? error.message : 'Não foi possível enviar a ação da máquina.')) },
-      blockChanged: (x, y, z, block, state, ownerKey) => { void this.publishBlock(x, y, z, block, state, ownerKey) },
+      blockChanged: (x, y, z, block, state, ownerKey) => {
+        const currentOwner = block === 0 ? null : (ownerKey !== undefined ? ownerKey : this.isHost ? (this.lastBlockOwners.get(`${x},${y},${z}`) ?? this.playerKey) : undefined)
+        void this.publishBlock(x, y, z, block, state, currentOwner)
+      },
       ownerForBlock: (x, y, z) => this.lastBlockOwners.get(`${x},${y},${z}`) ?? null,
       wireCreated: (wire) => { void this.publishWire(wire) },
       wiresRemovedAt: (key) => { void this.removeWiresAt(key) },
