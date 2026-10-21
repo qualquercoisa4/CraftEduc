@@ -69,6 +69,7 @@ interface FallingBody {
 interface Contraption {
   motorKey: string
   motorPos: [number, number, number]
+  motorState?: BlockState
   axis: THREE.Vector3
   facing: number
   blocks: CBlock[]
@@ -468,37 +469,39 @@ export class Mechanics {
   }
 
   private tryAssemble(motorKey: string): 'idle' | 'stalled' | 'driving' {
+    if (!this.rigidPhysics.ready) {
+      // Rapier initializes asynchronously; retry the assembly on a later frame.
+      this.mechDirty = true
+      return 'idle'
+    }
+
     const [mx, my, mz] = parseKey(motorKey)
-    const facing = this.world.getState(mx, my, mz)?.facing ?? 2
+    const motorState = this.world.getState(mx, my, mz)
+    const facing = motorState?.facing ?? 2
     const d = DIRS[facing]
-    // Only the glue-connected component attached to the motor's rotating
-    // output face is part of the rotor. Blocks glued to the sides, back, top,
-    // or underside of the motor remain in the static world as chassis.
     const sx = mx + d[0], sy = my + d[1], sz = mz + d[2]
     if (this.world.getBlock(sx, sy, sz) === B.AIR || !this.isGlued(mx, my, mz, facing)) return 'idle'
+
+    // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
     const visited = new Set<string>([seedKey])
     const queue: [number, number, number][] = [[sx, sy, sz]]
     while (queue.length) {
       const [x, y, z] = queue.shift()!
-      if (y < GROUND_LEVEL) return 'stalled'
-      if (visited.size > MAX_CONTRAPTION) return 'stalled'
-      for (let i = 0; i < 6; i++) {
-        const n = DIRS[i]
-        const nx = x + n[0]
-        const ny = y + n[1]
-        const nz = z + n[2]
-        const k = posKey(nx, ny, nz)
-        if (visited.has(k) || k === motorKey) continue
-        if (this.world.getBlock(nx, ny, nz) === B.AIR) continue
-        if (!this.isGlued(x, y, z, i)) continue
-        visited.add(k)
+      if (y < GROUND_LEVEL || visited.size > MAX_CONTRAPTION) return 'stalled'
+      for (let face = 0; face < 6; face++) {
+        const n = DIRS[face]
+        const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+        const key = posKey(nx, ny, nz)
+        if (visited.has(key) || key === motorKey) continue
+        if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
+        visited.add(key)
         queue.push([nx, ny, nz])
       }
     }
 
-    // Collect glued blocks on the motor's non-output faces as a rigid,
-    // non-rotating chassis. Exclude the output rotor discovered above.
+    // Other faces form the non-rotating chassis. It remains rigid, but is a
+    // separate body linked to the rotor by a revolute joint at the shaft.
     const chassisVisited = new Set<string>()
     const chassisQueue: [number, number, number][] = []
     for (let face = 0; face < 6; face++) {
@@ -523,37 +526,34 @@ export class Mechanics {
         chassisQueue.push([nx, ny, nz])
       }
     }
+
+    const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
+    const blocks: CBlock[] = []
+    const byKey = new Map<string, CBlock>()
+    const relMap = new Map<string, number>()
+    for (const key of visited) {
+      const [x, y, z] = parseKey(key)
+      const state = this.world.getState(x, y, z)
+      const cb: CBlock = {
+        rel: [x - mx, y - my, z - mz],
+        id: this.world.getBlock(x, y, z),
+        state: state ? { ...state } : undefined,
+        origKey: key,
+      }
+      blocks.push(cb)
+      byKey.set(key, cb)
+      relMap.set(posKey(...cb.rel), cb.id)
+    }
     const chassisBlocks: CBlock[] = [...chassisVisited].map((key) => {
       const [x, y, z] = parseKey(key)
       const state = this.world.getState(x, y, z)
       const rel: [number, number, number] = [x - mx, y - my, z - mz]
       return { rel, id: this.world.getBlock(x, y, z), state: state ? { ...state } : undefined, origKey: key }
     })
+    const chassisByKey = new Map(chassisBlocks.map((b) => [b.origKey, b]))
 
-    const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
     const group = new THREE.Group()
     group.position.copy(pivot)
-    const blocks: CBlock[] = []
-    const byKey = new Map<string, CBlock>()
-    const relMap = new Map<string, number>()
-
-    // Only the rotating output-side assembly is moved; the motor and
-    // chassis blocks attached to other faces remain fixed.
-    for (const k of visited) {
-      const [x, y, z] = parseKey(k)
-      const id = this.world.getBlock(x, y, z)
-      const st = this.world.getState(x, y, z)
-      const cb: CBlock = {
-        rel: [x - mx, y - my, z - mz],
-        id,
-        state: st ? { ...st } : undefined,
-        origKey: k,
-      }
-      blocks.push(cb)
-      byKey.set(k, cb)
-      relMap.set(posKey(cb.rel[0], cb.rel[1], cb.rel[2]), id)
-    }
-
     const out = newBuffers()
     const glueEntries: { x: number; y: number; z: number; mask: number }[] = []
     for (const b of blocks) {
@@ -569,9 +569,6 @@ export class Mechanics {
       if (model) {
         model.model.group.position.sub(pivot)
         group.add(model.model.group)
-        // Keep the motor's logical entry so power and motor status remain
-        // addressable while its rendered model travels with the assembly.
-        if (b.id !== B.MOTOR) this.models.delete(b.origKey)
       }
       const glow = this.glows.get(b.origKey)
       if (glow) {
@@ -587,30 +584,111 @@ export class Mechanics {
       group.add(gm)
     }
 
-    const wireEnds: Contraption['wireEnds'] = []
-    for (const w of this.wires) {
-      if (byKey.has(w.a)) wireEnds.push({ wire: w, end: 'a', local: w.pa.clone().sub(pivot), orig: w.pa.clone() })
-      if (byKey.has(w.b)) wireEnds.push({ wire: w, end: 'b', local: w.pb.clone().sub(pivot), orig: w.pb.clone() })
+    const chassisGroup = new THREE.Group()
+    chassisGroup.position.copy(pivot)
+    const chassisOut = newBuffers()
+    const chassisGlue: { x: number; y: number; z: number; mask: number }[] = []
+    const chassisRelMap = new Map<string, number>()
+    for (const b of chassisBlocks) chassisRelMap.set(posKey(...b.rel), b.id)
+    for (const b of chassisBlocks) {
+      const [rx, ry, rz] = b.rel
+      if (isOpaque(b.id)) emitCube(chassisOut, rx - 0.5, ry - 0.5, rz - 0.5, b.id, false, (dx, dy, dz) =>
+        isOpaque(chassisRelMap.get(posKey(rx + dx, ry + dy, rz + dz)) ?? 0),
+      )
+      if (b.state?.glue) chassisGlue.push({ x: rx - 0.5, y: ry - 0.5, z: rz - 0.5, mask: b.state.glue })
+      const model = this.models.get(b.origKey)
+      if (model) {
+        model.model.group.position.sub(pivot)
+        chassisGroup.add(model.model.group)
+      }
+      const glow = this.glows.get(b.origKey)
+      if (glow) {
+        glow.position.sub(pivot)
+        chassisGroup.add(glow)
+        this.glows.delete(b.origKey)
+      }
+    }
+    const motorModel = this.models.get(motorKey)
+    if (motorModel?.type === 'motor') {
+      motorModel.model.group.position.sub(pivot)
+      chassisGroup.add(motorModel.model.group)
+    }
+    if (chassisOut.indices.length) chassisGroup.add(new THREE.Mesh(buffersToGeometry(chassisOut), this.blockMaterial))
+    if (chassisGlue.length) {
+      const gm = new THREE.Mesh(buildGlueGeometry(chassisGlue), this.glueMaterial)
+      gm.renderOrder = 2
+      chassisGroup.add(gm)
     }
 
+    const wireEnds: Contraption['wireEnds'] = []
+    const chassisWireEnds: Contraption['chassisWireEnds'] = []
+    const chassisKeys = new Set<string>([motorKey, ...chassisByKey.keys()])
+    for (const wire of this.wires) {
+      if (byKey.has(wire.a)) wireEnds.push({ wire, end: 'a', local: wire.pa.clone().sub(pivot), orig: wire.pa.clone() })
+      if (byKey.has(wire.b)) wireEnds.push({ wire, end: 'b', local: wire.pb.clone().sub(pivot), orig: wire.pb.clone() })
+      if (chassisKeys.has(wire.a)) chassisWireEnds.push({ wire, end: 'a', local: wire.pa.clone().sub(pivot), orig: wire.pa.clone() })
+      if (chassisKeys.has(wire.b)) chassisWireEnds.push({ wire, end: 'b', local: wire.pb.clone().sub(pivot), orig: wire.pb.clone() })
+    }
+
+    const chassisVoxels = [
+      { x: mx, y: my, z: mz, id: B.MOTOR },
+      ...chassisBlocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id })),
+    ]
+    const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
+    const chassisBody = this.rigidPhysics.createRigidBody(chassisVoxels, pivot, {
+      lockRotation: true, canSleep: false, linearDamping: 0.12, angularDamping: 1,
+    })
+    const rotorBody = this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
+      canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
+    })
+    if (!chassisBody || !rotorBody) {
+      if (chassisBody) this.rigidPhysics.removeRigidBody(chassisBody)
+      if (rotorBody) this.rigidPhysics.removeRigidBody(rotorBody)
+      this.mechDirty = true
+      return 'idle'
+    }
+    const joint = this.rigidPhysics.createRevoluteJoint(
+      chassisBody, rotorBody, new THREE.Vector3(d[0], d[1], d[2]),
+    )
+    if (!joint) {
+      this.rigidPhysics.removeRigidBody(chassisBody)
+      this.rigidPhysics.removeRigidBody(rotorBody)
+      this.mechDirty = true
+      return 'idle'
+    }
+
+    // Remove both moving components from the voxel/static-collider world.
     this.suppress = true
     for (const b of blocks) {
       const [x, y, z] = parseKey(b.origKey)
       this.world.setBlock(x, y, z, B.AIR)
     }
+    for (const b of chassisBlocks) {
+      const [x, y, z] = parseKey(b.origKey)
+      this.world.setBlock(x, y, z, B.AIR)
+    }
+    this.world.setBlock(mx, my, mz, B.AIR)
     this.suppress = false
     this.rebuildGlue()
+    this.scene.add(chassisGroup)
     this.scene.add(group)
 
     this.contraptions.set(motorKey, {
       motorKey,
       motorPos: [mx, my, mz],
+      motorState: motorState ? { ...motorState } : undefined,
       axis: new THREE.Vector3(d[0], d[1], d[2]),
       facing,
       blocks,
       chassisBlocks,
-      travel: new THREE.Vector3(),
+      chassisByKey,
       byKey,
+      chassisGroup,
+      chassisBody,
+      rotorBody,
+      joint,
+      chassisWireEnds,
+      unpoweredTime: 0,
       group,
       angle: 0,
       speed: 0,
@@ -618,6 +696,8 @@ export class Mechanics {
       reactionTravel: 0,
       velocity: new THREE.Vector3(),
     })
+    this.physicsDirty = true
+    this.powerDirty = true
     return 'driving'
   }
 
