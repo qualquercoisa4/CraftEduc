@@ -1173,13 +1173,33 @@ export class Mechanics {
         // The second parameter is damping, not force. Keep it in a
         // stable range and set motor torque separately so heavy rotors keep
         // turning instead of overdamping to a stop.
+        // Command the revolute joint and apply a bounded torque controller.
+        // Rapier's velocity motor alone was reporting "driving" while leaving
+        // this body at zero angular velocity in the live preview.
         c.joint.configureMotorVelocity(c.speed, 0.85)
+        const angular = c.rotorBody.angvel()
+        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
+        const targetSpeed = c.speed
+        const maxTorque = Math.max(12, power * 12)
+        const torque = Math.max(-maxTorque, Math.min(maxTorque, (targetSpeed - axialSpeed) * 20))
+        c.rotorBody.addTorque({
+          x: c.axis.x * torque,
+          y: c.axis.y * torque,
+          z: c.axis.z * torque,
+        }, true)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
         c.unpoweredTime += dt
         c.joint.configureMotorVelocity(0, 0.95)
-        if (motor?.type === 'motor') motor.status = 'idle'
         const angular = c.rotorBody.angvel()
+        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
+        const brakingTorque = Math.max(-8, Math.min(8, -axialSpeed * 12))
+        c.rotorBody.addTorque({
+          x: c.axis.x * brakingTorque,
+          y: c.axis.y * brakingTorque,
+          z: c.axis.z * brakingTorque,
+        }, true)
+        if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
         if (c.unpoweredTime >= 0.55 && spin < 0.65) {
           this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
