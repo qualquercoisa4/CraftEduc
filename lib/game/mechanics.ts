@@ -689,7 +689,9 @@ export class Mechanics {
     for (const group of fallingGroups) {
       const falling: FallingBlock[] = []
       for (const b of group) {
-        const geometry = new THREE.BoxGeometry(0.98, 0.98, 0.98)
+        const cubeBuffers = newBuffers()
+        emitCube(cubeBuffers, 0, 0, 0, b.id, false, () => false)
+        const geometry = buffersToGeometry(cubeBuffers)
         const mesh = new THREE.Mesh(geometry, this.blockMaterial)
         mesh.position.set(b.x + 0.5, b.y + 0.5, b.z + 0.5)
         mesh.castShadow = true
