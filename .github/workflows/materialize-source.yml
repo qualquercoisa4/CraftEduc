@@ -1,0 +1,31 @@
+name: Materialize CraftEduc source
+
+on:
+  push:
+    paths:
+      - 'uploads/DEPLOY_NOW'
+
+permissions:
+  contents: write
+
+jobs:
+  unpack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Decode and restore project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/crafteduc
+          cat uploads/part-*.b64 | base64 --decode > /tmp/crafteduc/source.tar.xz
+          tar -xJf /tmp/crafteduc/source.tar.xz -C .
+          rm -rf uploads
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Add CraftEduc project source"
+          git push
