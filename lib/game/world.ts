@@ -124,7 +124,7 @@ export class World {
     const bx = c.cx * CS
     const bz = c.cz * CS
     const maxY = Math.min(WORLD_HEIGHT - 1, c.maxY)
-    for (let y = GROUND_LEVEL; y <= maxY; y++)
+    for (let y = 0; y <= maxY; y++)
       for (let z = 0; z < CS; z++)
         for (let x = 0; x < CS; x++) {
           const id = c.data[idx(x, y, z)]
