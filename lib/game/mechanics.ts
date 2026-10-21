@@ -597,11 +597,9 @@ export class Mechanics {
       const group: typeof blocks = []
       const queue = [block]
       visited.add(block.key)
-      let protectedModel = false
       while (queue.length) {
         const current = queue.pop()!
         group.push(current)
-        if (current.id === B.MOTOR || current.id === B.BATTERY_BOX) protectedModel = true
         for (let d = 0; d < 6; d++) {
           if (!this.isGlued(current.x, current.y, current.z, d)) continue
           const n = DIRS[d]
@@ -613,7 +611,7 @@ export class Mechanics {
           }
         }
       }
-      if (protectedModel || group.some((b) => this.wiresAt(b.key).length > 0)) continue
+      if (group.some((b) => this.wiresAt(b.key).length > 0)) continue
       const groupKeys = new Set(group.map((b) => b.key))
       const supported = group.some((b) => {
         if (b.y <= GROUND_LEVEL) return true
