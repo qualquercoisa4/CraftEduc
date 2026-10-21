@@ -559,7 +559,7 @@ export class Mechanics {
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16
       const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y < 64; y++) {
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) {
         for (let z = minZ; z < minZ + 16; z++) {
           for (let x = minX; x < minX + 16; x++) {
             const id = this.world.getBlock(x, y, z)
@@ -574,7 +574,7 @@ export class Mechanics {
 
     const byKey = new Map(blocks.map((b) => [b.key, b]))
     const visited = new Set<string>()
-    const movable: typeof blocks[] = []
+    const movable: (typeof blocks)[] = []
     for (const block of blocks) {
       if (visited.has(block.key)) continue
       const group: typeof blocks = []
@@ -621,6 +621,21 @@ export class Mechanics {
     }
   }
 
+  private canRotateContraption(c: Contraption, angle: number) {
+    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
+    for (const b of c.blocks) {
+      const center = new THREE.Vector3(...b.rel).applyQuaternion(q)
+        .add(new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5))
+      const x = Math.floor(center.x)
+      const y = Math.floor(center.y)
+      const z = Math.floor(center.z)
+      if (y < GROUND_LEVEL || y >= 64) return false
+      const key = posKey(x, y, z)
+      if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
+    }
+    return true
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
@@ -664,9 +679,18 @@ export class Mechanics {
         continue
       }
       if (power > 0) {
-        c.speed = power * 1.05
-        c.angle += c.speed * dt
-        if (c.angle > Math.PI * 2) c.angle -= Math.PI * 2
+        const model = this.models.get(key)
+        const nextSpeed = power * 1.05
+        let nextAngle = c.angle + nextSpeed * dt
+        if (nextAngle > Math.PI * 2) nextAngle -= Math.PI * 2
+        if (model?.type === 'motor' && model.status !== 'stalled' && !this.canRotateContraption(c, nextAngle)) {
+          model.status = 'stalled'
+          c.speed = 0
+        } else if (model?.type !== 'motor' || model.status !== 'stalled') {
+          c.speed = nextSpeed
+          c.angle = nextAngle
+          if (model?.type === 'motor') model.status = 'driving'
+        }
       } else {
         const target = Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
         c.angle = Math.min(target, c.angle + Math.max(c.speed, 1.2) * dt)
