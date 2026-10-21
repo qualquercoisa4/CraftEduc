@@ -14,9 +14,10 @@ import {
   blockBounds,
   isModelBlock,
   posKey,
+  parseKey,
 } from './constants'
 import { Mechanics, type Wire } from './mechanics'
-import type { BlockEdit, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
+import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
 import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, wireCurve } from './models'
@@ -53,7 +54,8 @@ const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, 
 interface MultiplayerBridge {
   isHost: boolean
   canFly: () => boolean
-  canBreakBlock: (x: number, y: number, z: number) => boolean
+  canBreakBlock: (x: number, y: number, z: number, actorKey?: string) => boolean
+  movingAction: (intent: Omit<MovingActionIntent, 'playerKey' | 'playerName'>) => void
   blockChanged: (x: number, y: number, z: number, block: number, state?: import('./world').BlockState) => void
   wireCreated: (wire: Wire) => void
   wiresRemovedAt: (key: string) => void
@@ -405,6 +407,77 @@ export class Engine {
     this.mech.removeWireByNetworkId(networkId)
   }
 
+  /** Execute an interaction on a moving assembly only on the host's authoritative world. */
+  applyMultiplayerMovingAction(intent: MovingActionIntent) {
+    if (!this.multiplayerBridge?.isHost) return
+    if (!intent || typeof intent.playerKey !== 'string' || !intent.movingKey) return
+    const [sourceX, sourceY, sourceZ] = parseKey(intent.movingKey)
+    if (intent.action === 'break' && !this.multiplayerBridge.canBreakBlock(sourceX, sourceY, sourceZ, intent.playerKey)) {
+      showToast('A regra do servidor impede quebrar esse bloco')
+      return
+    }
+    const cell = this.mech.releaseMovingBlock(intent.movingKey, intent.movingKind)
+    if (!cell) {
+      showToast('Não foi possível estabilizar a máquina para aplicar a ação')
+      return
+    }
+    if (intent.action === 'break') {
+      this.world.setBlock(cell.x, cell.y, cell.z, B.AIR)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, B.AIR)
+      this.multiplayerBridge.wiresRemovedAt(posKey(cell.x, cell.y, cell.z))
+      this.particles.burst(cell.x, cell.y, cell.z, tileFor(cell.id, false))
+      sfx.break(METAL.has(cell.id))
+      return
+    }
+
+    const item = intent.item
+    if (item === 'wire') {
+      showToast('Conecte fios após a máquina ser estabilizada')
+      return
+    }
+    if (item === 'glue') {
+      this.mech.toggleGlue(cell.x, cell.y, cell.z, intent.face)
+      const state = this.world.getState(cell.x, cell.y, cell.z)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, this.world.getBlock(cell.x, cell.y, cell.z), state ? { ...state } : undefined)
+      return
+    }
+    if (cell.id === B.BATTERY_BOX && (item === 'battery' || item === null)) {
+      const result = this.mech.changeBatteries(cell.x, cell.y, cell.z, item === 'battery' ? 1 : -1)
+      if (result.after !== result.before) {
+        const state = this.world.getState(cell.x, cell.y, cell.z)
+        this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      }
+      return
+    }
+    if (cell.id === B.MOTOR && item === 'wheel') {
+      if (this.mech.mountWheel(cell.x, cell.y, cell.z)) {
+        const state = this.world.getState(cell.x, cell.y, cell.z)
+        this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      }
+      return
+    }
+    if (cell.id === B.MOTOR && (item === null || item === 'motor') && !intent.sneaking) {
+      this.mech.rotateMotor(cell.x, cell.y, cell.z)
+      const state = this.world.getState(cell.x, cell.y, cell.z)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      return
+    }
+
+    if (!item) return
+    const block = ITEMS[item].block
+    if (block === undefined) return
+    const direction = DIRS[intent.face]
+    if (!direction) return
+    const x = cell.x + direction[0]
+    const y = cell.y + direction[1]
+    const z = cell.z + direction[2]
+    if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
+    const state = block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
+    this.world.setBlock(x, y, z, block, state)
+    this.multiplayerBridge.blockChanged(x, y, z, block, state)
+    sfx.place(METAL.has(block))
+  }
+
   setRemotePlayers(players: NetworkPlayer[]) {
     const active = new Set<string>()
     for (const player of players) {
@@ -683,6 +756,20 @@ export class Engine {
     this.swing = 0
     this.lastUseWasPlace = false
 
+    // Articulated bodies are authoritative on the host. Guests send an intent
+    // rather than disassembling their local visual replica independently.
+    if (hit?.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
+      if (item === 'wire') {
+        showToast('Conecte fios após a máquina ser estabilizada')
+        return
+      }
+      this.multiplayerBridge.movingAction({
+        action: 'use', movingKey: hit.moving.key, movingKind: hit.moving.kind,
+        face: hit.face, item, sneaking: this.player.sneaking,
+      })
+      return
+    }
+
     // Dynamic bodies are interactive, but voxel placement/wiring still uses
     // the world's integer grid. Resolve the source identity before editing.
     if (hit?.moving) {
@@ -795,6 +882,18 @@ export class Engine {
       return
     }
     if (!hit) return
+    if (hit.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
+      const [x, y, z] = parseKey(hit.moving.key)
+      if (!this.multiplayerBridge.canBreakBlock(x, y, z)) {
+        showToast('Você só pode quebrar blocos que colocou neste servidor')
+        return
+      }
+      this.multiplayerBridge.movingAction({
+        action: 'break', movingKey: hit.moving.key, movingKind: hit.moving.kind,
+        face: hit.face, item, sneaking: this.player.sneaking,
+      })
+      return
+    }
     if (item === 'wire') {
       const removed = this.mech.removeWiresAt(posKey(hit.x, hit.y, hit.z))
       if (removed) {
