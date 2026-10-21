@@ -50,6 +50,7 @@ interface FallingBlock {
   x: number
   y: number
   z: number
+  originKey: string
   mesh: THREE.Mesh
 }
 
@@ -613,18 +614,19 @@ export class Mechanics {
       if (dy < 0) {
         let floorDistance = Infinity
         for (const b of body.blocks) {
-          const bottom = b.y + dy - 0.5
-          const targetY = Math.floor(bottom + 0.5)
-          for (let ox = -1; ox <= 1; ox++) for (let oz = -1; oz <= 1; oz++) {
-            const nx = Math.floor(b.x + ox + 0.5), nz = Math.floor(b.z + oz + 0.5)
-            if (Math.abs(nx - (b.x + ox)) > 0.51 || Math.abs(nz - (b.z + oz)) > 0.51) continue
-            const id = this.world.getBlock(nx, targetY, nz)
-            if (id !== B.AIR && !this.fallingKeys.has(posKey(nx, targetY, nz))) {
-              const distance = b.y - 0.5 - (targetY + 0.5)
-              if (distance >= -0.02) floorDistance = Math.min(floorDistance, Math.max(0, distance))
+          const currentCellY = Math.floor(b.y - 0.5 - 1e-4)
+          const nextBottom = b.y - 0.5 + dy
+          const nextCellY = Math.floor(nextBottom - 1e-4)
+          if (nextCellY < currentCellY) {
+            for (let y = currentCellY - 1; y >= nextCellY; y--) {
+              const key = posKey(Math.round(b.x), y, Math.round(b.z))
+              if (this.world.getBlock(Math.round(b.x), y, Math.round(b.z)) !== B.AIR && !this.fallingKeys.has(key)) {
+                floorDistance = Math.min(floorDistance, b.y - 0.5 - (y + 1))
+                break
+              }
             }
           }
-          if (b.y + dy <= GROUND_LEVEL + 0.5) floorDistance = Math.min(floorDistance, b.y - (GROUND_LEVEL + 0.5))
+          if (b.y + dy - 0.5 <= GROUND_LEVEL + 1) floorDistance = Math.min(floorDistance, b.y - 0.5 - (GROUND_LEVEL + 1))
         }
         if (floorDistance !== Infinity && -dy >= floorDistance) {
           allowed = -Math.max(0, floorDistance)
@@ -693,7 +695,7 @@ export class Mechanics {
         mesh.castShadow = true
         mesh.receiveShadow = true
         this.scene.add(mesh)
-        falling.push({ id: b.id, state: b.state ? { ...b.state } : undefined, x: b.x, y: b.y + 0.5, z: b.z, mesh })
+        falling.push({ id: b.id, state: b.state ? { ...b.state } : undefined, x: b.x, y: b.y + 0.5, z: b.z, originKey: b.key, mesh })
         this.fallingKeys.add(b.key)
       }
       this.suppress = true
@@ -726,8 +728,7 @@ export class Mechanics {
       this.suppress = true
       this.world.setBlock(x, y, z, b.id, b.state)
       this.suppress = false
-      this.fallingKeys.delete(posKey(b.x, Math.round(b.y - 0.5), b.z))
-      this.fallingKeys.delete(posKey(b.x, Math.round(b.y), b.z))
+      this.fallingKeys.delete(b.originKey)
       b.mesh.geometry.dispose()
       this.scene.remove(b.mesh)
     }
