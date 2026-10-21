@@ -127,6 +127,7 @@ export class Mechanics {
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
   private networkAuthority = true
+  private desiredNetworkMachines: Set<string> | null = null
   private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState, ownerKey?: string | null) => void) | null = null
   private networkBlockOwner: ((x: number, y: number, z: number) => string | null) | null = null
   private networkFallingVisuals = new Map<string, {
@@ -1366,7 +1367,12 @@ export class Mechanics {
       this.mechDirty = false
       for (const [key, e] of this.models) {
         if (e.type !== 'motor') continue
-        if ((this.motorPower.get(key) ?? 0) > 0 && !this.contraptions.has(key)) {
+        const shouldAssemble = this.networkAuthority
+          ? (this.motorPower.get(key) ?? 0) > 0
+          : this.desiredNetworkMachines !== null
+            ? this.desiredNetworkMachines.has(key)
+            : (this.motorPower.get(key) ?? 0) > 0
+        if (shouldAssemble && !this.contraptions.has(key)) {
           e.status = this.tryAssemble(key)
         } else if (!this.contraptions.has(key)) {
           e.status = 'idle'
@@ -1648,6 +1654,13 @@ export class Mechanics {
       raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).motorKey === 'string'
         ? [String((raw as Record<string, unknown>).motorKey)] : []
     ))
+    this.desiredNetworkMachines = activeMachineKeys
+    const activeNetworkBodyKeys = new Set<string>()
+    for (const key of activeMachineKeys) {
+      activeNetworkBodyKeys.add(`machine:${key}:rotor`)
+      activeNetworkBodyKeys.add(`machine:${key}:chassis`)
+    }
+    const activeNetworkFallingKeys = new Set<string>()
     // The host is authoritative for starting/stopping articulated machines too.
     for (const c of [...this.contraptions.values()]) {
       if (!activeMachineKeys.has(c.motorKey)) this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
@@ -1741,8 +1754,16 @@ export class Mechanics {
         const key = item.keys.find((entry) => !!entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).originKey === 'string') as Record<string, unknown> | undefined
         if (!key) continue
         const body = byKey.get(String(key.originKey))
-        if (body) queuePose(`falling:${String(key.originKey)}`, body.body, item)
+        if (body) {
+          const targetKey = `falling:${String(key.originKey)}`
+          activeNetworkFallingKeys.add(targetKey)
+          queuePose(targetKey, body.body, item)
+        }
       }
+    }
+    for (const key of this.networkBodyTargets.keys()) {
+      if (key.startsWith('machine:') && !activeNetworkBodyKeys.has(key)) this.networkBodyTargets.delete(key)
+      if (key.startsWith('falling:') && !activeNetworkFallingKeys.has(key)) this.networkBodyTargets.delete(key)
     }
     this.mechDirty = true
     if (this.rigidPhysics.ready) this.syncRigidTransforms()
