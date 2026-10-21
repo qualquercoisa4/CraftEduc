@@ -1486,6 +1486,13 @@ export class Mechanics {
     }
   }
 
+  /** Called by the multiplayer layer when a remote block or wire changes. */
+  markNetworkCircuitDirty() {
+    this.powerDirty = true
+    this.mechDirty = true
+    this.powerCooldown = 0
+  }
+
   /** A multiplayer client builds the same articulated visuals, but only the host advances Rapier. */
   setNetworkAuthority(isAuthority: boolean) {
     this.networkAuthority = isAuthority
