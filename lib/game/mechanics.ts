@@ -94,7 +94,6 @@ export class Mechanics {
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
-  private physicsDirty = true
   private physicsScanCooldown = 0
   private powerCooldown = 0
 
@@ -165,7 +164,7 @@ export class Mechanics {
     const entry = this.models.get(key)
     if (!entry || entry.type !== 'motor') return false
     const wheel = createArduinoWheelModel(this.world.getState(x, y, z)?.facing ?? 2)
-    wheel.group.position.set(0, 0, 0.43)
+    wheel.group.position.set(0, 0, 0.36)
     wheel.group.scale.setScalar(0.88)
     entry.model.shaft.add(wheel.group)
     this.mountedWheels.set(key, { model: wheel, spin: 0 })
