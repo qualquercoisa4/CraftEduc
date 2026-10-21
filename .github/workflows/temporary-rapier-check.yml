@@ -1,4 +1,4 @@
-name: Temporary physics mass and hotbar build check
+name: Temporary physics mass, push, and hotbar integration check
 
 on:
   push:
