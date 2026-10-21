@@ -482,6 +482,39 @@ export class Mechanics {
       }
     }
 
+    // Collect glued blocks on the motor's non-output faces as a rigid,
+    // non-rotating chassis. Exclude the output rotor discovered above.
+    const chassisVisited = new Set<string>()
+    const chassisQueue: [number, number, number][] = []
+    for (let face = 0; face < 6; face++) {
+      if (face === facing || !this.isGlued(mx, my, mz, face)) continue
+      const n = DIRS[face]
+      const x = mx + n[0], y = my + n[1], z = mz + n[2]
+      const key = posKey(x, y, z)
+      if (this.world.getBlock(x, y, z) !== B.AIR && !visited.has(key)) {
+        chassisVisited.add(key)
+        chassisQueue.push([x, y, z])
+      }
+    }
+    while (chassisQueue.length && chassisVisited.size <= MAX_CONTRAPTION) {
+      const [x, y, z] = chassisQueue.shift()!
+      for (let face = 0; face < 6; face++) {
+        const n = DIRS[face]
+        const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+        const key = posKey(nx, ny, nz)
+        if (key === motorKey || visited.has(key) || chassisVisited.has(key)) continue
+        if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
+        chassisVisited.add(key)
+        chassisQueue.push([nx, ny, nz])
+      }
+    }
+    const chassisBlocks: CBlock[] = [...chassisVisited].map((key) => {
+      const [x, y, z] = parseKey(key)
+      const state = this.world.getState(x, y, z)
+      const rel: [number, number, number] = [x - mx, y - my, z - mz]
+      return { rel, id: this.world.getBlock(x, y, z), state: state ? { ...state } : undefined, origKey: key }
+    })
+
     const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
     const group = new THREE.Group()
     group.position.copy(pivot)
