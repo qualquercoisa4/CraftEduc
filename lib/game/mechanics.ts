@@ -198,6 +198,43 @@ export class Mechanics {
     this.physicsDirty = true
   }
 
+  applyNetworkBlockState(x: number, y: number, z: number, previous?: BlockState, next?: BlockState) {
+    const key = posKey(x, y, z)
+    const id = this.world.getBlock(x, y, z)
+    if (previous?.glue || next?.glue) this.rebuildGlue()
+    const model = this.models.get(key)
+    if (id === B.MOTOR && model?.type === 'motor' && next?.facing !== undefined) setMotorFacing(model.model, next.facing)
+    if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
+    if (id === B.WHEEL && model?.type === 'wheel' && next?.facing !== undefined) {
+      const replacement = createArduinoWheelModel(next.facing)
+      replacement.group.position.copy(model.model.group.position)
+      replacement.group.quaternion.copy(model.model.group.quaternion)
+      replacement.group.scale.copy(model.model.group.scale)
+      this.scene.add(replacement.group)
+      disposeObject(model.model.group)
+      this.models.set(key, { ...model, model: replacement })
+    }
+    const mounted = this.mountedWheels.get(key)
+    if (next?.mountedWheel && !mounted) this.mountWheel(x, y, z)
+    else if (!next?.mountedWheel && mounted) {
+      const motor = this.models.get(key)
+      if (motor?.type === 'motor') motor.model.shaft.remove(mounted.model.group)
+      disposeObject(mounted.model.group)
+      this.mountedWheels.delete(key)
+    }
+    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
+      this.powerDirty = true
+      this.mechDirty = true
+    }
+    this.physicsDirty = true
+    this.world.markBlockDirty(x, y, z)
+  }
+
+  private isElectricalBlock(id: number) {
+    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON
+      || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+  }
+
   mountWheel(x: number, y: number, z: number) {
     const key = posKey(x, y, z)
     if (this.mountedWheels.has(key)) return false
