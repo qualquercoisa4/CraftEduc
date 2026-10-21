@@ -1158,11 +1158,16 @@ export class Mechanics {
         c.unpoweredTime = 0
         // Torque is applied through the shaft joint. Rapier computes the
         // resulting rotation, chassis reaction, and every contact impulse.
-        c.joint.configureMotorVelocity(c.speed, Math.max(3, power * 16))
+        // The second parameter is damping, not force. Keep it in a
+        // stable range and set motor torque separately so heavy rotors keep
+        // turning instead of overdamping to a stop.
+        c.joint.configureMotorVelocity(c.speed, 0.85)
+        c.joint.setMotorMaxForce(Math.max(4, power * 12))
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
         c.unpoweredTime += dt
-        c.joint.configureMotorVelocity(0, 6)
+        c.joint.configureMotorVelocity(0, 0.95)
+        c.joint.setMotorMaxForce(5)
         if (motor?.type === 'motor') motor.status = 'idle'
         const angular = c.rotorBody.angvel()
         const spin = Math.hypot(angular.x, angular.y, angular.z)
