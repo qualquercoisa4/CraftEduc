@@ -810,14 +810,14 @@ export class Mechanics {
    * ground-reaction locomotion; the assembly stays assembled and keeps its
    * relative block layout instead of being torn down and rebuilt every step.
    */
-  private translateContraption(c: Contraption, dx: number, dy: number, dz: number) {
+  private translateContraption(c: Contraption, dx: number, dy: number, dz: number, angle = c.angle) {
     const [mx, my, mz] = c.motorPos
     const nx = mx + dx, ny = my + dy, nz = mz + dz
     if (ny < GROUND_LEVEL || ny >= 63) return false
     const targetKey = posKey(nx, ny, nz)
     if (this.world.getBlock(nx, ny, nz) !== B.AIR && targetKey !== c.motorKey) return false
     // Validate every rotated block at the destination before moving anything.
-    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
+    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
     const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
     const axes = [new THREE.Vector3(1,0,0).applyQuaternion(q), new THREE.Vector3(0,1,0).applyQuaternion(q), new THREE.Vector3(0,0,1).applyQuaternion(q)]
     const ext = new THREE.Vector3(
@@ -1009,7 +1009,7 @@ export class Mechanics {
             const halfY=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
             if (center.y-halfY < GROUND_LEVEL-1e-4) { floorContact=true; break }
           }
-          if (floorContact && this.translateContraption(c,0,1,0)) {
+          if (floorContact && this.translateContraption(c,0,1,0,nextAngle)) {
             c.speed = nextSpeed
             c.angle = nextAngle
             const movedModel=this.models.get(c.motorKey)
