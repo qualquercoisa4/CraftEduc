@@ -155,8 +155,12 @@ async function main() {
   putTestBlock(6, 6, 2, B.WOOD, { glue: 1 << 1 })
   // A supported aluminum voxel is placed in the wood arm's circular sweep.
   // It should be pushed sideways by the actual motor/rotor simulation.
+  putTestBlock(4, 4, 1, B.IRON, {})
   putTestBlock(4, 5, 1, B.IRON, {})
   putTestBlock(4, 6, 1, B.ALUMINUM, {})
+  for (const [x, y, z] of [[4, 4, 1], [4, 5, 1], [4, 6, 1]] as const) {
+    mechanicsPhysics.syncStaticBlock(x, y, z)
+  }
 
   // The model visuals are irrelevant to this server-side regression; use a
   // minimal motor model so the production assembly code still builds its real
