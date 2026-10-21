@@ -1084,7 +1084,9 @@ export class Engine {
         if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
           gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
         this.mech.update(dt)
-        if (playing && (!this.multiplayerBridge || this.multiplayerBridge.isHost)) this.mech.resolvePlayerCollision(this.player, dt)
+        // Player-vs-machine contacts use the latest host snapshot on every client.
+        // The client moves only its local player; it never advances the shared machine physics.
+        if (playing) this.mech.resolvePlayerCollision(this.player, dt)
       }
       this.updateCamera(dt)
       centerX = this.player.pos.x
