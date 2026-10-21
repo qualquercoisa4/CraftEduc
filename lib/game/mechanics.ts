@@ -169,6 +169,7 @@ export class Mechanics {
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'motor', model, spin: 0, status: 'idle' })
+      if (st.mountedWheel) this.mountWheel(x, y, z)
     } else if (newId === B.BATTERY_BOX) {
       const st = this.world.ensureState(x, y, z)
       st.batteries ??= 0
@@ -205,6 +206,7 @@ export class Mechanics {
     wheel.group.position.set(0, 0, 0.36)
     wheel.group.scale.setScalar(0.88)
     entry.model.shaft.add(wheel.group)
+    this.world.ensureState(x, y, z).mountedWheel = true
     this.mountedWheels.set(key, { model: wheel, spin: 0 })
     this.mechDirty = true
     return true
@@ -870,6 +872,16 @@ export class Mechanics {
     this.powerDirty = true
     this.mechDirty = true
     this.physicsDirty = true
+    if (this.networkAuthority && this.networkBlockPublisher) {
+      const destinationKeys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
+      const originalKeys = new Set([c.motorKey, ...c.blocks.map((b) => b.origKey), ...c.chassisBlocks.map((b) => b.origKey)])
+      for (const key of originalKeys) {
+        if (destinationKeys.has(key)) continue
+        const [x, y, z] = parseKey(key)
+        this.networkBlockPublisher(x, y, z, B.AIR)
+      }
+      for (const p of placements) this.networkBlockPublisher(p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined)
+    }
     return keyMap
   }
 
