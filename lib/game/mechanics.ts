@@ -832,6 +832,8 @@ export class Mechanics {
       const minZ=Math.floor(center.z-ext.z+1e-4), maxZ=Math.floor(center.z+ext.z-1e-4)
       if (minY < GROUND_LEVEL || maxY >= 64) return false
       for(let y=minY;y<=maxY;y++) for(let z=minZ;z<=maxZ;z++) for(let x=minX;x<=maxX;x++) {
+        // The pivot motor belongs to this same moving assembly.
+        if (posKey(x,y,z) === c.motorKey) continue
         if (this.world.getBlock(x,y,z)!==B.AIR) return false
       }
     }
