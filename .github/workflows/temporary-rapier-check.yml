@@ -1,4 +1,4 @@
-name: Temporary Rapier physics build check (rerun)
+name: Temporary Rapier physics build check (motor damping fix)
 
 on:
   push:
