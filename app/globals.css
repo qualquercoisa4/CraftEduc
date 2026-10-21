@@ -310,3 +310,78 @@ body {
 .fade-late {
   animation: fade-out-late 2.2s forwards;
 }
+
+
+/* ---------- ROBOEDUCCRAFT brand system ---------- */
+:root {
+  --robo-pink: #e52b60;
+  --robo-blue: #4599d2;
+  --robo-yellow: #ffbf00;
+  --robo-green: #a2c63a;
+  --robo-purple: #68566e;
+  --robo-slate: #4d6c73;
+}
+.robo-menu {
+  background: linear-gradient(180deg, rgb(22 35 43 / 0.20), rgb(15 29 36 / 0.60));
+  isolation: isolate;
+}
+.robo-title-wrap { max-width: min(94vw, 980px); }
+.robo-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.04em;
+  color: #fff;
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 1.2;
+  filter: drop-shadow(0 4px 0 #25343a) drop-shadow(0 8px 0 rgb(0 0 0 / .35));
+}
+.brand-pink { color: var(--robo-pink); }
+.brand-blue { color: var(--robo-blue); }
+.brand-yellow { color: var(--robo-yellow); }
+.robo-craft { margin-left: .18em; color: #f4f1e8; -webkit-text-stroke: 1px #3a343f; }
+.robo-menu-buttons .mc-btn:nth-child(1) { background-color: var(--robo-green); color: #182515; text-shadow: 1px 1px 0 rgb(255 255 255 / .3); }
+.robo-menu-buttons .mc-btn:nth-child(2) { background-color: var(--robo-blue); color: white; }
+.robo-menu-buttons .mc-btn:nth-child(3) { background-color: var(--robo-yellow); color: #30270b; text-shadow: 1px 1px 0 rgb(255 255 255 / .25); }
+.robo-menu-buttons .mc-btn:nth-child(4) { background-color: var(--robo-pink); color: white; }
+.robo-menu-buttons .mc-btn:hover,
+.robo-menu-buttons .mc-btn:focus-visible { filter: brightness(1.12); color: #fff; border-color: #fff; }
+.roboeduc-signature {
+  position: absolute;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 12px;
+  border-radius: 3px;
+  background: rgb(20 31 37 / .35);
+  text-align: left;
+  text-shadow: 0 1px 2px rgb(0 0 0 / .45);
+}
+.roboeduc-wordmark { display: flex; flex-direction: column; font-family: Arial, Helvetica, sans-serif; font-weight: 300; font-size: clamp(20px, 2.5vw, 34px); letter-spacing: -.06em; line-height: .92; color: #f3f0ef; }
+.roboeduc-wordmark strong { display: flex; font-size: 1.08em; font-weight: 800; letter-spacing: -.07em; }
+.roboeduc-wordmark i { font-style: normal; }
+.roboeduc-wordmark i:nth-child(1) { color: var(--robo-pink); }
+.roboeduc-wordmark i:nth-child(2) { color: var(--robo-blue); }
+.roboeduc-wordmark i:nth-child(3) { color: var(--robo-yellow); }
+.roboeduc-wordmark i:nth-child(4) { color: var(--robo-green); }
+.roboeduc-tagline { color: #f0e9e9; font: 500 clamp(6px, .7vw, 9px)/1.2 Arial, Helvetica, sans-serif; letter-spacing: -.015em; white-space: nowrap; }
+@media (max-height: 650px) {
+  .robo-menu { gap: .35rem; padding-top: .5rem; padding-bottom: .5rem; }
+  .robo-title-wrap > p { margin-bottom: .2rem; }
+  .robo-title-wrap > p:last-child { margin-top: .35rem; }
+  .robo-menu-buttons { margin-top: .15rem; gap: .35rem; }
+  .robo-menu-buttons .mc-btn { min-height: 2.1rem; font-size: .95rem; }
+  .robo-menu > p { margin-top: 0; }
+}
+@media (max-width: 520px) {
+  .robo-title { font-size: clamp(1.15rem, 6vw, 2rem); letter-spacing: -.07em; }
+  .roboeduc-signature { left: 8px; bottom: 8px; padding: 5px 7px; }
+  .roboeduc-wordmark { font-size: 20px; }
+  .roboeduc-tagline { font-size: 6px; }
+}
