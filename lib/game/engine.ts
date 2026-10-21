@@ -70,7 +70,7 @@ export class Engine {
   private last = 0
   private elapsed = 0
   target: Hit | null = null
-  wireStart: { key: string; point: THREE.Vector3 } | null = null
+  wireStart: { key: string; terminal: string; point: THREE.Vector3 } | null = null
 
   private breakHeld = false
   private breakTimer = 0
@@ -192,8 +192,12 @@ export class Engine {
     this.world.setBlock(0, y, z, B.LED)
     this.world.setBlock(0, y, z - 2, B.COMPONENT)
     this.world.setBlock(1, y, z - 2, B.GEAR)
-    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.75, y + 0.36, z + 0.6), posKey(6, y, z), new THREE.Vector3(6, y + 0.4, z + 0.5))
-    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.25, y + 0.36, z + 0.6), posKey(0, y, z), new THREE.Vector3(1, y + 0.5, z + 0.5))
+    // The demo circuit uses the battery compartment's distinct +/− terminals
+    // and the motor's two isolated terminals, so it is a closed polarized loop.
+    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.82, y + 0.12, z + 0.97), '+',
+      posKey(6, y, z), new THREE.Vector3(6.36, y + 0.04, z + 0.4), 'A')
+    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.70, y + 0.12, z + 0.97), '-',
+      posKey(6, y, z), new THREE.Vector3(6.64, y + 0.04, z + 0.4), 'B')
   }
 
   private bindEvents() {
@@ -437,20 +441,29 @@ export class Engine {
     if (item === 'wire') {
       if (!hit) return
       const key = posKey(hit.x, hit.y, hit.z)
-      if (!this.wireStart) {
-        this.wireStart = { key, point: hit.point.clone() }
-        sfx.click()
+      const terminal = this.mech.resolveTerminal(key, hit.point, hit.face)
+      if (!terminal) {
+        showToast('Mire em um terminal exposto; madeira não conduz energia')
         return
       }
-      if (this.wireStart.key === key) {
+      if (!this.wireStart) {
+        this.wireStart = { key, terminal: terminal.terminal, point: terminal.point.clone() }
+        sfx.click()
+        showToast(`Terminal selecionado: ${terminal.terminal}`)
+        return
+      }
+      if (this.wireStart.key === key && this.wireStart.terminal === terminal.terminal) {
         this.wireStart = null
         showToast('Fio cancelado')
         return
       }
-      this.mech.addWire(this.wireStart.key, this.wireStart.point, key, hit.point.clone())
+      this.mech.addWire(
+        this.wireStart.key, this.wireStart.point, this.wireStart.terminal,
+        key, terminal.point.clone(), terminal.terminal,
+      )
       this.wireStart = null
       sfx.zap()
-      showToast('Fio conectado')
+      showToast('Fio conectado aos terminais')
       return
     }
 
@@ -907,8 +920,8 @@ export class Engine {
     let hint: string | null = null
     if (item === 'wire') {
       hint = this.wireStart
-        ? `${use} em outro bloco para terminar o fio  •  ${s.isTouch ? 'Segure' : 'Botão esquerdo'} para cancelar`
-        : `${use} em um bloco para começar o fio`
+        ? `${use} em um terminal para terminar o fio  •  ${s.isTouch ? 'Segure' : 'Botão esquerdo'} para cancelar`
+        : `${use} em um terminal para começar o fio`
     } else if (item === 'glue') {
       hint = `${use} numa face para aplicar ou remover cola quente`
     } else if (hit?.id === B.BATTERY_BOX && item === 'battery') {
