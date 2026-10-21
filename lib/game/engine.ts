@@ -40,6 +40,7 @@ export interface Hit {
   point: THREE.Vector3
   id: number
   dist: number
+  moving?: { key: string; kind: 'rotor' | 'chassis' | 'falling' }
 }
 
 let current: Engine | null = null
@@ -434,9 +435,21 @@ export class Engine {
   use() {
     unlockAudio()
     const item = this.selectedItem()
-    const hit = this.target
+    let hit = this.target
     this.swing = 0
     this.lastUseWasPlace = false
+
+    // Dynamic bodies are interactive, but voxel placement/wiring still uses
+    // the world's integer grid. Resolve the source identity before editing.
+    if (hit?.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para editar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
+    }
 
     if (item === 'wire') {
       if (!hit) return
@@ -517,7 +530,7 @@ export class Engine {
   breakBlock() {
     unlockAudio()
     this.swing = 0
-    const hit = this.target
+    let hit = this.target
     const item = this.selectedItem()
     if (item === 'wire' && this.wireStart) {
       this.wireStart = null
@@ -532,6 +545,15 @@ export class Engine {
         showToast(removed === 1 ? '1 fio removido' : `${removed} fios removidos`)
         return
       }
+    }
+    if (hit.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para quebrar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
     }
     if (hit.y < GROUND_LEVEL) return
     this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
