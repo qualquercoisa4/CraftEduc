@@ -329,7 +329,7 @@ export class Mechanics {
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16
       const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
         const id = this.world.getBlock(x, y, z)
         if ((BLOCK_CONDUCTIVITY[id] ?? 0) <= 0) continue
         const key = posKey(x, y, z)
@@ -345,7 +345,7 @@ export class Mechanics {
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16
       const minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
         const id = this.world.getBlock(x, y, z)
         const key = posKey(x, y, z)
         if (id === B.BATTERY_BOX) {
@@ -659,7 +659,7 @@ export class Mechanics {
               }
             }
           }
-          if (b.y + dy - 0.5 <= GROUND_LEVEL + 1) floorDistance = Math.min(floorDistance, b.y - 0.5 - (GROUND_LEVEL + 1))
+          if (b.y + dy - 0.5 <= GROUND_LEVEL) floorDistance = Math.min(floorDistance, b.y - 0.5 - GROUND_LEVEL)
         }
         if (floorDistance !== Infinity && -dy >= floorDistance) {
           allowed = -Math.max(0, floorDistance)
@@ -713,7 +713,7 @@ export class Mechanics {
       }
       if (group.some(v => v.id === B.MOTOR || v.id === B.BATTERY_BOX || v.id === B.LED || this.wiresAt(v.key).length || this.contraptionsHasBlock(v.key))) continue
       const keys = new Set(group.map(v => v.key))
-      const supported = group.some(v => v.y <= GROUND_LEVEL + 1 || (() => {
+      const supported = group.some(v => v.y <= GROUND_LEVEL || (() => {
         const below = posKey(v.x, v.y - 1, v.z)
         return occupied.has(below) && !keys.has(below)
       })())
@@ -754,7 +754,7 @@ export class Mechanics {
     const occupied = new Set<string>()
     for (const b of body.blocks) {
       const x = Math.round(b.x), z = Math.round(b.z)
-      let y = Math.max(GROUND_LEVEL + 1, Math.floor(b.y + 0.5))
+      let y = Math.max(GROUND_LEVEL, Math.floor(b.y))
       while (y > GROUND_LEVEL && this.world.getBlock(x, y - 1, z) === B.AIR) y--
       while (this.world.getBlock(x, y, z) !== B.AIR && y < 63) y++
       const key = posKey(x, y, z)
@@ -884,7 +884,24 @@ export class Mechanics {
               for (const b of moving) this.world.setBlock(b.x,b.y,b.z,b.b.id,b.b.state)
               this.world.setBlock(motorTarget.x,motorTarget.y,motorTarget.z,B.MOTOR,motorState)
               this.suppress = false
-              this.tractionVelocity.set(key, new THREE.Vector3())
+
+              // Move the motor model and its mounted wheel with the voxel chassis.
+              const oldKey = key
+              const newKey = posKey(motorTarget.x, motorTarget.y, motorTarget.z)
+              const motorEntry = this.models.get(oldKey)
+              if (motorEntry?.type === 'motor') {
+                motorEntry.model.group.position.set(motorTarget.x + 0.5, motorTarget.y + 0.5, motorTarget.z + 0.5)
+                this.models.delete(oldKey)
+                this.models.set(newKey, motorEntry)
+              }
+              const mounted = this.mountedWheels.get(oldKey)
+              if (mounted) {
+                this.mountedWheels.delete(oldKey)
+                this.mountedWheels.set(newKey, mounted)
+              }
+              const velocity = this.tractionVelocity.get(oldKey) ?? new THREE.Vector3()
+              this.tractionVelocity.delete(oldKey)
+              this.tractionVelocity.set(newKey, velocity.set(0, 0, 0))
               this.physicsDirty = true
               this.powerDirty = true
               this.mechDirty = true
