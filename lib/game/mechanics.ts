@@ -89,9 +89,14 @@ export class Mechanics {
   private mechDirty = true
   private wireId = 0
   private gravityTimer = 0
+  private physicsDirty = true
+  private mountedWheels = new Map<string, { model: WheelModel; spin: number }>()
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
+  private physicsScanCooldown = 0
+  private powerCooldown = 0
+  private tractionVelocity = new Map<string, THREE.Vector3>()
 
   constructor(
     private world: World,
@@ -148,8 +153,24 @@ export class Mechanics {
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    this.powerDirty = true
+    const electrical = (id: number) => id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    if (electrical(oldId) || electrical(newId)) this.powerDirty = true
+    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
+    this.physicsDirty = true
+  }
+
+  mountWheel(x: number, y: number, z: number) {
+    const key = posKey(x, y, z)
+    if (this.mountedWheels.has(key)) return false
+    const entry = this.models.get(key)
+    if (!entry || entry.type !== 'motor') return false
+    const wheel = createArduinoWheelModel(this.world.getState(x, y, z)?.facing ?? 2)
+    wheel.group.position.set(0, 0, 0.36)
+    wheel.group.scale.setScalar(0.88)
+    entry.model.shaft.add(wheel.group)
+    this.mountedWheels.set(key, { model: wheel, spin: 0 })
     this.mechDirty = true
+    return true
   }
 
   /* ---------------- Interactions ---------------- */
@@ -609,8 +630,11 @@ export class Mechanics {
    */
   private updateGravity(dt: number) {
     this.gravityTimer += dt
-    if (this.gravityTimer >= 0.22) {
+    this.physicsScanCooldown -= dt
+    if (this.physicsDirty && this.physicsScanCooldown <= 0) {
+      this.physicsScanCooldown = 0.35
       this.gravityTimer = 0
+      this.physicsDirty = false
       this.detectUnsupportedBodies()
     }
     if (!this.fallingBodies.length) return
@@ -780,7 +804,9 @@ export class Mechanics {
 
   update(dt: number) {
     this.updateGravity(dt)
-    if (this.powerDirty) {
+    this.powerCooldown -= dt
+    if (this.powerDirty && this.powerCooldown <= 0) {
+      this.powerCooldown = 0.08
       this.powerDirty = false
       this.recomputePower()
       this.mechDirty = true
@@ -818,6 +844,52 @@ export class Mechanics {
       } else if (power > 0 && e.status !== 'stalled') {
         e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
+      }
+      const mounted = this.mountedWheels.get(key)
+      if (mounted) {
+        mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
+        mounted.model.rim.rotation.z = mounted.spin
+        // Wheel torque becomes chassis traction when the motor is glued into
+        // a supported assembly. Friction and load limit acceleration.
+        const contraption = this.contraptions.get(key)
+        if (power > 0 && contraption && contraption.blocks.length) {
+          const grounded = contraption.blocks.some((b) => {
+            const wx = Math.round(b.rel[0] + contraption.motorPos[0])
+            const wy = Math.round(b.rel[1] + contraption.motorPos[1])
+            const wz = Math.round(b.rel[2] + contraption.motorPos[2])
+            return this.world.getBlock(wx, wy - 1, wz) !== B.AIR
+          })
+          if (grounded) {
+            const mass = Math.max(1, contraption.blocks.length)
+            const facing = DIRS[contraption.facing] ?? DIRS[2]
+            const traction = (this.motorDirection.get(key) ?? 1) * power * 3.2 / Math.sqrt(mass)
+            const dx = facing[0] * traction * dt
+            const dz = facing[2] * traction * dt
+            const candidates = contraption.blocks.map((b) => ({
+              b,
+              x: Math.round(b.rel[0] + contraption.motorPos[0] + dx),
+              y: Math.round(b.rel[1] + contraption.motorPos[1]),
+              z: Math.round(b.rel[2] + contraption.motorPos[2] + dz),
+            }))
+            const canMove = candidates.every(({ x, y, z }) =>
+              this.world.getBlock(x, y, z) === B.AIR ||
+              contraption.byKey.has(posKey(x, y, z)))
+            if (canMove && (Math.abs(dx) + Math.abs(dz) > 1e-4)) {
+              const stepX = Math.abs(dx) > 0.08 ? Math.sign(dx) : 0
+              const stepZ = Math.abs(dz) > 0.08 ? Math.sign(dz) : 0
+              if (stepX || stepZ) {
+                this.disassemble(contraption, Math.round(contraption.angle / HALF_PI) % 4)
+                const moving = candidates.map(({ b, x, y, z }) => ({ b, x: x + stepX, y, z: z + stepZ }))
+                this.suppress = true
+                for (const { b } of moving) this.world.setBlock(...parseKey(b.origKey), B.AIR)
+                for (const { b, x, y, z } of moving) this.world.setBlock(x, y, z, b.id, b.state)
+                this.suppress = false
+                this.physicsDirty = true
+                this.mechDirty = true
+              }
+            }
+          }
+        }
       }
     }
 

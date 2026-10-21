@@ -96,7 +96,7 @@ export function createArduinoWheelModel(facing = 0): WheelModel {
   const group = new THREE.Group()
   const rim = new THREE.Group()
   group.add(rim)
-  const tire = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.11, 12, 32), m.tire)
+  const tire = new THREE.Mesh(new THREE.TorusGeometry(0.36, 0.13, 12, 32), m.tire)
   rim.add(tire)
   const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.265, 0.265, 0.09, 32), m.yellow)
   disk.rotation.x = Math.PI / 2
@@ -118,7 +118,7 @@ export function createArduinoWheelModel(facing = 0): WheelModel {
     const a = i * Math.PI * 2 / 32
     for (const side of [-1, 1]) {
       const lug = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.055, 0.045), m.tread)
-      lug.position.set(Math.sin(a) * 0.445, Math.cos(a) * 0.445, side * 0.06)
+      lug.position.set(Math.sin(a) * 0.465, Math.cos(a) * 0.465, side * 0.065)
       lug.rotation.z = -a
       rim.add(lug)
     }
