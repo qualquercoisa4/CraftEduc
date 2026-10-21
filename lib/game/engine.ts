@@ -386,8 +386,7 @@ export class Engine {
         const key = posKey(edit.x, edit.y, edit.z)
         if (nextState && Object.keys(nextState).length) this.world.states.set(key, nextState)
         else this.world.states.delete(key)
-        this.world.markBlockDirty(edit.x, edit.y, edit.z)
-        this.mech.onBlockChange(edit.x, edit.y, edit.z, oldId, edit.block, Boolean(oldState?.glue), Boolean(nextState?.glue))
+        this.mech.applyNetworkBlockState(edit.x, edit.y, edit.z, oldState, nextState)
       } else {
         this.world.setBlock(edit.x, edit.y, edit.z, edit.block, nextState)
       }
@@ -917,6 +916,10 @@ export class Engine {
       this.target = hit
     }
     if (hit.y < GROUND_LEVEL) return
+    if (this.multiplayerBridge && !this.multiplayerBridge.canBreakBlock(hit.x, hit.y, hit.z)) {
+      showToast('Você só pode quebrar blocos que colocou neste servidor')
+      return
+    }
     this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
     this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, B.AIR)
     this.multiplayerBridge?.wiresRemovedAt(posKey(hit.x, hit.y, hit.z))
