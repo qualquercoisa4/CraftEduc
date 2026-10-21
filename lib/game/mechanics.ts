@@ -860,6 +860,132 @@ export class Mechanics {
    * from the static world and rendered as real moving meshes until they land.
    * Motion is integrated every frame, not teleported between grid cells.
    */
+  /**
+   * Turn a contacted static voxel (and its hot-glue-connected component) into
+   * a dynamic rigid body when a moving assembly is actually driving into it.
+   * Without this handoff, fixed voxel colliders are infinitely heavy and no
+   * material density can make them move.
+   */
+  private wakeBlocksBeingPushed() {
+    if (!this.rigidPhysics.ready) return
+    const targetKeys = new Set<string>()
+    const worldAxes = [
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, 0, 1),
+    ]
+    const isNearObb = (
+      center: THREE.Vector3,
+      axes: THREE.Vector3[],
+      x: number,
+      y: number,
+      z: number,
+      margin = 0.035,
+    ) => {
+      const otherCenter = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      const delta = otherCenter.sub(center)
+      const tests = [...axes, ...worldAxes]
+      for (const a of axes) {
+        for (const b of worldAxes) {
+          const cross = a.clone().cross(b)
+          if (cross.lengthSq() > 1e-8) tests.push(cross.normalize())
+        }
+      }
+      for (const rawAxis of tests) {
+        if (rawAxis.lengthSq() < 1e-8) continue
+        const axis = rawAxis.clone().normalize()
+        const separation = Math.abs(delta.dot(axis))
+        const movingRadius = 0.5 * axes.reduce((sum, basis) => sum + Math.abs(basis.dot(axis)), 0)
+        const staticRadius = 0.5 * (Math.abs(axis.x) + Math.abs(axis.y) + Math.abs(axis.z))
+        if (separation > movingRadius + staticRadius + margin) return false
+      }
+      return true
+    }
+
+    const inspectBody = (
+      pivot: THREE.Vector3,
+      rotation: THREE.Quaternion,
+      linear: THREE.Vector3,
+      angular: THREE.Vector3,
+      blocks: { centerOffset: THREE.Vector3; key: string }[],
+    ) => {
+      const axes = [
+        new THREE.Vector3(1, 0, 0).applyQuaternion(rotation),
+        new THREE.Vector3(0, 1, 0).applyQuaternion(rotation),
+        new THREE.Vector3(0, 0, 1).applyQuaternion(rotation),
+      ]
+      for (const block of blocks) {
+        const center = block.centerOffset.clone().applyQuaternion(rotation).add(pivot)
+        const surfaceVelocity = angular.clone().cross(center.clone().sub(pivot)).add(linear)
+        if (surfaceVelocity.lengthSq() < 0.0025) continue
+        const hx = 0.5 * (Math.abs(axes[0].x) + Math.abs(axes[1].x) + Math.abs(axes[2].x))
+        const hy = 0.5 * (Math.abs(axes[0].y) + Math.abs(axes[1].y) + Math.abs(axes[2].y))
+        const hz = 0.5 * (Math.abs(axes[0].z) + Math.abs(axes[1].z) + Math.abs(axes[2].z))
+        const minX = Math.floor(center.x - hx - 0.55)
+        const maxX = Math.floor(center.x + hx + 0.55)
+        const minY = Math.floor(center.y - hy - 0.55)
+        const maxY = Math.floor(center.y + hy + 0.55)
+        const minZ = Math.floor(center.z - hz - 0.55)
+        const maxZ = Math.floor(center.z + hz + 0.55)
+        for (let y = minY; y <= maxY; y++) {
+          if (y < GROUND_LEVEL || y >= WORLD_HEIGHT) continue
+          for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
+            const id = this.world.getBlock(x, y, z)
+            if (id === B.AIR) continue
+            const key = posKey(x, y, z)
+            if (targetKeys.has(key) || this.fallingKeys.has(key)) continue
+            const delta = new THREE.Vector3(x + 0.5 - center.x, y + 0.5 - center.y, z + 0.5 - center.z)
+            // Only release blocks in the direction the rotating/translating
+            // voxel is moving. This avoids waking neighboring blocks the arm
+            // is merely passing by.
+            if (delta.lengthSq() < 1e-8 || surfaceVelocity.dot(delta) <= 0.015) continue
+            if (isNearObb(center, axes, x, y, z)) targetKeys.add(key)
+          }
+        }
+      }
+    }
+
+    for (const c of this.contraptions.values()) {
+      const rotorT = c.rotorBody.translation(), rotorR = c.rotorBody.rotation()
+      const rotorV = c.rotorBody.linvel(), rotorW = c.rotorBody.angvel()
+      inspectBody(
+        new THREE.Vector3(rotorT.x, rotorT.y, rotorT.z),
+        new THREE.Quaternion(rotorR.x, rotorR.y, rotorR.z, rotorR.w),
+        new THREE.Vector3(rotorV.x, rotorV.y, rotorV.z),
+        new THREE.Vector3(rotorW.x, rotorW.y, rotorW.z),
+        c.blocks.map((b) => ({ centerOffset: new THREE.Vector3(...b.rel), key: b.origKey })),
+      )
+      const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
+      const chassisV = c.chassisBody.linvel(), chassisW = c.chassisBody.angvel()
+      inspectBody(
+        new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z),
+        new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
+        new THREE.Vector3(chassisV.x, chassisV.y, chassisV.z),
+        new THREE.Vector3(chassisW.x, chassisW.y, chassisW.z),
+        [
+          { centerOffset: new THREE.Vector3(0, 0, 0), key: c.motorKey },
+          ...c.chassisBlocks.map((b) => ({ centerOffset: new THREE.Vector3(...b.rel), key: b.origKey })),
+        ],
+      )
+    }
+
+    for (const body of this.fallingBodies) {
+      const t = body.body.translation(), r = body.body.rotation()
+      const v = body.body.linvel(), w = body.body.angvel()
+      inspectBody(
+        new THREE.Vector3(t.x, t.y, t.z),
+        new THREE.Quaternion(r.x, r.y, r.z, r.w),
+        new THREE.Vector3(v.x, v.y, v.z),
+        new THREE.Vector3(w.x, w.y, w.z),
+        body.blocks.map((b) => ({ centerOffset: b.localOrigin.clone(), key: b.originKey })),
+      )
+    }
+
+    if (targetKeys.size > 0) {
+      this.detectUnsupportedBodies(targetKeys)
+    }
+  }
+
   private updateGravity(dt: number) {
     if (!this.rigidPhysics.ready) return
     this.physicsScanCooldown -= dt
@@ -882,7 +1008,7 @@ export class Mechanics {
     }
   }
 
-  private detectUnsupportedBodies() {
+  private detectUnsupportedBodies(forceKeys?: ReadonlySet<string>) {
     if (!this.rigidPhysics.ready) { this.physicsDirty = true; return }
     const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
     const occupied = new Set<string>()
@@ -924,7 +1050,7 @@ export class Mechanics {
       })())
       // A connected glue component is one rigid body. Unconnected blocks are
       // independent bodies and still collide with each other in Rapier.
-      if (!supported) fallingGroups.push(group)
+      if (!supported || group.some((item) => forceKeys?.has(item.key))) fallingGroups.push(group)
     }
 
     for (const blocksInGroup of fallingGroups) {
@@ -1210,6 +1336,7 @@ export class Mechanics {
     // All dynamic voxel groups and motor rotors use this one solver. No
     // rotation-specific floor correction or per-motor translation branch.
     if (this.rigidPhysics.ready) {
+      this.wakeBlocksBeingPushed()
       this.rigidPhysics.step(dt)
       this.syncRigidTransforms()
     }
