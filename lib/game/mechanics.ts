@@ -62,6 +62,7 @@ export class Mechanics {
   private powerDirty = true
   private mechDirty = true
   private wireId = 0
+  private gravityTimer = 0
 
   constructor(
     private world: World,
@@ -455,9 +456,88 @@ export class Mechanics {
     this.mechDirty = true
   }
 
+  /**
+   * Discrete voxel gravity for loose parts and glued assemblies. A connected
+   * glue group moves as one unit; groups touching the floor or another
+   * assembly remain supported. Wired/model blocks are left in place until
+   * their terminals and model transforms can be moved atomically.
+   */
+  private updateGravity(dt: number) {
+    this.gravityTimer += dt
+    if (this.gravityTimer < 0.16) return
+    this.gravityTimer = 0
+
+    const occupied = new Set<string>()
+    const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y < 64; y++) {
+        for (let z = minZ; z < minZ + 16; z++) {
+          for (let x = minX; x < minX + 16; x++) {
+            const id = this.world.getBlock(x, y, z)
+            if (id === B.AIR) continue
+            const key = posKey(x, y, z)
+            occupied.add(key)
+            blocks.push({ key, x, y, z, id, state: this.world.getState(x, y, z) })
+          }
+        }
+      }
+    }
+
+    const byKey = new Map(blocks.map((b) => [b.key, b]))
+    const visited = new Set<string>()
+    const movable: typeof blocks[] = []
+    for (const block of blocks) {
+      if (visited.has(block.key)) continue
+      const group: typeof blocks = []
+      const queue = [block]
+      visited.add(block.key)
+      let protectedModel = false
+      while (queue.length) {
+        const current = queue.pop()!
+        group.push(current)
+        if (current.id === B.MOTOR || current.id === B.BATTERY_BOX) protectedModel = true
+        for (let d = 0; d < 6; d++) {
+          if (!this.isGlued(current.x, current.y, current.z, d)) continue
+          const n = DIRS[d]
+          const nk = posKey(current.x + n[0], current.y + n[1], current.z + n[2])
+          const next = byKey.get(nk)
+          if (next && !visited.has(nk)) {
+            visited.add(nk)
+            queue.push(next)
+          }
+        }
+      }
+      if (protectedModel || group.some((b) => this.wiresAt(b.key).length > 0)) continue
+      const groupKeys = new Set(group.map((b) => b.key))
+      const supported = group.some((b) => {
+        if (b.y <= GROUND_LEVEL) return true
+        const below = posKey(b.x, b.y - 1, b.z)
+        return occupied.has(below) && !groupKeys.has(below)
+      })
+      if (!supported) movable.push(group)
+    }
+
+    // Move from lower groups first to avoid a falling stack blocking itself.
+    movable.sort((a, b) => Math.min(...a.map((v) => v.y)) - Math.min(...b.map((v) => v.y)))
+    for (const group of movable) {
+      const groupKeys = new Set(group.map((b) => b.key))
+      if (group.some((b) => b.y <= GROUND_LEVEL || this.wiresAt(b.key).length > 0)) continue
+      const blocked = group.some((b) => {
+        const below = posKey(b.x, b.y - 1, b.z)
+        return occupied.has(below) && !groupKeys.has(below)
+      })
+      if (blocked) continue
+      for (const b of group) this.world.setBlock(b.x, b.y, b.z, B.AIR)
+      for (const b of group) this.world.setBlock(b.x, b.y - 1, b.z, b.id, b.state)
+    }
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
+    this.updateGravity(dt)
     if (this.powerDirty) {
       this.powerDirty = false
       this.recomputePower()
