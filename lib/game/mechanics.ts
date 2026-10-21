@@ -60,6 +60,7 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
+  motorDirection = new Map<string, number>()
   private glueMesh: THREE.Mesh | null = null
   private suppress = false
   private powerDirty = true
@@ -328,6 +329,7 @@ export class Mechanics {
     const efficiency = (terminal: string) => efficiencyByRoot.get(find(terminal)) ?? 1
     const leds = new Set<string>()
     this.motorPower.clear()
+    this.motorDirection.clear()
     for (const d of devices) {
       const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
       const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
@@ -336,7 +338,10 @@ export class Mechanics {
       const deliveredPower = source * transmission
       if (source <= 0 || deliveredPower < 0.15 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
       if (d.id === B.LED && plusA) leds.add(d.key)
-      if (d.id === B.MOTOR) this.motorPower.set(d.key, deliveredPower)
+      if (d.id === B.MOTOR) {
+        this.motorPower.set(d.key, deliveredPower)
+        this.motorDirection.set(d.key, plusA ? 1 : -1)
+      }
     }
 
     const prev = this.world.poweredLeds
@@ -680,7 +685,7 @@ export class Mechanics {
       if (c) {
         e.model.shaft.rotation.z = c.angle
       } else if (power > 0 && e.status !== 'stalled') {
-        e.spin += power * 2.4 * dt
+        e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
       }
     }
@@ -695,9 +700,10 @@ export class Mechanics {
       }
       if (power > 0) {
         const model = this.models.get(key)
-        const nextSpeed = power * 1.05
-        let nextAngle = c.angle + nextSpeed * dt
-        if (nextAngle > Math.PI * 2) nextAngle -= Math.PI * 2
+        const direction = this.motorDirection.get(key) ?? 1
+        const nextSpeed = power * 1.05 * direction
+        let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
+        if (nextAngle < 0) nextAngle += Math.PI * 2
         if (model?.type === 'motor' && model.status !== 'stalled' && !this.canRotateContraption(c, nextAngle)) {
           model.status = 'stalled'
           c.speed = 0
