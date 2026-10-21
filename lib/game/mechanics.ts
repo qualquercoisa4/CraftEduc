@@ -1,16 +1,19 @@
 import * as THREE from 'three'
-import { B, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
+import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
   type BatteryBoxModel,
   type MotorModel,
+  type LedTerminalModel,
   createBatteryBoxModel,
   createGlowSprite,
+  createLedTerminalModel,
   createMotorModel,
   createWireMesh,
   disposeObject,
   setBatteryCount,
   setMotorFacing,
+  facingQuaternion,
   updateWireMesh,
 } from './models'
 import type { BlockState, World } from './world'
@@ -21,6 +24,7 @@ const MAX_CONTRAPTION = 400
 type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'box'; model: BatteryBoxModel }
+  | { type: 'led'; model: LedTerminalModel }
 
 export interface Wire {
   id: number
@@ -28,6 +32,8 @@ export interface Wire {
   b: string
   pa: THREE.Vector3
   pb: THREE.Vector3
+  ta: string
+  tb: string
   mesh: THREE.Group
 }
 
@@ -57,11 +63,13 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
+  motorDirection = new Map<string, number>()
   private glueMesh: THREE.Mesh | null = null
   private suppress = false
   private powerDirty = true
   private mechDirty = true
   private wireId = 0
+  private gravityTimer = 0
 
   constructor(
     private world: World,
@@ -75,7 +83,7 @@ export class Mechanics {
   onBlockChange(x: number, y: number, z: number, oldId: number, newId: number) {
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -104,6 +112,11 @@ export class Mechanics {
       model.group.position.set(x + 0.5, y, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'box', model })
+    } else if (newId === B.LED) {
+      const model = createLedTerminalModel()
+      model.group.position.set(x, y, z)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'led', model })
     }
     this.rebuildGlue()
     this.powerDirty = true
@@ -140,10 +153,50 @@ export class Mechanics {
     return Boolean(st.glue & (1 << face))
   }
 
-  addWire(a: string, pa: THREE.Vector3, b: string, pb: THREE.Vector3) {
+  /** Resolve an exposed electrical terminal, never an arbitrary point inside a block. */
+  resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
+    const [x, y, z] = parseKey(key)
+    const id = this.world.getBlock(x, y, z)
+    if (id === B.BATTERY_BOX) {
+      const terminals = [
+        { terminal: '+', point: new THREE.Vector3(x + 0.82, y + 0.12, z + 0.97) },
+        { terminal: '-', point: new THREE.Vector3(x + 0.70, y + 0.12, z + 0.97) },
+      ]
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.3 ? terminals[0] : null
+    }
+    if (id === B.MOTOR) {
+      const facing = this.world.getState(x, y, z)?.facing ?? 2
+      const q = facingQuaternion(facing)
+      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      const terminals = [-1, 1].map((side) => ({
+        terminal: side < 0 ? 'A' : 'B',
+        point: new THREE.Vector3(0.14 * side, 0.1, -0.46).applyQuaternion(q).add(center),
+      }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
+    }
+    if (id === B.LED) {
+      const terminals = [
+        { terminal: 'anode', point: new THREE.Vector3(x + 1, y + 0.5, z + 0.5) },
+        { terminal: 'cathode', point: new THREE.Vector3(x, y + 0.5, z + 0.5) },
+      ]
+      const expected = face === 0 ? terminals[0] : face === 1 ? terminals[1] : null
+      return expected && expected.point.distanceTo(hitPoint) <= 0.6 ? expected : null
+    }
+    const conductivity = BLOCK_CONDUCTIVITY[id] ?? 0
+    if (conductivity <= 0) return null
+    const normal = DIRS[face]
+    if (!normal) return null
+    const point = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      .add(new THREE.Vector3(normal[0], normal[1], normal[2]).multiplyScalar(0.5))
+    return { terminal: `face:${face}`, point }
+  }
+
+  addWire(a: string, pa: THREE.Vector3, ta: string, b: string, pb: THREE.Vector3, tb: string) {
     const mesh = createWireMesh(pa, pb)
     this.scene.add(mesh)
-    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), mesh })
+    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), ta, tb, mesh })
     this.powerDirty = true
     this.mechDirty = true
   }
@@ -195,6 +248,8 @@ export class Mechanics {
   }
 
   private recomputePower() {
+    // Each terminal is a separate node. Wires connect only the two terminals
+    // explicitly selected by the player; conductive materials bridge their faces.
     const parent = new Map<string, string>()
     const find = (k: string): string => {
       let p = parent.get(k) ?? k
@@ -209,31 +264,94 @@ export class Mechanics {
       const rb = find(b)
       if (ra !== rb) parent.set(ra, rb)
     }
-    const nodes = new Set<string>()
+    const node = (key: string, terminal: string) => `${key}|${terminal}`
+    const allNodes = new Set<string>()
     for (const w of this.wires) {
-      nodes.add(w.a)
-      nodes.add(w.b)
-      union(w.a, w.b)
+      const a = node(w.a, w.ta)
+      const b = node(w.b, w.tb)
+      allNodes.add(a)
+      allNodes.add(b)
+      union(a, b)
     }
-    const charge = new Map<string, number>()
-    const info = new Map<string, { id: number; state?: BlockState }>()
-    for (const n of nodes) {
-      const b = this.lookup(n)
-      info.set(n, b)
-      if (b.id === B.BATTERY_BOX) {
-        const root = find(n)
-        charge.set(root, Math.max(charge.get(root) ?? 0, b.state?.batteries ?? 0))
+
+    // Conductive blocks connect their six face terminals internally. Wood and
+    // other insulators deliberately do not provide a path through the block.
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const id = this.world.getBlock(x, y, z)
+        if ((BLOCK_CONDUCTIVITY[id] ?? 0) <= 0) continue
+        const key = posKey(x, y, z)
+        const faces = DIRS.map((_, i) => node(key, `face:${i}`))
+        for (const n of faces) allNodes.add(n)
+        for (let i = 1; i < faces.length; i++) union(faces[0], faces[i])
       }
     }
+
+    const terminalRoot = (key: string, terminal: string) => find(node(key, terminal))
+    const boxes: { key: string; positive: string; negative: string; batteries: number }[] = []
+    const devices: { key: string; id: number; a: string; b: string }[] = []
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y < 64; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const id = this.world.getBlock(x, y, z)
+        const key = posKey(x, y, z)
+        if (id === B.BATTERY_BOX) {
+          const count = this.world.getState(x, y, z)?.batteries ?? 0
+          if (count > 0) {
+            const positive = node(key, '+')
+            const negative = node(key, '-')
+            allNodes.add(positive); allNodes.add(negative)
+            boxes.push({ key, positive, negative, batteries: count })
+          }
+        } else if (id === B.LED || id === B.MOTOR) {
+          const a = node(key, id === B.LED ? 'anode' : 'A')
+          const b = node(key, id === B.LED ? 'cathode' : 'B')
+          allNodes.add(a); allNodes.add(b)
+          devices.push({ key, id, a, b })
+        }
+      }
+    }
+
+    // Create roots for terminals that have not yet been connected by a wire.
+    for (const n of allNodes) find(n)
+    const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
+    const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
+    const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
+
+    // Conductivity acts as efficiency along a circuit: every conductive block
+    // contributes its material factor (e.g. iron 0.90, aluminum 0.95).
+    const efficiencyByRoot = new Map<string, number>()
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const conductivity = BLOCK_CONDUCTIVITY[this.world.getBlock(x, y, z)] ?? 0
+        if (conductivity <= 0) continue
+        const root = find(node(posKey(x, y, z), 'face:0'))
+        efficiencyByRoot.set(root, (efficiencyByRoot.get(root) ?? 1) * conductivity)
+      }
+    }
+    const efficiency = (terminal: string) => efficiencyByRoot.get(find(terminal)) ?? 1
     const leds = new Set<string>()
     this.motorPower.clear()
-    for (const n of nodes) {
-      const level = charge.get(find(n)) ?? 0
-      if (level <= 0) continue
-      const b = info.get(n)!
-      if (b.id === B.LED) leds.add(n)
-      if (b.id === B.MOTOR) this.motorPower.set(n, level)
+    this.motorDirection.clear()
+    for (const d of devices) {
+      const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
+      const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
+      const source = activeBoxes.reduce((max, b) => Math.max(max, b.batteries), 0)
+      const transmission = efficiency(d.a) * efficiency(d.b)
+      const deliveredPower = source * transmission
+      if (source <= 0 || deliveredPower < 0.15 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
+      if (d.id === B.LED && plusA) leds.add(d.key)
+      if (d.id === B.MOTOR) {
+        this.motorPower.set(d.key, deliveredPower)
+        this.motorDirection.set(d.key, plusA ? 1 : -1)
+      }
     }
+
     const prev = this.world.poweredLeds
     for (const k of prev) {
       if (!leds.has(k)) {
@@ -250,10 +368,10 @@ export class Mechanics {
       const [x, y, z] = parseKey(k)
       if (!prev.has(k)) this.world.markBlockDirty(x, y, z)
       if (!this.glows.has(k) && this.world.getBlock(x, y, z) === B.LED) {
-        const s = createGlowSprite()
-        s.position.set(x + 0.5, y + 0.5, z + 0.5)
-        this.scene.add(s)
-        this.glows.set(k, s)
+        const glow = createGlowSprite()
+        glow.position.set(x + 0.5, y + 0.5, z + 0.5)
+        this.scene.add(glow)
+        this.glows.set(k, glow)
       }
     }
     this.world.poweredLeds = leds
@@ -455,9 +573,114 @@ export class Mechanics {
     this.mechDirty = true
   }
 
+  /**
+   * Discrete voxel gravity for loose parts and glued assemblies. A connected
+   * glue group moves as one unit; groups touching the floor or another
+   * assembly remain supported. Wired/model blocks are left in place until
+   * their terminals and model transforms can be moved atomically.
+   */
+  private updateGravity(dt: number) {
+    this.gravityTimer += dt
+    if (this.gravityTimer < 0.16) return
+    this.gravityTimer = 0
+
+    const occupied = new Set<string>()
+    const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) {
+        for (let z = minZ; z < minZ + 16; z++) {
+          for (let x = minX; x < minX + 16; x++) {
+            const id = this.world.getBlock(x, y, z)
+            if (id === B.AIR) continue
+            const key = posKey(x, y, z)
+            occupied.add(key)
+            blocks.push({ key, x, y, z, id, state: this.world.getState(x, y, z) })
+          }
+        }
+      }
+    }
+
+    const byKey = new Map(blocks.map((b) => [b.key, b]))
+    const visited = new Set<string>()
+    const movable: (typeof blocks)[] = []
+    for (const block of blocks) {
+      if (visited.has(block.key)) continue
+      const group: typeof blocks = []
+      const queue = [block]
+      visited.add(block.key)
+      while (queue.length) {
+        const current = queue.pop()!
+        group.push(current)
+        for (let d = 0; d < 6; d++) {
+          if (!this.isGlued(current.x, current.y, current.z, d)) continue
+          const n = DIRS[d]
+          const nk = posKey(current.x + n[0], current.y + n[1], current.z + n[2])
+          const next = byKey.get(nk)
+          if (next && !visited.has(nk)) {
+            visited.add(nk)
+            queue.push(next)
+          }
+        }
+      }
+      if (group.some((b) => this.wiresAt(b.key).length > 0)) continue
+      const groupKeys = new Set(group.map((b) => b.key))
+      const supported = group.some((b) => {
+        if (b.y <= GROUND_LEVEL) return true
+        const below = posKey(b.x, b.y - 1, b.z)
+        return occupied.has(below) && !groupKeys.has(below)
+      })
+      if (!supported) movable.push(group)
+    }
+
+    // Move from lower groups first to avoid a falling stack blocking itself.
+    movable.sort((a, b) => Math.min(...a.map((v) => v.y)) - Math.min(...b.map((v) => v.y)))
+    for (const group of movable) {
+      const groupKeys = new Set(group.map((b) => b.key))
+      if (group.some((b) => b.y <= GROUND_LEVEL || this.wiresAt(b.key).length > 0)) continue
+      const blocked = group.some((b) => {
+        const below = posKey(b.x, b.y - 1, b.z)
+        return occupied.has(below) && !groupKeys.has(below)
+      })
+      if (blocked) continue
+      for (const b of group) this.world.setBlock(b.x, b.y, b.z, B.AIR)
+      for (const b of group) this.world.setBlock(b.x, b.y - 1, b.z, b.id, b.state)
+    }
+  }
+
+  private canRotateContraption(c: Contraption, angle: number) {
+    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
+    const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
+    const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
+    const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+    const extent = new THREE.Vector3(
+      0.5 * (Math.abs(ex.x) + Math.abs(ey.x) + Math.abs(ez.x)),
+      0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y)),
+      0.5 * (Math.abs(ex.z) + Math.abs(ey.z) + Math.abs(ez.z)),
+    )
+    for (const b of c.blocks) {
+      const center = new THREE.Vector3(...b.rel).applyQuaternion(q)
+        .add(new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5))
+      const minX = Math.floor(center.x - extent.x + 1e-5)
+      const maxX = Math.floor(center.x + extent.x - 1e-5)
+      const minY = Math.floor(center.y - extent.y + 1e-5)
+      const maxY = Math.floor(center.y + extent.y - 1e-5)
+      const minZ = Math.floor(center.z - extent.z + 1e-5)
+      const maxZ = Math.floor(center.z + extent.z - 1e-5)
+      if (minY < GROUND_LEVEL || maxY >= 64) return false
+      for (let y = minY; y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
+        const key = posKey(x, y, z)
+        if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
+      }
+    }
+    return true
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
+    this.updateGravity(dt)
     if (this.powerDirty) {
       this.powerDirty = false
       this.recomputePower()
@@ -483,7 +706,7 @@ export class Mechanics {
       if (c) {
         e.model.shaft.rotation.z = c.angle
       } else if (power > 0 && e.status !== 'stalled') {
-        e.spin += power * 2.4 * dt
+        e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
       }
     }
@@ -497,14 +720,29 @@ export class Mechanics {
         continue
       }
       if (power > 0) {
-        c.speed = power * 1.05
-        c.angle += c.speed * dt
-        if (c.angle > Math.PI * 2) c.angle -= Math.PI * 2
+        const model = this.models.get(c.motorKey)
+        const direction = this.motorDirection.get(c.motorKey) ?? 1
+        const nextSpeed = power * 1.05 * direction
+        let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
+        if (nextAngle < 0) nextAngle += Math.PI * 2
+        if (model?.type === 'motor' && !this.canRotateContraption(c, nextAngle)) {
+          model.status = 'stalled'
+          c.speed = 0
+        } else {
+          c.speed = nextSpeed
+          c.angle = nextAngle
+          if (model?.type === 'motor') model.status = 'driving'
+        }
       } else {
-        const target = Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
-        c.angle = Math.min(target, c.angle + Math.max(c.speed, 1.2) * dt)
-        if (c.angle >= target - 1e-5) {
-          this.disassemble(c, Math.round(target / HALF_PI) % 4)
+        const direction = Math.sign(c.speed || 1)
+        const target = direction > 0
+          ? Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
+          : Math.floor(c.angle / HALF_PI + 1e-4) * HALF_PI
+        const step = direction * Math.max(Math.abs(c.speed), 1.2) * dt
+        c.angle = direction > 0 ? Math.min(target, c.angle + step) : Math.max(target, c.angle + step)
+        const reached = direction > 0 ? c.angle >= target - 1e-5 : c.angle <= target + 1e-5
+        if (reached) {
+          this.disassemble(c, ((Math.round(target / HALF_PI) % 4) + 4) % 4)
           continue
         }
       }
