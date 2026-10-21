@@ -823,7 +823,8 @@ export class Mechanics {
     const oldKey = c.motorKey
     const entry = this.models.get(oldKey)
     if (entry?.type === 'motor') {
-      entry.model.group.position.set(nx + 0.5, ny + 0.5, nz + 0.5)
+      // The motor model is a child of the rotating assembly; translating the
+      // assembly already moves it in world space. Keep its local pivot intact.
       this.models.delete(oldKey)
       this.models.set(targetKey, entry)
     }
