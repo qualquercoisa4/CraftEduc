@@ -14,8 +14,11 @@ import {
   blockBounds,
   isModelBlock,
   posKey,
+  parseKey,
 } from './constants'
-import { Mechanics } from './mechanics'
+import { Mechanics, type Wire } from './mechanics'
+import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
+import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
 import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, wireCurve } from './models'
 import { Particles } from './particles'
@@ -40,12 +43,30 @@ export interface Hit {
   point: THREE.Vector3
   id: number
   dist: number
+  moving?: { key: string; kind: 'rotor' | 'chassis' | 'falling' }
 }
 
 let current: Engine | null = null
 export const getEngine = () => current
 
 const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, B.WHEEL])
+
+interface MultiplayerBridge {
+  isHost: boolean
+  canFly: () => boolean
+  canBreakBlock: (x: number, y: number, z: number, actorKey?: string) => boolean
+  movingAction: (intent: Omit<MovingActionIntent, 'playerKey' | 'playerName'>) => void
+  blockChanged: (x: number, y: number, z: number, block: number, state?: import('./world').BlockState, ownerKey?: string | null) => void
+  ownerForBlock: (x: number, y: number, z: number) => string | null
+  wireCreated: (wire: Wire) => void
+  wiresRemovedAt: (key: string) => void
+}
+interface RemoteAvatar {
+  group: THREE.Group
+  targetPosition: THREE.Vector3
+  targetYaw: number
+  skinSignature: string
+}
 
 export class Engine {
   renderer: THREE.WebGLRenderer
@@ -85,6 +106,7 @@ export class Engine {
   private locked = false
   private lockFailed = false
   private debugTimer = 0
+  private physicsDebugLabel: HTMLPreElement | null = null
   private frames = 0
   private fps = 0
   private touchHolding = false
@@ -92,6 +114,11 @@ export class Engine {
   private touchBroke = false
   private touchMovedFar = false
   private cleanup: (() => void)[] = []
+  private multiplayerBridge: MultiplayerBridge | null = null
+  private applyingNetworkBlock = false
+  private multiplayerCanFly = true
+  private multiplayerRules: MultiplayerRules | null = null
+  private remoteAvatars = new Map<string, RemoteAvatar>()
 
   touch = { moveX: 0, moveY: 0, jump: false, sneak: false, flyUp: false, flyDown: false, sprint: false }
 
@@ -105,6 +132,27 @@ export class Engine {
 
     const { settings } = gameStore.get()
     if (isTouch && settings.renderDistance > 5) gameStore.set({ settings: { ...settings, renderDistance: 5 } })
+    if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+      const label = document.createElement('pre')
+      label.style.position = 'fixed'
+      label.style.left = '8px'
+      label.style.top = '8px'
+      label.style.zIndex = '99999'
+      label.style.margin = '0'
+      label.style.padding = '8px 10px'
+      label.style.maxWidth = 'calc(100vw - 16px)'
+      label.style.maxHeight = '34vh'
+      label.style.overflow = 'auto'
+      label.style.pointerEvents = 'none'
+      label.style.whiteSpace = 'pre-wrap'
+      label.style.font = '12px/1.35 monospace'
+      label.style.color = '#eaffea'
+      label.style.background = 'rgba(0,0,0,.78)'
+      label.style.border = '1px solid rgba(160,255,160,.5)'
+      label.textContent = 'Inicializando física...'
+      document.body.appendChild(label)
+      this.physicsDebugLabel = label
+    }
 
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.05, 1000)
     this.camera.rotation.order = 'YXZ'
@@ -140,6 +188,15 @@ export class Engine {
     this.mech = new Mechanics(this.world, this.scene, this.blockMaterial, glueMat)
     this.world.onBlockChange = (x, y, z, o, n, oldHadGlue, newHasGlue) => this.mech.onBlockChange(x, y, z, o, n, oldHadGlue, newHasGlue)
     this.player = new Player(this.world)
+    // Diagnostic-only view: begin near and facing the demo rotor so automated
+    // and manual regression checks can target moving blocks. Normal gameplay
+    // retains the default spawn and camera.
+    if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+      this.player.pos.set(6.5, 5.2, 0.5)
+      this.player.yaw = 0
+      this.player.pitch = 0.48
+      this.player.flying = true
+    }
 
     this.particles = new Particles(this.blockMaterial, (x, y, z) => this.world.isSolid(x, y, z))
     this.scene.add(this.particles.mesh)
@@ -296,6 +353,318 @@ export class Engine {
     if (document.pointerLockElement) document.exitPointerLock()
   }
 
+  exportNetworkWorld(playerKey: string): { blocks: BlockEdit[]; wires: NetworkWire[] } {
+    const blocks = new Map<string, BlockEdit>()
+    for (const chunk of this.world.chunks.values()) {
+      if (!chunk.modified) continue
+      const baseX = chunk.cx * CHUNK_SIZE
+      const baseZ = chunk.cz * CHUNK_SIZE
+      for (let y = GROUND_LEVEL; y < WORLD_HEIGHT; y++) {
+        const row = y * CHUNK_SIZE * CHUNK_SIZE
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const rowZ = row + z * CHUNK_SIZE
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            const block = chunk.data[rowZ + x]
+            if (block === B.AIR) continue
+            const wx = baseX + x
+            const wz = baseZ + z
+            const state = this.world.getState(wx, y, wz)
+            blocks.set(posKey(wx, y, wz), {
+              x: wx, y, z: wz, block, state: state ? { ...state } : undefined,
+            })
+          }
+        }
+      }
+    }
+    for (const block of this.mech.exportNetworkBlocks()) {
+      blocks.set(posKey(block.x, block.y, block.z), { ...block })
+    }
+    const wires = this.mech.wires.map((wire) => {
+      if (!wire.networkId) wire.networkId = `wire_${playerKey.slice(0, 12)}_${wire.id}`
+      return {
+        id: wire.networkId,
+        a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
+        pa: { x: wire.pa.x, y: wire.pa.y, z: wire.pa.z },
+        pb: { x: wire.pb.x, y: wire.pb.y, z: wire.pb.z },
+      }
+    })
+    return { blocks: [...blocks.values()], wires }
+  }
+
+  setLocalMultiplayerPlayer(data: Record<string, unknown> | null | undefined) {
+    if (!data) return
+    const finite = (value: unknown, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback
+    this.player.pos.set(finite(data.x, 0.5), finite(data.y, GROUND_LEVEL), finite(data.z, 0.5))
+    this.player.yaw = finite(data.yaw, 0)
+    this.player.pitch = Math.max(-Math.PI / 2 + 0.001, Math.min(Math.PI / 2 - 0.001, finite(data.pitch, 0)))
+    this.player.vel.set(finite(data.velocityX, 0), finite(data.velocityY, 0), finite(data.velocityZ, 0))
+    this.player.flying = Boolean(data.flying) && this.multiplayerCanFly
+    this.player.sneaking = Boolean(data.sneaking)
+    this.player.onGround = Boolean(data.onGround)
+    gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
+  }
+
+  setMultiplayerBridge(bridge: MultiplayerBridge | null) {
+    this.multiplayerBridge = bridge
+    this.mech.setNetworkAuthority(!bridge || bridge.isHost)
+    this.mech.setNetworkBlockPublisher(
+      bridge ? (x, y, z, block, state, ownerKey) => bridge.blockChanged(x, y, z, block, state, ownerKey) : null,
+      bridge ? (x, y, z) => bridge.ownerForBlock(x, y, z) : null,
+    )
+    if (!bridge) {
+      this.multiplayerCanFly = true
+      this.multiplayerRules = null
+      this.setRemotePlayers([])
+    }
+  }
+
+  setMultiplayerRules(rules: MultiplayerRules, isHost: boolean) {
+    this.multiplayerRules = { ...rules }
+    this.multiplayerCanFly = isHost || rules.playersCanFly
+    if (!this.multiplayerCanFly && this.player.flying) {
+      this.player.flying = false
+      this.player.vel.y = Math.min(0, this.player.vel.y)
+      gameStore.set({ flying: false })
+      showToast('O anfitrião desativou o voo para os jogadores')
+    }
+  }
+
+  applyMultiplayerBlock(edit: BlockEdit) {
+    if (![edit.x, edit.y, edit.z, edit.block].every(Number.isInteger)) return
+    if (edit.y < 0 || edit.y >= WORLD_HEIGHT || edit.block < B.AIR || edit.block > 255) return
+    this.applyingNetworkBlock = true
+    try {
+      const oldId = this.world.getBlock(edit.x, edit.y, edit.z)
+      const oldState = this.world.getState(edit.x, edit.y, edit.z)
+      const nextState = edit.state && typeof edit.state === 'object' ? { ...edit.state } : undefined
+      const sameState = JSON.stringify(oldState ?? null) === JSON.stringify(nextState ?? null)
+      if (oldId === edit.block && sameState) return
+      if (oldId === edit.block) {
+        const key = posKey(edit.x, edit.y, edit.z)
+        if (nextState && Object.keys(nextState).length) this.world.states.set(key, nextState)
+        else this.world.states.delete(key)
+        this.mech.applyNetworkBlockState(edit.x, edit.y, edit.z, oldState, nextState)
+      } else {
+        this.world.setBlock(edit.x, edit.y, edit.z, edit.block, nextState)
+      }
+    } finally {
+      this.applyingNetworkBlock = false
+    }
+  }
+
+  applyMultiplayerWire(wire: NetworkWire) {
+    if (!wire?.id || typeof wire.a !== 'string' || typeof wire.b !== 'string') return
+    if (this.mech.wires.some((existing) => existing.networkId === wire.id)) return
+    const pa = new THREE.Vector3(wire.pa?.x, wire.pa?.y, wire.pa?.z)
+    const pb = new THREE.Vector3(wire.pb?.x, wire.pb?.y, wire.pb?.z)
+    if (![pa.x, pa.y, pa.z, pb.x, pb.y, pb.z].every(Number.isFinite)) return
+    this.mech.addWire(wire.a, pa, wire.ta, wire.b, pb, wire.tb)
+    const added = this.mech.wires[this.mech.wires.length - 1]
+    if (added) added.networkId = wire.id
+  }
+
+  removeMultiplayerWire(networkId: string) {
+    this.mech.removeWireByNetworkId(networkId)
+  }
+
+  /** Execute an interaction on a moving assembly only on the host's authoritative world. */
+  applyMultiplayerMovingAction(intent: MovingActionIntent) {
+    if (!this.multiplayerBridge?.isHost) return
+    if (!intent || typeof intent.playerKey !== 'string' || !intent.movingKey) return
+    const [sourceX, sourceY, sourceZ] = parseKey(intent.movingKey)
+    if (intent.action === 'break' && !this.multiplayerBridge.canBreakBlock(sourceX, sourceY, sourceZ, intent.playerKey)) {
+      showToast('A regra do servidor impede quebrar esse bloco')
+      return
+    }
+    const cell = this.mech.releaseMovingBlock(intent.movingKey, intent.movingKind)
+    if (!cell) {
+      showToast('Não foi possível estabilizar a máquina para aplicar a ação')
+      return
+    }
+    if (intent.action === 'break') {
+      this.world.setBlock(cell.x, cell.y, cell.z, B.AIR)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, B.AIR)
+      this.multiplayerBridge.wiresRemovedAt(posKey(cell.x, cell.y, cell.z))
+      this.particles.burst(cell.x, cell.y, cell.z, tileFor(cell.id, false))
+      sfx.break(METAL.has(cell.id))
+      return
+    }
+
+    const item = intent.item
+    if (item === 'wire') {
+      showToast('Conecte fios após a máquina ser estabilizada')
+      return
+    }
+    if (item === 'glue') {
+      this.mech.toggleGlue(cell.x, cell.y, cell.z, intent.face)
+      const state = this.world.getState(cell.x, cell.y, cell.z)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, this.world.getBlock(cell.x, cell.y, cell.z), state ? { ...state } : undefined)
+      return
+    }
+    if (cell.id === B.BATTERY_BOX && (item === 'battery' || item === null)) {
+      const result = this.mech.changeBatteries(cell.x, cell.y, cell.z, item === 'battery' ? 1 : -1)
+      if (result.after !== result.before) {
+        const state = this.world.getState(cell.x, cell.y, cell.z)
+        this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      }
+      return
+    }
+    if (cell.id === B.MOTOR && item === 'wheel') {
+      if (this.mech.mountWheel(cell.x, cell.y, cell.z)) {
+        const state = this.world.getState(cell.x, cell.y, cell.z)
+        this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      }
+      return
+    }
+    if (cell.id === B.MOTOR && (item === null || item === 'motor') && !intent.sneaking) {
+      this.mech.rotateMotor(cell.x, cell.y, cell.z)
+      const state = this.world.getState(cell.x, cell.y, cell.z)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      return
+    }
+
+    if (!item) return
+    const block = ITEMS[item].block
+    if (block === undefined) return
+    const direction = DIRS[intent.face]
+    if (!direction) return
+    const x = cell.x + direction[0]
+    const y = cell.y + direction[1]
+    const z = cell.z + direction[2]
+    if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
+    const state = block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
+    this.world.setBlock(x, y, z, block, state)
+    this.multiplayerBridge.blockChanged(x, y, z, block, state)
+    sfx.place(METAL.has(block))
+  }
+
+  setRemotePlayers(players: NetworkPlayer[]) {
+    const active = new Set<string>()
+    for (const player of players) {
+      if (!player?.id || !player.data || !player.skin) continue
+      active.add(player.id)
+      const skinSignature = JSON.stringify({ name: player.name, skin: player.skin })
+      let avatar = this.remoteAvatars.get(player.id)
+      if (!avatar || avatar.skinSignature !== skinSignature) {
+        if (avatar) {
+          this.scene.remove(avatar.group)
+          avatar.group.traverse((object) => {
+            if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
+              if (object instanceof THREE.Mesh) object.geometry.dispose()
+              const materials = Array.isArray(object.material) ? object.material : [object.material]
+              for (const material of materials) {
+                if ('map' in material && material.map) material.map.dispose()
+                material.dispose()
+              }
+            }
+          })
+        }
+        const group = this.createRemoteAvatar(player.name || 'Jogador', player.skin)
+        this.scene.add(group)
+        avatar = {
+          group,
+          targetPosition: new THREE.Vector3(player.data.x, player.data.y, player.data.z),
+          targetYaw: player.data.yaw || 0,
+          skinSignature,
+        }
+        group.position.copy(avatar.targetPosition)
+        group.rotation.y = avatar.targetYaw
+        this.remoteAvatars.set(player.id, avatar)
+      }
+      avatar.targetPosition.set(player.data.x, player.data.y, player.data.z)
+      avatar.targetYaw = Number.isFinite(player.data.yaw) ? player.data.yaw : 0
+    }
+    for (const [id, avatar] of this.remoteAvatars) {
+      if (active.has(id)) continue
+      this.scene.remove(avatar.group)
+      avatar.group.traverse((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
+          if (object instanceof THREE.Mesh) object.geometry.dispose()
+          const materials = Array.isArray(object.material) ? object.material : [object.material]
+          for (const material of materials) {
+            if ('map' in material && material.map) material.map.dispose()
+            material.dispose()
+          }
+        }
+      })
+      this.remoteAvatars.delete(id)
+    }
+  }
+
+  private createRemoteAvatar(name: string, skin: SkinConfig) {
+    const root = new THREE.Group()
+    root.name = `Remote player: ${name.slice(0, 20)}`
+    const part = (w: number, h: number, d: number, color: string, x: number, y: number, z: number) => {
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshBasicMaterial({ color }),
+      )
+      mesh.position.set(x, y, z)
+      root.add(mesh)
+      return mesh
+    }
+    const darken = (hex: string) => {
+      const c = new THREE.Color(hex)
+      c.multiplyScalar(0.72)
+      return `#${c.getHexString()}`
+    }
+    part(0.52, 0.68, 0.30, skin.shirt, 0, 1.04, 0)
+    part(0.23, 0.68, 0.24, skin.pants, -0.135, 0.36, 0)
+    part(0.23, 0.68, 0.24, skin.pants, 0.135, 0.36, 0)
+    part(0.24, 0.13, 0.29, skin.shoes, -0.135, 0.065, 0.025)
+    part(0.24, 0.13, 0.29, skin.shoes, 0.135, 0.065, 0.025)
+    part(0.18, 0.65, 0.22, skin.shirt, -0.36, 1.05, 0)
+    part(0.18, 0.65, 0.22, skin.shirt, 0.36, 1.05, 0)
+    part(0.48, 0.48, 0.42, skin.skin, 0, 1.66, 0)
+    part(0.50, 0.15, 0.44, skin.hair, 0, 1.91, -0.01)
+    part(0.51, 0.18, 0.44, skin.hair, 0, 1.77, -0.215)
+    if (skin.accessory === 'cap') {
+      part(0.54, 0.12, 0.52, skin.accessoryColor, 0, 1.96, 0)
+      part(0.58, 0.055, 0.40, skin.accessoryColor, 0, 1.89, 0.13)
+    } else if (skin.accessory === 'antenna') {
+      part(0.055, 0.24, 0.055, skin.accessoryColor, 0, 2.10, 0)
+      part(0.14, 0.14, 0.14, skin.accessoryColor, 0, 2.24, 0)
+    } else if (skin.accessory === 'headphones') {
+      part(0.075, 0.34, 0.12, skin.accessoryColor, -0.255, 1.72, 0)
+      part(0.075, 0.34, 0.12, skin.accessoryColor, 0.255, 1.72, 0)
+      part(0.54, 0.065, 0.065, darken(skin.accessoryColor), 0, 1.92, 0)
+    } else if (skin.accessory === 'glasses' || skin.accessory === 'goggles') {
+      const thickness = skin.accessory === 'goggles' ? 0.12 : 0.045
+      part(0.20, thickness, 0.035, skin.accessoryColor, -0.115, 1.70, 0.218)
+      part(0.20, thickness, 0.035, skin.accessoryColor, 0.115, 1.70, 0.218)
+      part(0.055, 0.035, 0.035, skin.accessoryColor, 0, 1.70, 0.22)
+    }
+    const label = document.createElement('canvas')
+    label.width = 256
+    label.height = 64
+    const ctx = label.getContext('2d')
+    if (ctx) {
+      ctx.clearRect(0, 0, label.width, label.height)
+      ctx.fillStyle = 'rgba(0,0,0,0.65)'
+      ctx.fillRect(8, 8, 240, 48)
+      ctx.font = 'bold 26px sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(name.slice(0, 20), 128, 32, 224)
+    }
+    const texture = new THREE.CanvasTexture(label)
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
+    tag.position.set(0, 2.38, 0)
+    tag.scale.set(2.1, 0.52, 1)
+    root.add(tag)
+    return root
+  }
+
+  private updateRemoteAvatars(dt: number) {
+    const blend = 1 - Math.exp(-Math.max(0, dt) * 14)
+    for (const avatar of this.remoteAvatars.values()) {
+      avatar.group.position.lerp(avatar.targetPosition, blend)
+      const delta = Math.atan2(Math.sin(avatar.targetYaw - avatar.group.rotation.y), Math.cos(avatar.targetYaw - avatar.group.rotation.y))
+      avatar.group.rotation.y += delta * blend
+    }
+  }
+
   resize() {
     const w = this.canvas.clientWidth || window.innerWidth
     const h = this.canvas.clientHeight || window.innerHeight
@@ -307,9 +676,14 @@ export class Engine {
   }
 
   dispose() {
+    this.physicsDebugLabel?.remove()
+    this.physicsDebugLabel = null
     cancelAnimationFrame(this.raf)
     for (const c of this.cleanup) c()
     this.releaseLock()
+    this.setMultiplayerBridge(null)
+    for (const avatar of this.remoteAvatars.values()) this.scene.remove(avatar.group)
+    this.remoteAvatars.clear()
     this.renderer.dispose()
     if (current === this) current = null
   }
@@ -402,6 +776,10 @@ export class Engine {
   }
 
   toggleFly() {
+    if (!this.player.flying && this.multiplayerBridge && !this.multiplayerCanFly) {
+      showToast('O anfitrião desativou o voo para os jogadores')
+      return
+    }
     this.player.flying = !this.player.flying
     if (this.player.flying) this.player.vel.y = 0
     gameStore.set({ flying: this.player.flying })
@@ -434,9 +812,35 @@ export class Engine {
   use() {
     unlockAudio()
     const item = this.selectedItem()
-    const hit = this.target
+    let hit = this.target
     this.swing = 0
     this.lastUseWasPlace = false
+
+    // Articulated bodies are authoritative on the host. Guests send an intent
+    // rather than disassembling their local visual replica independently.
+    if (hit?.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
+      if (item === 'wire') {
+        showToast('Conecte fios após a máquina ser estabilizada')
+        return
+      }
+      this.multiplayerBridge.movingAction({
+        action: 'use', movingKey: hit.moving.key, movingKind: hit.moving.kind,
+        face: hit.face, item, sneaking: this.player.sneaking,
+      })
+      return
+    }
+
+    // Dynamic bodies are interactive, but voxel placement/wiring still uses
+    // the world's integer grid. Resolve the source identity before editing.
+    if (hit?.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para editar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
+    }
 
     if (item === 'wire') {
       if (!hit) return
@@ -461,6 +865,8 @@ export class Engine {
         this.wireStart.key, this.wireStart.point, this.wireStart.terminal,
         key, terminal.point.clone(), terminal.terminal,
       )
+      const createdWire = this.mech.wires[this.mech.wires.length - 1]
+      if (createdWire) this.multiplayerBridge?.wireCreated(createdWire)
       this.wireStart = null
       sfx.zap()
       showToast('Fio conectado aos terminais')
@@ -471,6 +877,8 @@ export class Engine {
 
     if (item === 'glue') {
       const on = this.mech.toggleGlue(hit.x, hit.y, hit.z, hit.face)
+      const state = this.world.getState(hit.x, hit.y, hit.z)
+      this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
       sfx.glue()
       showToast(on ? 'Cola quente aplicada' : 'Cola removida')
       return
@@ -479,6 +887,8 @@ export class Engine {
     if (hit.id === B.BATTERY_BOX && (item === 'battery' || item === null)) {
       const r = this.mech.changeBatteries(hit.x, hit.y, hit.z, item === 'battery' ? 1 : -1)
       if (r.after !== r.before) {
+        const state = this.world.getState(hit.x, hit.y, hit.z)
+        this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
         sfx.battery(item === 'battery')
         showToast(`Pilhas: ${r.after}/3`)
       } else showToast(item === 'battery' ? 'Compartimento cheio (3/3)' : 'Compartimento vazio (0/3)')
@@ -487,12 +897,18 @@ export class Engine {
 
     if (hit.id === B.MOTOR && item === 'wheel') {
       const mounted = this.mech.mountWheel(hit.x, hit.y, hit.z)
+      if (mounted) {
+        const state = this.world.getState(hit.x, hit.y, hit.z)
+        this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
+      }
       showToast(mounted ? 'Roda encaixada no eixo do motor' : 'Este motor já tem uma roda encaixada')
       return
     }
 
     if (hit.id === B.MOTOR && (item === null || item === 'motor') && !this.player.sneaking) {
       const f = this.mech.rotateMotor(hit.x, hit.y, hit.z)
+      const state = this.world.getState(hit.x, hit.y, hit.z)
+      this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
       sfx.rotate()
       showToast(`Motor virado para: ${DIR_NAMES[f]}`)
       return
@@ -510,6 +926,7 @@ export class Engine {
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const state = block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
     this.world.setBlock(px, py, pz, block, state)
+    this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
     this.lastUseWasPlace = true
   }
@@ -517,7 +934,7 @@ export class Engine {
   breakBlock() {
     unlockAudio()
     this.swing = 0
-    const hit = this.target
+    let hit = this.target
     const item = this.selectedItem()
     if (item === 'wire' && this.wireStart) {
       this.wireStart = null
@@ -525,16 +942,44 @@ export class Engine {
       return
     }
     if (!hit) return
+    if (hit.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
+      const [x, y, z] = parseKey(hit.moving.key)
+      if (!this.multiplayerBridge.canBreakBlock(x, y, z)) {
+        showToast('Você só pode quebrar blocos que colocou neste servidor')
+        return
+      }
+      this.multiplayerBridge.movingAction({
+        action: 'break', movingKey: hit.moving.key, movingKind: hit.moving.kind,
+        face: hit.face, item, sneaking: this.player.sneaking,
+      })
+      return
+    }
     if (item === 'wire') {
       const removed = this.mech.removeWiresAt(posKey(hit.x, hit.y, hit.z))
       if (removed) {
+        this.multiplayerBridge?.wiresRemovedAt(posKey(hit.x, hit.y, hit.z))
         sfx.click()
         showToast(removed === 1 ? '1 fio removido' : `${removed} fios removidos`)
         return
       }
     }
+    if (hit.moving) {
+      const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
+      if (!cell) {
+        showToast('Não foi possível estabilizar esse conjunto para quebrar')
+        return
+      }
+      hit = { ...hit, ...cell, moving: undefined }
+      this.target = hit
+    }
     if (hit.y < GROUND_LEVEL) return
+    if (this.multiplayerBridge && !this.multiplayerBridge.canBreakBlock(hit.x, hit.y, hit.z)) {
+      showToast('Você só pode quebrar blocos que colocou neste servidor')
+      return
+    }
     this.world.setBlock(hit.x, hit.y, hit.z, B.AIR)
+    this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, B.AIR)
+    this.multiplayerBridge?.wiresRemovedAt(posKey(hit.x, hit.y, hit.z))
     this.particles.burst(hit.x, hit.y, hit.z, tileFor(hit.id, false))
     sfx.break(METAL.has(hit.id))
   }
@@ -557,6 +1002,10 @@ export class Engine {
   /* ---------------- Raycast ---------------- */
 
   raycast(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number): Hit | null {
+    // Dynamic body hits compete by distance with the static voxel DDA. This
+    // makes a moving rotor occlude blocks behind it instead of being ignored.
+    const moving = this.mech.raycastMoving(origin, dir, maxDist)
+    const limit = moving ? moving.dist : maxDist
     let ix = Math.floor(origin.x)
     let iy = Math.floor(origin.y)
     let iz = Math.floor(origin.z)
@@ -570,12 +1019,12 @@ export class Engine {
     let tmy = sy > 0 ? (iy + 1 - origin.y) * tdy : sy < 0 ? (origin.y - iy) * tdy : Number.POSITIVE_INFINITY
     let tmz = sz > 0 ? (iz + 1 - origin.z) * tdz : sz < 0 ? (origin.z - iz) * tdz : Number.POSITIVE_INFINITY
     let t = 0
-    for (let i = 0; i < 64 && t <= maxDist; i++) {
+    for (let i = 0; i < 64 && t <= limit; i++) {
       if (iy >= 0 && iy < WORLD_HEIGHT) {
         const id = this.world.getBlock(ix, iy, iz)
         if (id !== B.AIR) {
-          const hit = this.rayBox(origin, dir, ix, iy, iz, id, maxDist)
-          if (hit) return hit
+          const hit = this.rayBox(origin, dir, ix, iy, iz, id, limit)
+          if (hit && (!moving || hit.dist <= moving.dist)) return hit
         }
       }
       if (tmx < tmy && tmx < tmz) {
@@ -592,7 +1041,7 @@ export class Engine {
         tmz += tdz
       }
     }
-    return null
+    return moving as Hit | null
   }
 
   private rayBox(o: THREE.Vector3, d: THREE.Vector3, x: number, y: number, z: number, id: number, maxDist: number): Hit | null {
@@ -798,6 +1247,8 @@ export class Engine {
         if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
           gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
         this.mech.update(dt)
+        // Player-vs-machine contacts use the latest host snapshot on every client.
+        // The client moves only its local player; it never advances the shared machine physics.
         if (playing) this.mech.resolvePlayerCollision(this.player, dt)
       }
       this.updateCamera(dt)
@@ -809,10 +1260,18 @@ export class Engine {
       this.updateHint()
     }
 
+    this.updateRemoteAvatars(frozen ? 0 : dt)
     this.sky.mesh.position.copy(this.camera.position)
     this.sky.material.uniforms.uTime.value = this.elapsed
     this.updateChunks(centerX, centerZ)
     this.particles.update(frozen ? 0 : dt, this.camera)
+    if (this.physicsDebugLabel) {
+      const hit = this.target
+      const target = hit
+        ? `\nray target: id=${hit.id} cell=(${hit.x},${hit.y},${hit.z}) dist=${hit.dist.toFixed(2)} moving=${hit.moving?.kind ?? 'static'} source=${hit.moving?.key ?? '-'}`
+        : '\nray target: none'
+      this.physicsDebugLabel.textContent = this.mech.physicsDebugText() + target
+    }
 
     this.renderer.clear()
     this.renderer.render(this.scene, this.camera)

@@ -6,6 +6,8 @@ import { gameStore, useGame } from '@/lib/game/store'
 import { Hud } from '@/components/game/hud'
 import { Inventory } from '@/components/game/inventory'
 import { MobileControls } from '@/components/game/mobile-controls'
+import { MultiplayerPanel } from '@/components/game/multiplayer-panel'
+import { type MultiplayerClient } from '@/lib/game/multiplayer'
 
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -14,6 +16,8 @@ export default function Page() {
   const returnScreen = useGame((s) => s.returnScreen)
   const settings = useGame((s) => s.settings)
   const [bootError, setBootError] = useState<string | null>(null)
+  const [multiplayerOpen, setMultiplayerOpen] = useState(false)
+  const [multiplayerSession, setMultiplayerSession] = useState<MultiplayerClient | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -24,6 +28,11 @@ export default function Page() {
     let engine: Engine
     try {
       engine = new Engine(canvas)
+      // A diagnostic URL skips the title menu so physics regressions can be
+      // tested deterministically. Normal gameplay still starts from the menu.
+      if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+        gameStore.set({ screen: 'playing' })
+      }
     } catch (error) {
       setBootError(error instanceof Error ? error.message : 'Não foi possível iniciar o renderizador 3D.')
       return
@@ -69,6 +78,7 @@ export default function Page() {
           </div>
           <div className="mt-2 flex w-full max-w-xs flex-col gap-3">
             <button className="mc-btn" onClick={startGame}>Jogar</button>
+            <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multiplayer</button>
             <button className="mc-btn" onClick={() => openSubscreen('controls')}>Controles</button>
             <button className="mc-btn" onClick={() => openSubscreen('options')}>Opções</button>
           </div>
@@ -80,16 +90,26 @@ export default function Page() {
         <>
           <Hud />
           {isTouch && <MobileControls />}
-          {!isTouch && (
+          <div className="pointer-events-auto absolute right-3 top-3 z-20 flex gap-2">
             <button
               type="button"
-              aria-label="Pausar jogo"
-              onClick={pauseGame}
-              className="pointer-events-auto absolute right-3 top-3 z-20 border-2 border-black bg-black/40 px-3 py-2 text-sm text-white hover:bg-black/60"
+              aria-label="Abrir multiplayer"
+              onClick={() => setMultiplayerOpen(true)}
+              className="border-2 border-black bg-black/55 px-3 py-2 text-sm text-white hover:bg-black/75"
             >
-              Pausar
+              Multiplayer
             </button>
-          )}
+            {!isTouch && (
+              <button
+                type="button"
+                aria-label="Pausar jogo"
+                onClick={pauseGame}
+                className="border-2 border-black bg-black/40 px-3 py-2 text-sm text-white hover:bg-black/60"
+              >
+                Pausar
+              </button>
+            )}
+          </div>
         </>
       )}
 
@@ -100,6 +120,7 @@ export default function Page() {
           <h1 className="font-display mc-shadow text-2xl sm:text-3xl">JOGO PAUSADO</h1>
           <div className="mt-3 flex w-full max-w-xs flex-col gap-3">
             <button className="mc-btn" onClick={startGame}>Continuar</button>
+            <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multiplayer</button>
             <button className="mc-btn" onClick={() => openSubscreen('controls')}>Controles</button>
             <button className="mc-btn" onClick={() => openSubscreen('options')}>Opções</button>
             <button className="mc-btn" onClick={() => gameStore.set({ screen: 'title' })}>Voltar ao menu</button>
@@ -166,6 +187,13 @@ export default function Page() {
           </div>
         </section>
       )}
+
+      <MultiplayerPanel
+        open={multiplayerOpen}
+        session={multiplayerSession}
+        onSessionChange={setMultiplayerSession}
+        onClose={() => setMultiplayerOpen(false)}
+      />
     </main>
   )
 }
