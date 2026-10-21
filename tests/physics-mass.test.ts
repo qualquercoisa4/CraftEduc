@@ -183,6 +183,9 @@ async function main() {
   putTestBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
   putTestBlock(4, 5, 2, B.MOTOR, { facing: 0, glue: (1 << 0) | (1 << 1) | (1 << 2) })
   putTestBlock(4, 6, 2, B.SWITCH, { switchOn: true, glue: 1 << 3 })
+  // A second independent load verifies both poles of the switch, not just pole 1.
+  const secondMotorKey = posKey(7, 5, 2)
+  putTestBlock(7, 5, 2, B.MOTOR, { facing: 2 })
   putTestBlock(5, 5, 2, B.WOOD, { glue: (1 << 1) | (1 << 2) })
   putTestBlock(5, 6, 2, B.WOOD, { glue: (1 << 3) | (1 << 2) })
   putTestBlock(5, 7, 2, B.WOOD, { glue: 1 << 3 })
@@ -222,6 +225,9 @@ async function main() {
     makeTestWire(102, baseKey, 'face:1', switchKey, 'in1'),
     makeTestWire(103, batteryKey, '-', motorKey, 'B'),
     makeTestWire(104, switchKey, 'out1', motorKey, 'A'),
+    makeTestWire(105, batteryKey, '+', switchKey, 'in2'),
+    makeTestWire(106, switchKey, 'out2', secondMotorKey, 'A'),
+    makeTestWire(107, secondMotorKey, 'B', batteryKey, '-'),
   ] as never
 
   // Simulate the real powered assembly transition. tryAssemble removes all
@@ -253,10 +259,12 @@ async function main() {
   // Verify the switch can interrupt and restore current while inside a moving chassis.
   assert.equal(mechanics.toggleSwitchAtKey(switchKey), false, 'switch should turn off')
   recomputePower()
-  assert.equal(mechanics.motorPower.get(motorKey) ?? 0, 0, 'an open switch must interrupt motor power')
+  assert.equal(mechanics.motorPower.get(motorKey) ?? 0, 0, 'an open switch must interrupt pole 1')
+  assert.equal(mechanics.motorPower.get(secondMotorKey) ?? 0, 0, 'an open switch must interrupt pole 2')
   assert.equal(mechanics.toggleSwitchAtKey(switchKey), true, 'switch should turn on again')
   recomputePower()
-  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7, 'a closed switch must restore motor power')
+  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7, 'a closed switch must restore pole 1 power')
+  assert.ok((mechanics.motorPower.get(secondMotorKey) ?? 0) > 2.7, 'a closed switch must restore pole 2 power')
 
   // Exercise the production frame update for two seconds: the motor must keep
   // applying torque, the chassis/rotor must stay assembled, and no re-grid
