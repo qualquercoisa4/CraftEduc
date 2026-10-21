@@ -1246,41 +1246,99 @@ export class Mechanics {
   resolvePlayerCollision(player: Player, dt: number) {
     const p = player.pos
     const halfW = 0.3
-    const h = player.height
+    const height = player.height
+
+    const collideBlock = (
+      center: THREE.Vector3,
+      rotation: THREE.Quaternion,
+      pivot: THREE.Vector3,
+      linear: THREE.Vector3,
+      angular: THREE.Vector3,
+    ) => {
+      const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(rotation)
+      const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(rotation)
+      const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation)
+      const hx = 0.5 * (Math.abs(ex.x) + Math.abs(ey.x) + Math.abs(ez.x))
+      const hy = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
+      const hz = 0.5 * (Math.abs(ex.z) + Math.abs(ey.z) + Math.abs(ez.z))
+      const minX = center.x - hx, maxX = center.x + hx
+      const minY = center.y - hy, maxY = center.y + hy
+      const minZ = center.z - hz, maxZ = center.z + hz
+      const px0 = p.x - halfW, px1 = p.x + halfW
+      const py0 = p.y, py1 = p.y + height
+      const pz0 = p.z - halfW, pz1 = p.z + halfW
+      if (!(px0 < maxX && px1 > minX && py0 < maxY && py1 > minY && pz0 < maxZ && pz1 > minZ)) return
+
+      const penetrations = [
+        { amount: px1 - minX, axis: 'x', sign: 1 },
+        { amount: maxX - px0, axis: 'x', sign: -1 },
+        { amount: py1 - minY, axis: 'y', sign: -1 },
+        { amount: maxY - py0, axis: 'y', sign: 1 },
+        { amount: pz1 - minZ, axis: 'z', sign: 1 },
+        { amount: maxZ - pz0, axis: 'z', sign: -1 },
+      ]
+      const penetration = penetrations.reduce((best, item) => item.amount < best.amount ? item : best)
+      const depth = Math.max(0, penetration.amount) + 0.003
+      if (penetration.axis === 'x') {
+        p.x += penetration.sign * depth
+        player.vel.x = penetration.sign > 0 ? Math.max(player.vel.x, linear.x) : Math.min(player.vel.x, linear.x)
+      } else if (penetration.axis === 'z') {
+        p.z += penetration.sign * depth
+        player.vel.z = penetration.sign > 0 ? Math.max(player.vel.z, linear.z) : Math.min(player.vel.z, linear.z)
+      } else if (penetration.sign > 0) {
+        p.y += depth
+        player.vel.y = Math.max(player.vel.y, linear.y)
+        player.onGround = true
+        // A standing player inherits a small part of the body's horizontal
+        // velocity, so moving platforms and rotating arms can carry the player.
+        player.vel.x += linear.x * 0.35
+        player.vel.z += linear.z * 0.35
+      } else {
+        p.y -= depth
+        player.vel.y = Math.min(player.vel.y, linear.y)
+      }
+
+      const tangential = angular.clone().cross(center.clone().sub(pivot)).add(linear)
+      player.vel.x += tangential.x * Math.min(1, dt * 2.5)
+      player.vel.y += tangential.y * Math.min(1, dt * 2.5)
+      player.vel.z += tangential.z * Math.min(1, dt * 2.5)
+    }
+
     for (const c of this.contraptions.values()) {
-      const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
-      const pivot = c.group.position.clone()
-      const ex=new THREE.Vector3(1,0,0).applyQuaternion(q)
-      const ey=new THREE.Vector3(0,1,0).applyQuaternion(q)
-      const ez=new THREE.Vector3(0,0,1).applyQuaternion(q)
-      const hx=0.5*(Math.abs(ex.x)+Math.abs(ey.x)+Math.abs(ez.x))
-      const hy=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
-      const hz=0.5*(Math.abs(ex.z)+Math.abs(ey.z)+Math.abs(ez.z))
-      for (const b of c.blocks) {
-        const center=new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot)
-        const minX=center.x-hx,maxX=center.x+hx,minY=center.y-hy,maxY=center.y+hy,minZ=center.z-hz,maxZ=center.z+hz
-        const px0=p.x-halfW,px1=p.x+halfW,py0=p.y,py1=p.y+h,pz0=p.z-halfW,pz1=p.z+halfW
-        if (!(px0<maxX && px1>minX && py0<maxY && py1>minY && pz0<maxZ && pz1>minZ)) continue
-        const penL=px1-minX, penR=maxX-px0, penD=py1-minY, penU=maxY-py0, penB=pz1-minZ, penF=maxZ-pz0
-        const minPen=Math.min(penL,penR,penD,penU,penB,penF)
-        if (minPen===penU) {
-          p.y += penU + 0.002
-          player.vel.y=Math.max(player.vel.y, Math.max(0,c.speed * 0.15))
-          player.onGround=true
-        } else if (minPen===penD) {
-          p.y -= penD + 0.002
-          player.vel.y=Math.min(player.vel.y,0)
-        } else if (minPen===penL) { p.x += penL+0.002; player.vel.x=Math.max(player.vel.x, c.speed*0.2) }
-        else if (minPen===penR) { p.x -= penR+0.002; player.vel.x=Math.min(player.vel.x, -c.speed*0.2) }
-        else if (minPen===penB) { p.z += penB+0.002; player.vel.z=Math.max(player.vel.z, c.speed*0.2) }
-        else { p.z -= penF+0.002; player.vel.z=Math.min(player.vel.z, -c.speed*0.2) }
-        // Add a small tangential impulse so a side-sweeping arm pushes rather
-        // than merely teleporting the player to the nearest non-overlap point.
-        const rel=center.clone().sub(pivot)
-        const tangential=new THREE.Vector3().crossVectors(c.axis,rel).multiplyScalar(c.speed)
-        player.vel.x += tangential.x * Math.min(1,dt*3)
-        player.vel.y += tangential.y * Math.min(1,dt*3)
-        player.vel.z += tangential.z * Math.min(1,dt*3)
+      const rotorT = c.rotorBody.translation(), rotorR = c.rotorBody.rotation()
+      const rotorPivot = new THREE.Vector3(rotorT.x, rotorT.y, rotorT.z)
+      const rotorQ = new THREE.Quaternion(rotorR.x, rotorR.y, rotorR.z, rotorR.w)
+      const rotorV = c.rotorBody.linvel(), rotorW = c.rotorBody.angvel()
+      const rotorLinear = new THREE.Vector3(rotorV.x, rotorV.y, rotorV.z)
+      const rotorAngular = new THREE.Vector3(rotorW.x, rotorW.y, rotorW.z)
+      for (const block of c.blocks) {
+        const center = new THREE.Vector3(...block.rel).applyQuaternion(rotorQ).add(rotorPivot)
+        collideBlock(center, rotorQ, rotorPivot, rotorLinear, rotorAngular)
+      }
+
+      const chassisT = c.chassisBody.translation(), chassisR = c.chassisBody.rotation()
+      const chassisPivot = new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z)
+      const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
+      const chassisV = c.chassisBody.linvel(), chassisW = c.chassisBody.angvel()
+      const chassisLinear = new THREE.Vector3(chassisV.x, chassisV.y, chassisV.z)
+      const chassisAngular = new THREE.Vector3(chassisW.x, chassisW.y, chassisW.z)
+      collideBlock(chassisPivot.clone(), chassisQ, chassisPivot, chassisLinear, chassisAngular)
+      for (const block of c.chassisBlocks) {
+        const center = new THREE.Vector3(...block.rel).applyQuaternion(chassisQ).add(chassisPivot)
+        collideBlock(center, chassisQ, chassisPivot, chassisLinear, chassisAngular)
+      }
+    }
+
+    for (const body of this.fallingBodies) {
+      const t = body.body.translation(), r = body.body.rotation()
+      const pivot = new THREE.Vector3(t.x, t.y, t.z)
+      const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+      const v = body.body.linvel(), w = body.body.angvel()
+      const linear = new THREE.Vector3(v.x, v.y, v.z)
+      const angular = new THREE.Vector3(w.x, w.y, w.z)
+      for (const block of body.blocks) {
+        const center = block.localOrigin.clone().applyQuaternion(rotation).add(pivot)
+        collideBlock(center, rotation, pivot, linear, angular)
       }
     }
   }
