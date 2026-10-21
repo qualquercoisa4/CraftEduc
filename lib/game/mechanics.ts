@@ -368,6 +368,17 @@ export class Mechanics {
       }
     }
 
+    // Motors inside moving contraptions are no longer present in the static
+    // voxel grid, but remain electrical devices at their original circuit key.
+    for (const [key, entry] of this.models) {
+      if (entry.type !== 'motor' || this.world.getBlock(...parseKey(key)) === B.MOTOR) continue
+      if (![...this.contraptions.values()].some((c) => c.motorKey === key)) continue
+      const a = node(key, 'A')
+      const b = node(key, 'B')
+      allNodes.add(a); allNodes.add(b)
+      devices.push({ key, id: B.MOTOR, a, b })
+    }
+
     // Create roots for terminals that have not yet been connected by a wire.
     for (const n of allNodes) find(n)
     const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
@@ -476,6 +487,9 @@ export class Mechanics {
     const byKey = new Map<string, CBlock>()
     const relMap = new Map<string, number>()
 
+    // The motor is the root of the glued assembly, not a stationary anchor.
+    // Include it in the same rigid body as every recursively glued block.
+    visited.add(motorKey)
     for (const k of visited) {
       const [x, y, z] = parseKey(k)
       const id = this.world.getBlock(x, y, z)
@@ -506,7 +520,9 @@ export class Mechanics {
       if (model) {
         model.model.group.position.sub(pivot)
         group.add(model.model.group)
-        this.models.delete(b.origKey)
+        // Keep the motor's logical entry so power and motor status remain
+        // addressable while its rendered model travels with the assembly.
+        if (b.id !== B.MOTOR) this.models.delete(b.origKey)
       }
       const glow = this.glows.get(b.origKey)
       if (glow) {
@@ -986,7 +1002,7 @@ export class Mechanics {
 
     for (const c of [...this.contraptions.values()]) {
       const [mx, my, mz] = c.motorPos
-      const motorAlive = this.world.getBlock(mx, my, mz) === B.MOTOR
+      const motorAlive = this.contraptions.has(c.motorKey) && this.models.get(c.motorKey)?.type === 'motor'
       const power = motorAlive ? (this.motorPower.get(c.motorKey) ?? 0) : 0
       if (!motorAlive) {
         this.disassemble(c, Math.round(c.angle / HALF_PI) % 4)
