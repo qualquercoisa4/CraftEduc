@@ -454,14 +454,12 @@ export class Mechanics {
     const [mx, my, mz] = parseKey(motorKey)
     const facing = this.world.getState(mx, my, mz)?.facing ?? 2
     const d = DIRS[facing]
-    const sx = mx + d[0]
-    const sy = my + d[1]
-    const sz = mz + d[2]
-    if (this.world.getBlock(sx, sy, sz) === B.AIR) return 'idle'
-    if (!this.isGlued(mx, my, mz, facing)) return 'idle'
-
-    const visited = new Set<string>([posKey(sx, sy, sz)])
-    const queue: [number, number, number][] = [[sx, sy, sz]]
+    // Discover the entire glue-connected component starting at the motor.
+    // Do not seed only the block in front of the motor: chassis blocks are
+    // often glued to its side or underside and must travel with it too.
+    const visited = new Set<string>([motorKey])
+    const queue: [number, number, number][] = [[mx, my, mz]]
+    let hasAttachedBlock = false
     while (queue.length) {
       const [x, y, z] = queue.shift()!
       if (y < GROUND_LEVEL) return 'stalled'
@@ -472,13 +470,15 @@ export class Mechanics {
         const ny = y + n[1]
         const nz = z + n[2]
         const k = posKey(nx, ny, nz)
-        if (visited.has(k) || k === motorKey) continue
+        if (visited.has(k)) continue
         if (this.world.getBlock(nx, ny, nz) === B.AIR) continue
         if (!this.isGlued(x, y, z, i)) continue
         visited.add(k)
         queue.push([nx, ny, nz])
+        if (k !== motorKey) hasAttachedBlock = true
       }
     }
+    if (!hasAttachedBlock) return 'idle'
 
     const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
     const group = new THREE.Group()
@@ -487,9 +487,7 @@ export class Mechanics {
     const byKey = new Map<string, CBlock>()
     const relMap = new Map<string, number>()
 
-    // The motor is the root of the glued assembly, not a stationary anchor.
-    // Include it in the same rigid body as every recursively glued block.
-    visited.add(motorKey)
+    // The motor and all recursively connected chassis/arm blocks are one body.
     for (const k of visited) {
       const [x, y, z] = parseKey(k)
       const id = this.world.getBlock(x, y, z)
