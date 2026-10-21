@@ -711,7 +711,7 @@ export class Mechanics {
     return 'driving'
   }
 
-  private disassemble(c: Contraption, quarterTurns: number) {
+  private disassemble(c: Contraption, quarterTurns: number): Map<string, string> | null {
     const q = new THREE.Quaternion().setFromAxisAngle(c.axis, quarterTurns * HALF_PI)
     const rotorTranslation = c.rotorBody.translation()
     const chassisTranslation = c.chassisBody.translation()
@@ -756,7 +756,7 @@ export class Mechanics {
     // would intersect something. Lift the whole assembly as one unit.
     const destinationKeys = new Set<string>()
     for (const p of placements) destinationKeys.add(posKey(p.x, p.y, p.z))
-    if (destinationKeys.size !== placements.length) return
+    if (destinationKeys.size !== placements.length) return null
     let shiftY = Math.max(0, GROUND_LEVEL - Math.min(...placements.map((p) => p.y)))
     const fits = (offset: number) => {
       if (placements.some((p) => p.y + offset >= WORLD_HEIGHT)) return false
@@ -769,7 +769,7 @@ export class Mechanics {
       c.chassisBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
       c.rotorBody.setLinvel({ x: 0, y: 0, z: 0 }, true)
       c.joint.configureMotorVelocity(0, 1)
-      return
+      return null
     }
     for (const p of placements) p.y += shiftY
 
@@ -852,6 +852,7 @@ export class Mechanics {
     this.powerDirty = true
     this.mechDirty = true
     this.physicsDirty = true
+    return keyMap
   }
 
   /**
@@ -985,7 +986,7 @@ export class Mechanics {
     }
   }
 
-  private landBody(body: FallingBody) {
+  private landBody(body: FallingBody): Map<string, string> | null {
     const translation = body.body.translation()
     const rotation = body.body.rotation()
     const pivot = new THREE.Vector3(translation.x, translation.y, translation.z)
@@ -1018,13 +1019,13 @@ export class Mechanics {
     })
 
     const keys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
-    if (keys.size !== placements.length) return false
+    if (keys.size !== placements.length) return null
     let shiftY = Math.max(0, GROUND_LEVEL - Math.min(...placements.map((p) => p.y)))
     const fits = (offset: number) => placements.every((p) =>
       p.y + offset < WORLD_HEIGHT && this.world.getBlock(p.x, p.y + offset, p.z) === B.AIR)
     let attempts = 0
     while (!fits(shiftY) && attempts < 24) { shiftY++; attempts++ }
-    if (!fits(shiftY)) return false
+    if (!fits(shiftY)) return null
     for (const p of placements) p.y += shiftY
 
     body.group.updateMatrixWorld(true)
@@ -1089,7 +1090,7 @@ export class Mechanics {
     this.powerDirty = true
     this.mechDirty = true
     this.physicsDirty = true
-    return true
+    return keyMap
   }
 
   /* ---------------- Frame update ---------------- */
