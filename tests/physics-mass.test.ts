@@ -170,7 +170,11 @@ async function main() {
   const makeTestWire = (id: number, a: string, ta: string, b: string, tb: string) => {
     const pa = new THREE.Vector3(2.5, 6.5, 2.5)
     const pb = new THREE.Vector3(4.5, 5.5, 2.5)
-    return { id, a, ta, b, tb, pa, pb, mesh: new THREE.Group() }
+    const mesh = new THREE.Group()
+    mesh.add(new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial()))
+    mesh.add(new THREE.Object3D())
+    mesh.add(new THREE.Object3D())
+    return { id, a, ta, b, tb, pa, pb, mesh }
   }
   mechanics.wires = [
     makeTestWire(101, batteryKey, '+', baseKey, 'face:0'),
@@ -203,6 +207,22 @@ async function main() {
   }
   assert.equal(mechanics.contraptions.has(motorKey), true,
     'a powered assembly must not leave the active-contraption state during circuit refresh')
+
+  // Exercise the production frame update for two seconds: the motor must keep
+  // applying torque, the chassis/rotor must stay assembled, and no re-grid
+  // snap may repeatedly teleport the mechanism upward.
+  ;(mechanics as unknown as { fallingBodies: unknown[] }).fallingBodies.length = 0
+  ;(mechanics as unknown as { fallingKeys: Set<string> }).fallingKeys.clear()
+  const initialChassisY = machine.chassisBody.translation().y
+  for (let step = 0; step < 120; step++) mechanics.update(1 / 60)
+  assert.equal(mechanics.contraptions.has(motorKey), true,
+    'the powered motor must remain assembled across 120 physics frames')
+  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7,
+    'the motor must remain powered during physical simulation')
+  const finalChassisY = machine.chassisBody.translation().y
+  assert.ok(Number.isFinite(finalChassisY), 'chassis height must remain finite')
+  assert.ok(finalChassisY < initialChassisY + 2,
+    `chassis must not drift upward indefinitely (start=${initialChassisY.toFixed(3)}, end=${finalChassisY.toFixed(3)})`)
 
   for (const wire of mechanics.wires) {
     wire.mesh.traverse((obj) => {
