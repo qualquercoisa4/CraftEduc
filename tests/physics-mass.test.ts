@@ -101,7 +101,7 @@ async function main() {
 
   // Regression: a powered, off-centre mounted wheel must propel the chassis and induce yaw.
   const tractionKey = posKey(20, 4, 20)
-  blockMap.set(posKey(20, 3, 20), B.ROBOTICS)
+  blockMap.set(posKey(21, 3, 20), B.ROBOTICS)
   const tractionBody = mechanicsPhysics.createRigidBody(
     [{ x: 20, y: 4, z: 20, id: B.MOTOR }],
     new THREE.Vector3(20.5, 4.5, 20.5),
@@ -128,7 +128,7 @@ async function main() {
     `off-centre traction must cause yaw (qy=${tractionRotation.y.toFixed(3)})`)
   mechanicsPhysics.removeRigidBody(tractionBody)
   ;(mechanics as unknown as { mountedWheels: Map<string, unknown> }).mountedWheels.delete(tractionKey)
-  blockMap.delete(posKey(20, 3, 20))
+  blockMap.delete(posKey(21, 3, 20))
 
   // The support occupies y=4, the static aluminum target sits at y=5,
   // and the wooden pusher touches its left side at x=1.
