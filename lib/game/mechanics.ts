@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { RigidPhysics } from './rigid-physics'
-import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
+import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
   type BatteryBoxModel,
@@ -1079,33 +1079,6 @@ export class Mechanics {
     this.mechDirty = true
     this.physicsDirty = true
     return true
-  }
-
-  private contraptionsHasBlock(key: string) {
-    for (const c of this.contraptions.values()) if (c.byKey.has(key)) return true
-    return false
-  }
-
-  private landBody(body: FallingBody) {
-    const occupied = new Set<string>()
-    for (const b of body.blocks) {
-      const x = Math.round(b.x), z = Math.round(b.z)
-      let y = Math.max(GROUND_LEVEL, Math.floor(b.y))
-      while (y > GROUND_LEVEL && this.world.getBlock(x, y - 1, z) === B.AIR) y--
-      while (this.world.getBlock(x, y, z) !== B.AIR && y < 63) y++
-      const key = posKey(x, y, z)
-      if (occupied.has(key)) continue
-      occupied.add(key)
-      this.suppress = true
-      this.world.setBlock(x, y, z, b.id, b.state)
-      this.suppress = false
-      this.fallingKeys.delete(b.originKey)
-      b.mesh.geometry.dispose()
-      this.scene.remove(b.mesh)
-    }
-    this.rebuildGlue()
-    this.powerDirty = true
-    this.mechDirty = true
   }
 
   /* ---------------- Frame update ---------------- */
