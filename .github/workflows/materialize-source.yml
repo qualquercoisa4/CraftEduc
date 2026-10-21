@@ -16,12 +16,61 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: true
-      - name: Decode and restore project files
+      - name: Validate and restore project files
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/crafteduc
+          declare -A expected=(
+            [part-01.b64]=064ecea17d0f66eee0850227e3483be308dbc4cf
+            [part-02.b64]=298e78cb9f84da625e6704e1d30fa6092720bfa2
+            [part-03.b64]=952b0f77f51b4c26b2fcdcf3a09028711e642f3c
+            [part-04.b64]=7c06595e51ab015590304d551c8d4fd6bc8b78f2
+            [part-05.b64]=35aa3199ab9b2dde395512addd89bc8018b752e0
+            [part-06.b64]=441ebfa778a452a1c41e9c080aa1fecadb34002c
+            [part-07.b64]=bb5b21d485486af9bad5edeedb51150ef6661297
+            [part-08.b64]=b6a1dfd0328aab6de69f6ecec402f68fe96a0e54
+            [part-09.b64]=5987821793dfac6752da0e89bd9a5ae1cb55a705
+            [part-10.b64]=5ece4a49ff3ecc19b92aaedab11bb68715bfda95
+            [part-11.b64]=c7ebe37f85e2c4e033b36a57932a6c7982d7e666
+            [part-12.b64]=95211dc9cb8bcb1c2f7c55864beace711c1adb73
+            [part-13.b64]=c3bf0da6a8d22b9d0c56db3e60f9aa127e8a61c2
+            [part-14.b64]=64c6c6a0dd11c4dbbcfeacbdc8687bcd5239b8cc
+            [part-15.b64]=d53c4fc83c5072c80c27074122b8f5665d32d8e5
+            [part-16.b64]=a8b291bb389b877a5465b1fa540b615622e4304c
+            [part-17.b64]=328b7aa52ea2d5d6b9ed66c3d5e6c15525db56ec
+            [part-18.b64]=7f224f9d9e3c84305a5d6deed8e4ce7f5f5944aa
+            [part-19.b64]=31780aee7680c568b71dad215f0ad4994e8038db
+            [part-20.b64]=cfa532d749a5c2ee3f4e22317485f04436c584fd
+            [part-21.b64]=514bb139b31c94746c8959e341b64edf072d539c
+            [part-22.b64]=035f9590d40afd026edd6f6b0d69920cae744a57
+            [part-23.b64]=96ec566f6dee68f08f1454db61e5f9178b07d3f8
+            [part-24.b64]=a298951a2fd59eaac51c6195de85c2ba83cbe9fa
+            [part-25.b64]=bce334c8ce12beaf37755fa739e76b3f159b8190
+            [part-26.b64]=252c73207af05672a044bd4bea8fec20f9ae384c
+            [part-27.b64]=531729d23c1e8312efe2f73a74dea6565b45905e
+            [part-28.b64]=3836f9aa5f01c168adf8669fc4fd6b3ad2138873
+            [part-29.b64]=37706a4653bcf962ea429ad82163ced2b3ac9e95
+            [part-30.b64]=83c76d29374baebdfe7a286ced0f202b2e6b07b9
+            [part-31.b64]=8e3afb85dcaca17d965c94f6b3cbb51d55a6556a
+          )
+          bad=0
+          for f in uploads/part-*.b64; do
+            name="${f##*/}"
+            got="$(sha1sum "$f" | cut -d' ' -f1)"
+            size="$(wc -c < "$f" | tr -d ' ')"
+            if [[ "$got" != "${expected[$name]:-missing}" ]]; then
+              echo "CHUNK_MISMATCH $name sha1=$got expected=${expected[$name]:-missing} size=$size"
+              bad=1
+            else
+              echo "CHUNK_OK $name size=$size"
+            fi
+          done
+          [[ "$bad" -eq 0 ]] || exit 17
           cat uploads/part-*.b64 | base64 --decode > /tmp/crafteduc/source.tar.xz
+          actual_archive="$(sha1sum /tmp/crafteduc/source.tar.xz | cut -d' ' -f1)"
+          echo "ARCHIVE_SHA1 $actual_archive"
+          [[ "$actual_archive" == "dc6c18cac07bde568bca64fe7c4d3231112354ea" ]]
+          tar -tJf /tmp/crafteduc/source.tar.xz >/dev/null
           tar -xJf /tmp/crafteduc/source.tar.xz -C .
           rm -rf uploads
           git config user.name "github-actions[bot]"
