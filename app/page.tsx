@@ -60,7 +60,7 @@ export default function Page() {
       {bootError && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black p-6 text-center">
           <div className="max-w-lg">
-            <h1 className="font-display text-xl">CRAFTEDUC</h1>
+            <h1 className="font-display text-xl">ROBOEDUCCRAFT</h1>
             <p className="mt-4 text-sm text-red-200">Não foi possível iniciar o jogo 3D neste dispositivo.</p>
             <p className="mt-2 break-words text-xs text-white/70">{bootError}</p>
           </div>
@@ -68,21 +68,27 @@ export default function Page() {
       )}
 
       {!bootError && screen === 'title' && (
-        <section className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/35 px-4 py-6 text-center">
-          <div className="max-w-3xl">
-            <p className="mb-3 text-xs tracking-[0.28em] text-cyan-200 sm:text-sm">UM MUNDO DE ROBÓTICA</p>
-            <h1 className="font-display mc-shadow text-3xl leading-relaxed text-white sm:text-5xl">CRAFTEDUC</h1>
-            <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-white/85 sm:text-base">
+        <section className="robo-menu absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 px-4 py-5 text-center">
+          <div className="robo-title-wrap">
+            <p className="mb-2 text-xs tracking-[0.28em] text-white/90 sm:text-sm">UM MUNDO DE ROBÓTICA</p>
+            <h1 className="robo-title font-display text-2xl leading-relaxed sm:text-5xl" aria-label="RoboEduccraft">
+              <span className="brand-pink">ROBO</span><span className="brand-blue">EDU</span><span className="brand-yellow">C</span><span className="robo-craft">CRAFT</span>
+            </h1>
+            <p className="mx-auto mt-3 max-w-xl text-xs leading-5 text-white/90 sm:text-sm">
               Construa, conecte fios e experimente com motores, LEDs e pilhas em um mundo de blocos.
             </p>
           </div>
-          <div className="mt-2 flex w-full max-w-xs flex-col gap-3">
+          <div className="robo-menu-buttons mt-2 flex w-full max-w-xs flex-col gap-2">
             <button className="mc-btn" onClick={startGame}>Jogar</button>
-            <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multiplayer</button>
+            <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multijogador</button>
             <button className="mc-btn" onClick={() => openSubscreen('controls')}>Controles</button>
-            <button className="mc-btn" onClick={() => openSubscreen('options')}>Opções</button>
+            <button className="mc-btn" onClick={() => openSubscreen('options')}>Configurações</button>
           </div>
-          <p className="mt-2 text-xs text-white/60">Protótipo educacional • Modo criativo</p>
+          <p className="mt-1 text-xs text-white/75">Protótipo educacional • Modo criativo</p>
+          <div className="roboeduc-signature" aria-label="Roboeduc — Escola de Programação e Robótica">
+            <div className="roboeduc-wordmark"><span>ROBO</span><strong><i>E</i><i>D</i><i>U</i><i>C</i></strong></div>
+            <span className="roboeduc-tagline">ESCOLA DE PROGRAMAÇÃO E ROBÓTICA</span>
+          </div>
         </section>
       )}
 
