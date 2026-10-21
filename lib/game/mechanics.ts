@@ -935,10 +935,23 @@ export class Mechanics {
             const key = posKey(x, y, z)
             if (targetKeys.has(key) || this.fallingKeys.has(key)) continue
             const delta = new THREE.Vector3(x + 0.5 - center.x, y + 0.5 - center.y, z + 0.5 - center.z)
+            // Ground-level blocks are the static foundation of the scene and
+            // must never be converted into falling bodies by a rotating arm.
+            // Otherwise a chassis that barely touches its support can wake the
+            // support voxel, lose contact, and begin drifting through the floor.
+            if (y <= GROUND_LEVEL) continue
+
             // Only release blocks in the direction the rotating/translating
             // voxel is moving. This avoids waking neighboring blocks the arm
             // is merely passing by.
             if (delta.lengthSq() < 1e-8 || surfaceVelocity.dot(delta) <= 0.015) continue
+
+            // A body moving down onto a block is landing on it, not pushing it
+            // out of the way. Keep that support static so gravity settles the
+            // machine instead of successively removing the blocks beneath it.
+            const predominantlyBelow = delta.y < -Math.max(Math.abs(delta.x), Math.abs(delta.z))
+            if (predominantlyBelow && surfaceVelocity.y < -0.015) continue
+
             if (isNearObb(center, axes, x, y, z)) targetKeys.add(key)
           }
         }
