@@ -373,6 +373,26 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(6, 14, 4, 1, [170, 170, 170])
       break
     }
+    case 'wheel': {
+      // Dedicated pixel-art wheel icon: black tire and yellow five-spoke rim.
+      for (let y = 1; y < 15; y++) for (let x = 1; x < 15; x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5)
+        if (d <= 6.5) px(x, y, d > 5.2 ? [34, 36, 40] : [18, 20, 24])
+      }
+      for (let i = 0; i < 5; i++) {
+        const a = (i * Math.PI * 2) / 5 - Math.PI / 2
+        const ex = 7.5 + Math.cos(a) * 4.7
+        const ey = 7.5 + Math.sin(a) * 4.7
+        for (let t = 0; t <= 1; t += 0.1) {
+          const x = Math.round(7.5 + (ex - 7.5) * t)
+          const y = Math.round(7.5 + (ey - 7.5) * t)
+          rect(x - 1, y - 1, 3, 3, [222, 174, 38])
+        }
+      }
+      rect(6, 6, 4, 4, [70, 74, 82])
+      rect(7, 7, 2, 2, [210, 214, 220])
+      break
+    }
     case 'battery_box': {
       rect(1, 2, 14, 12, [34, 34, 36])
       rect(1, 2, 14, 1, [60, 60, 64])
