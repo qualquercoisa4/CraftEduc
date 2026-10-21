@@ -1116,7 +1116,6 @@ export class Mechanics {
       this.physicsDirty = true
       this.mechDirty = true
     }
-    this.updateGravity(dt)
     this.powerCooldown -= dt
     if (this.powerDirty && this.powerCooldown <= 0) {
       this.powerCooldown = 0.08
@@ -1136,6 +1135,10 @@ export class Mechanics {
         }
       }
     }
+
+    // Assemble powered machines before scanning unsupported voxels so the
+    // rotor/chassis become their articulated physics bodies first.
+    this.updateGravity(dt)
 
     for (const [key, e] of this.models) {
       if (e.type === 'wheel') {
