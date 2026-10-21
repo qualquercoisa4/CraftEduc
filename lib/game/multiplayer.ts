@@ -115,6 +115,7 @@ export class MultiplayerClient {
   private localWireSignature = new Map<number, string>()
   private sessionReady = false
   private connected = false
+  private pendingPayload: NetworkPayload | null = null
 
   private constructor(args: { roomId: string; playerKey: string; playerName: string; hostKey?: string; isHost: boolean; skin: SkinConfig }) {
     this.roomId = args.roomId.toLowerCase()
@@ -134,6 +135,8 @@ export class MultiplayerClient {
       hostKey, playerKey, playerName: client.playerName, skin: client.skin,
       seed: Math.floor(Math.random() * 0x7fffffff),
     })
+    client.pendingPayload = payload
+    client.pendingPayload = payload
     client.applyPayload(payload)
     return { client, payload }
   }
@@ -178,7 +181,9 @@ export class MultiplayerClient {
     }
     this.players = payload.players ?? []
     this.callbacks.onRules?.(this.rules)
-    this.callbacks.onPlayers?.(this.players)
+    this.callbacks.onPlayers?.(this.players.filter((p) => p.id !== this.playerKey))
+    engine?.setRemotePlayers(this.players.filter((p) => p.id !== this.playerKey))
+    engine?.setMultiplayerRules(this.rules, this.isHost)
     this.connected = true
     this.callbacks.onStatus?.(true)
   }
@@ -193,10 +198,7 @@ export class MultiplayerClient {
     this.callbacks = callbacks
     this.stopped = false
     this.sessionReady = true
-    this.applyPayload({
-      world: { roomId: this.roomId, seed: 0, sessionStatus: 'open', rules: this.rules, sharedState: {} },
-      blocks: [], wires: [], players: this.players, cursor: this.cursor,
-    })
+    engine.mech.setNetworkAuthority(this.isHost)
     engine.setMultiplayerBridge({
       isHost: this.isHost,
       canFly: () => this.isHost || this.rules.playersCanFly,
@@ -205,11 +207,16 @@ export class MultiplayerClient {
       wireCreated: (wire) => { void this.publishWire(wire) },
       wiresRemovedAt: (key) => { void this.removeWiresAt(key) },
     })
-    this.timers.push(setInterval(() => { void this.poll() }, 650))
+    engine.setMultiplayerRules(this.rules, this.isHost)
+    const initial = this.pendingPayload
+    this.pendingPayload = null
+    if (initial) this.applyPayload(initial)
+    else engine.setRemotePlayers(this.players.filter((p) => p.id !== this.playerKey))
+    this.timers.push(setInterval(() => { void this.poll() }, 350))
     this.timers.push(setInterval(() => { void this.saveCurrentPlayer() }, 400))
     if (this.isHost) {
       this.timers.push(setInterval(() => { void this.hostHeartbeat() }, 5000))
-      this.timers.push(setInterval(() => { void this.saveSimulation() }, 650))
+      this.timers.push(setInterval(() => { void this.saveSimulation() }, 350))
     }
   }
 
@@ -244,6 +251,7 @@ export class MultiplayerClient {
       this.cursor = Number.isFinite(data.cursor) ? data.cursor : this.cursor
       this.players = data.players ?? []
       this.callbacks.onPlayers?.(this.players.filter(p => p.id !== this.playerKey))
+      this.engine?.setRemotePlayers(this.players.filter(p => p.id !== this.playerKey))
       if (!this.isHost && data.world?.sharedState) this.engine?.mech.applyNetworkSnapshot(data.world.sharedState)
       this.rules = { ...DEFAULT_RULES, ...(data.world?.rules ?? this.rules) }
       this.engine?.setMultiplayerRules(this.rules, this.isHost)
