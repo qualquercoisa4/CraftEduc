@@ -7,9 +7,9 @@ const pixel = Pixelify_Sans({ subsets: ['latin'], variable: '--font-pixel', weig
 const title = Press_Start_2P({ subsets: ['latin'], variable: '--font-title', weight: '400' })
 
 export const metadata: Metadata = {
-  title: 'CRAFTEDUC — ROBÓTICA',
+  title: 'ROBOEDUCCRAFT — ROBÓTICA',
   description:
-    'Um jogo de blocos inspirado em Minecraft para aprender robótica: motores, LEDs, fios, cola quente e pilhas AAA num mundo plano infinito.',
+    'RoboEduccraft: um jogo de blocos para aprender robótica, construir e experimentar.',
   generator: 'v0.app',
   icons: {
     icon: [
@@ -27,7 +27,7 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: 'cover',
-  themeColor: '#0b1a3a',
+  themeColor: '#4d6c73',
 }
 
 export default function RootLayout({
