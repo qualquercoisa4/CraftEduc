@@ -32,7 +32,7 @@ export class World {
   chunks = new Map<string, Chunk>()
   states = new Map<string, BlockState>()
   poweredLeds = new Set<string>()
-  onBlockChange: (x: number, y: number, z: number, oldId: number, newId: number) => void = () => {}
+  onBlockChange: (x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue: boolean, newHasGlue: boolean) => void = () => {}
 
   constructor(
     private scene: THREE.Scene,
@@ -71,6 +71,9 @@ export class World {
     const lx = x - cx * CS
     const lz = z - cz * CS
     const old = c.data[idx(lx, y, lz)]
+    const key = posKey(x, y, z)
+    const oldHadGlue = Boolean(this.states.get(key)?.glue)
+    const newHasGlue = Boolean(state?.glue)
     if (old === id) {
       if (state) this.states.set(posKey(x, y, z), state)
       return false
@@ -78,11 +81,10 @@ export class World {
     c.data[idx(lx, y, lz)] = id
     c.modified = true
     if (id !== B.AIR && y > c.maxY) c.maxY = y
-    const key = posKey(x, y, z)
     if (state) this.states.set(key, state)
     else this.states.delete(key)
     this.markDirtyAround(x, y, z)
-    this.onBlockChange(x, y, z, old, id)
+    this.onBlockChange(x, y, z, old, id, oldHadGlue, newHasGlue)
     return true
   }
 

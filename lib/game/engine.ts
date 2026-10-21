@@ -138,7 +138,7 @@ export class Engine {
 
     this.world = new World(this.scene, this.blockMaterial)
     this.mech = new Mechanics(this.world, this.scene, this.blockMaterial, glueMat)
-    this.world.onBlockChange = (x, y, z, o, n) => this.mech.onBlockChange(x, y, z, o, n)
+    this.world.onBlockChange = (x, y, z, o, n, oldHadGlue, newHasGlue) => this.mech.onBlockChange(x, y, z, o, n, oldHadGlue, newHasGlue)
     this.player = new Player(this.world)
 
     this.particles = new Particles(this.blockMaterial, (x, y, z) => this.world.isSolid(x, y, z))
