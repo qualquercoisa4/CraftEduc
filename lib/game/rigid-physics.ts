@@ -164,11 +164,17 @@ export class RigidPhysics {
     return body
   }
 
-  createRevoluteJoint(parent: RAPIER.RigidBody, child: RAPIER.RigidBody, axis: THREE.Vector3) {
+  createRevoluteJoint(
+    parent: RAPIER.RigidBody,
+    child: RAPIER.RigidBody,
+    axis: THREE.Vector3,
+    parentAnchor = new THREE.Vector3(),
+    childAnchor = new THREE.Vector3(),
+  ) {
     if (!this.rapierWorld) return null
     const joint = RAPIER.JointData.revolute(
-      { x: 0, y: 0, z: 0 },
-      { x: 0, y: 0, z: 0 },
+      { x: parentAnchor.x, y: parentAnchor.y, z: parentAnchor.z },
+      { x: childAnchor.x, y: childAnchor.y, z: childAnchor.z },
       { x: axis.x, y: axis.y, z: axis.z },
     )
     return this.rapierWorld.createImpulseJoint(joint, parent, child, true) as RAPIER.RevoluteImpulseJoint

@@ -86,6 +86,24 @@ interface FallingBody {
   settledTime: number
 }
 
+interface ExtraRotor {
+  motorKey: string
+  motorPos: [number, number, number]
+  motorOffset: [number, number, number]
+  motorState?: BlockState
+  axis: THREE.Vector3
+  facing: number
+  blocks: CBlock[]
+  byKey: Map<string, CBlock>
+  group: THREE.Group
+  rotorBody: RAPIER.RigidBody
+  joint: RAPIER.RevoluteImpulseJoint
+  unpoweredTime: number
+  angle: number
+  speed: number
+  wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
+}
+
 interface Contraption {
   motorKey: string
   motorPos: [number, number, number]
@@ -106,6 +124,7 @@ interface Contraption {
   angle: number
   speed: number
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
+  extraRotors: ExtraRotor[]
 }
 
 export class Mechanics {
@@ -609,6 +628,14 @@ export class Mechanics {
 
   /* ---------------- Contraptions ---------------- */
 
+  private findExtraRotor(motorKey: string): { machine: Contraption; rotor: ExtraRotor } | null {
+    for (const machine of this.contraptions.values()) {
+      const rotor = (machine.extraRotors ?? []).find((entry) => entry.motorKey === motorKey)
+      if (rotor) return { machine, rotor }
+    }
+    return null
+  }
+
   private isGlued(x: number, y: number, z: number, d: number) {
     const n = DIRS[d]
     const a = this.world.getState(x, y, z)?.glue ?? 0
@@ -628,7 +655,7 @@ export class Mechanics {
     const facing = motorState?.facing ?? 2
     const d = DIRS[facing]
     const sx = mx + d[0], sy = my + d[1], sz = mz + d[2]
-    if (this.world.getBlock(sx, sy, sz) === B.AIR || !this.isGlued(mx, my, mz, facing)) return 'idle'
+    if (this.world.getBlock(sx, sy, sz) === B.AIR || this.world.getBlock(sx, sy, sz) === B.MOTOR || !this.isGlued(mx, my, mz, facing)) return 'idle'
 
     // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
@@ -641,7 +668,7 @@ export class Mechanics {
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
         const key = posKey(nx, ny, nz)
-        if (visited.has(key) || key === motorKey) continue
+        if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR) continue
         if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
         visited.add(key)
         queue.push([nx, ny, nz])
@@ -664,7 +691,13 @@ export class Mechanics {
     }
     while (chassisQueue.length && chassisVisited.size <= MAX_CONTRAPTION) {
       const [x, y, z] = chassisQueue.shift()!
+      const currentId = this.world.getBlock(x, y, z)
+      const currentState = this.world.getState(x, y, z)
+      const outputFace = currentId === B.MOTOR ? (((currentState?.facing ?? 2) % 6) + 6) % 6 : -1
       for (let face = 0; face < 6; face++) {
+        // A second motor is part of the chassis, but its output face must seed
+        // an independent rotor instead of gluing that arm rigidly to the frame.
+        if (face === outputFace) continue
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
         const key = posKey(nx, ny, nz)
@@ -674,6 +707,78 @@ export class Mechanics {
         chassisQueue.push([nx, ny, nz])
       }
     }
+
+    // Find other motors on this chassis and split each glued output assembly
+    // into its own Rapier rotor. The chassis remains a single shared rigid body.
+    const extraRotorSpecs: {
+      motorKey: string
+      motorPos: [number, number, number]
+      motorOffset: [number, number, number]
+      motorState?: BlockState
+      axis: THREE.Vector3
+      facing: number
+      blocks: CBlock[]
+      byKey: Map<string, CBlock>
+    }[] = []
+    const extraRotorKeys = new Set<string>()
+    for (const candidateKey of [...chassisVisited]) {
+      const [rx, ry, rz] = parseKey(candidateKey)
+      if (this.world.getBlock(rx, ry, rz) !== B.MOTOR) continue
+      const motorState = this.world.getState(rx, ry, rz)
+      const extraFacing = (((motorState?.facing ?? 2) % 6) + 6) % 6
+      const extraDir = DIRS[extraFacing]
+      const ex = rx + extraDir[0], ey = ry + extraDir[1], ez = rz + extraDir[2]
+      const seed = posKey(ex, ey, ez)
+      if (this.world.getBlock(ex, ey, ez) === B.AIR || this.world.getBlock(ex, ey, ez) === B.MOTOR
+        || !this.isGlued(rx, ry, rz, extraFacing) || visited.has(seed)
+        || chassisVisited.has(seed) || extraRotorKeys.has(seed)) continue
+
+      const extraVisited = new Set<string>([seed])
+      const extraQueue: [number, number, number][] = [[ex, ey, ez]]
+      let invalid = false
+      while (extraQueue.length) {
+        const [x, y, z] = extraQueue.shift()!
+        if (y < GROUND_LEVEL || extraVisited.size > MAX_CONTRAPTION) { invalid = true; break }
+        for (let face = 0; face < 6; face++) {
+          const n = DIRS[face]
+          const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+          const key = posKey(nx, ny, nz)
+          const id = this.world.getBlock(nx, ny, nz)
+          if (id === B.AIR || id === B.MOTOR || key === motorKey || visited.has(key)
+            || chassisVisited.has(key) || extraVisited.has(key) || extraRotorKeys.has(key)) continue
+          if (!this.isGlued(x, y, z, face)) continue
+          extraVisited.add(key)
+          extraQueue.push([nx, ny, nz])
+        }
+      }
+      if (invalid || extraVisited.size === 0) continue
+      const extraBlocks: CBlock[] = []
+      const extraByKey = new Map<string, CBlock>()
+      for (const key of extraVisited) {
+        const [x, y, z] = parseKey(key)
+        const state = this.world.getState(x, y, z)
+        const block: CBlock = {
+          rel: [x - rx, y - ry, z - rz],
+          id: this.world.getBlock(x, y, z),
+          state: state ? { ...state } : undefined,
+          origKey: key,
+        }
+        extraBlocks.push(block)
+        extraByKey.set(key, block)
+        extraRotorKeys.add(key)
+      }
+      extraRotorSpecs.push({
+        motorKey: candidateKey,
+        motorPos: [rx, ry, rz],
+        motorOffset: [rx - mx, ry - my, rz - mz],
+        motorState: motorState ? { ...motorState } : undefined,
+        axis: new THREE.Vector3(...extraDir),
+        facing: extraFacing,
+        blocks: extraBlocks,
+        byKey: extraByKey,
+      })
+    }
+    for (const key of extraRotorKeys) chassisVisited.delete(key)
 
     const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
     const blocks: CBlock[] = []
@@ -756,6 +861,51 @@ export class Mechanics {
         this.glows.delete(b.origKey)
       }
     }
+    const extraVisuals = extraRotorSpecs.map((spec) => {
+      const extraPivot = new THREE.Vector3(
+        spec.motorPos[0] + 0.5, spec.motorPos[1] + 0.5, spec.motorPos[2] + 0.5,
+      )
+      const extraGroup = new THREE.Group()
+      extraGroup.position.copy(extraPivot)
+      const extraOut = newBuffers()
+      const extraGlue: { x: number; y: number; z: number; mask: number }[] = []
+      const extraRelMap = new Map<string, number>()
+      for (const block of spec.blocks) extraRelMap.set(posKey(...block.rel), block.id)
+      for (const block of spec.blocks) {
+        const [rx, ry, rz] = block.rel
+        if (isOpaque(block.id)) {
+          const powered = block.id === B.LED && this.world.poweredLeds.has(block.origKey)
+          emitCube(extraOut, rx - 0.5, ry - 0.5, rz - 0.5, block.id, powered, (dx, dy, dz) =>
+            isOpaque(extraRelMap.get(posKey(rx + dx, ry + dy, rz + dz)) ?? 0),
+          )
+        }
+        if (block.state?.glue) extraGlue.push({ x: rx - 0.5, y: ry - 0.5, z: rz - 0.5, mask: block.state.glue })
+        const model = this.models.get(block.origKey)
+        if (model) {
+          model.model.group.position.sub(extraPivot)
+          extraGroup.add(model.model.group)
+        }
+        const glow = this.glows.get(block.origKey)
+        if (glow) {
+          glow.position.sub(extraPivot)
+          extraGroup.add(glow)
+          this.glows.delete(block.origKey)
+        }
+      }
+      if (extraOut.indices.length) extraGroup.add(new THREE.Mesh(buffersToGeometry(extraOut), this.blockMaterial))
+      if (extraGlue.length) {
+        const glue = new THREE.Mesh(buildGlueGeometry(extraGlue), this.glueMaterial)
+        glue.renderOrder = 2
+        extraGroup.add(glue)
+      }
+      const wireEnds: ExtraRotor['wireEnds'] = []
+      for (const wire of this.wires) {
+        if (spec.byKey.has(wire.a)) wireEnds.push({ wire, end: 'a', local: wire.pa.clone().sub(extraPivot), orig: wire.pa.clone() })
+        if (spec.byKey.has(wire.b)) wireEnds.push({ wire, end: 'b', local: wire.pb.clone().sub(extraPivot), orig: wire.pb.clone() })
+      }
+      return { ...spec, pivot: extraPivot, group: extraGroup, wireEnds }
+    })
+
     const motorModel = this.models.get(motorKey)
     if (motorModel?.type === 'motor') {
       motorModel.model.group.position.sub(pivot)
@@ -783,9 +933,10 @@ export class Mechanics {
       ...chassisBlocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id })),
     ]
     const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
+    const chassisHasWheel = Boolean(motorState?.mountedWheel || chassisBlocks.some((block) => block.id === B.MOTOR && block.state?.mountedWheel))
     const chassisBody = this.rigidPhysics.createRigidBody(chassisVoxels, pivot, {
-      // A chassis carrying a wheel must react to the traction torque.
-      lockRotation: !Boolean(motorState?.mountedWheel), canSleep: false, linearDamping: 0.12, angularDamping: 0.65,
+      // A chassis carrying any mounted motor wheel must react to traction torque.
+      lockRotation: !chassisHasWheel, canSleep: false, linearDamping: 0.12, angularDamping: chassisHasWheel ? 0.22 : 0.65,
     })
     const rotorBody = this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
       canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
@@ -806,7 +957,65 @@ export class Mechanics {
       return 'idle'
     }
 
-    // Remove both moving components from the voxel/static-collider world.
+    const extraRotors: ExtraRotor[] = []
+    for (const visual of extraVisuals) {
+      const extraVoxels = visual.blocks.map((block) => ({
+        x: visual.motorPos[0] + block.rel[0],
+        y: visual.motorPos[1] + block.rel[1],
+        z: visual.motorPos[2] + block.rel[2],
+        id: block.id,
+      }))
+      const extraBody = this.rigidPhysics.createRigidBody(extraVoxels, visual.pivot, {
+        canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
+      })
+      if (!extraBody) {
+        for (const extra of extraRotors) {
+          this.rigidPhysics.removeRigidBody(extra.rotorBody)
+          disposeObject(extra.group)
+        }
+        this.rigidPhysics.removeRigidBody(chassisBody)
+        this.rigidPhysics.removeRigidBody(rotorBody)
+        this.mechDirty = true
+        return 'idle'
+      }
+      const extraJoint = this.rigidPhysics.createRevoluteJoint(
+        chassisBody,
+        extraBody,
+        visual.axis,
+        new THREE.Vector3(...visual.motorOffset),
+      )
+      if (!extraJoint) {
+        this.rigidPhysics.removeRigidBody(extraBody)
+        for (const extra of extraRotors) {
+          this.rigidPhysics.removeRigidBody(extra.rotorBody)
+          disposeObject(extra.group)
+        }
+        this.rigidPhysics.removeRigidBody(chassisBody)
+        this.rigidPhysics.removeRigidBody(rotorBody)
+        this.mechDirty = true
+        return 'idle'
+      }
+      extraRotors.push({
+        motorKey: visual.motorKey,
+        motorPos: visual.motorPos,
+        motorOffset: visual.motorOffset,
+        motorState: visual.motorState,
+        axis: visual.axis,
+        facing: visual.facing,
+        blocks: visual.blocks,
+        byKey: visual.byKey,
+        group: visual.group,
+        rotorBody: extraBody,
+        joint: extraJoint,
+        unpoweredTime: 0,
+        angle: 0,
+        speed: 0,
+        wireEnds: visual.wireEnds,
+      })
+    }
+
+    // Remove every dynamic rotor and the shared chassis from the voxel grid.
+
     this.suppress = true
     for (const b of blocks) {
       const [x, y, z] = parseKey(b.origKey)
@@ -816,11 +1025,16 @@ export class Mechanics {
       const [x, y, z] = parseKey(b.origKey)
       this.world.setBlock(x, y, z, B.AIR)
     }
+    for (const extra of extraRotors) for (const b of extra.blocks) {
+      const [x, y, z] = parseKey(b.origKey)
+      this.world.setBlock(x, y, z, B.AIR)
+    }
     this.world.setBlock(mx, my, mz, B.AIR)
     this.suppress = false
     this.rebuildGlue()
     this.scene.add(chassisGroup)
     this.scene.add(group)
+    for (const extra of extraRotors) this.scene.add(extra.group)
 
     this.contraptions.set(motorKey, {
       motorKey,
@@ -842,6 +1056,7 @@ export class Mechanics {
       angle: 0,
       speed: 0,
       wireEnds,
+      extraRotors,
     })
     this.physicsDirty = true
     this.powerDirty = true
