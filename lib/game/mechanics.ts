@@ -1411,7 +1411,11 @@ export class Mechanics {
 
   /** Apply ground force through the mounted wheel; an off-centre contact creates chassis yaw. */
   private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
-    if (power <= 0 || !this.mountedWheels.has(c.motorKey)) return
+    if (!this.mountedWheels.has(c.motorKey)) return
+    // Rapier force/torque accumulators can persist; clear last frame's wheel input before computing the next one.
+    c.chassisBody.resetForces(true)
+    c.chassisBody.resetTorques(true)
+    if (power <= 0) return
     const t = c.chassisBody.translation()
     const r = c.chassisBody.rotation()
     const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
@@ -1530,9 +1534,9 @@ export class Mechanics {
       }
       const power = this.motorPower.get(c.motorKey) ?? 0
       const motor = this.models.get(c.motorKey)
+      const direction = this.motorDirection.get(c.motorKey) ?? 1
+      this.applyMountedWheelTraction(c, power, direction)
       if (power > 0) {
-        const direction = this.motorDirection.get(c.motorKey) ?? 1
-        this.applyMountedWheelTraction(c, power, direction)
         c.speed = power * 1.05 * direction
         c.unpoweredTime = 0
         // Torque is applied through the shaft joint. Rapier computes the
