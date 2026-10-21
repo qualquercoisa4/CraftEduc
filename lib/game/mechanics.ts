@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import RAPIER from '@dimforge/rapier3d-compat'
+import { RigidPhysics } from './rigid-physics'
 import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -71,8 +73,14 @@ interface Contraption {
   facing: number
   blocks: CBlock[]
   chassisBlocks: CBlock[]
-  travel: THREE.Vector3
+  chassisByKey: Map<string, CBlock>
   byKey: Map<string, CBlock>
+  chassisGroup: THREE.Group
+  chassisBody: RAPIER.RigidBody
+  rotorBody: RAPIER.RigidBody
+  joint: RAPIER.RevoluteImpulseJoint
+  chassisWireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
+  unpoweredTime: number
   group: THREE.Group
   angle: number
   speed: number
@@ -102,17 +110,24 @@ export class Mechanics {
   private physicsScanCooldown = 0
   private powerCooldown = 0
   private tractionVelocity = new Map<string, THREE.Vector3>()
+  private rigidPhysics: RigidPhysics
+  private physicsSynced = false
 
   constructor(
     private world: World,
     private scene: THREE.Scene,
     private blockMaterial: THREE.Material,
     private glueMaterial: THREE.Material,
-  ) {}
+  ) {
+    this.rigidPhysics = new RigidPhysics(world)
+  }
 
   /* ---------------- Block change hook ---------------- */
 
   onBlockChange(x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue = false, newHasGlue = false) {
+    // Keep Rapier's static collision world in lockstep with the voxel world,
+    // including edits made internally while assembling or landing rigid bodies.
+    this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
     if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL) {
