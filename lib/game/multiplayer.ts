@@ -262,11 +262,13 @@ export class MultiplayerClient {
     this.pendingPayload = null
     if (initial) this.applyPayload(initial)
     else engine.setRemotePlayers(this.players.filter((p) => p.id !== this.playerKey))
-    this.timers.push(setInterval(() => { void this.poll() }, 350))
-    this.timers.push(setInterval(() => { void this.saveCurrentPlayer() }, 400))
+    // Poll more frequently than the old 350ms cadence so clients receive
+    // authoritative motor/hinge poses before visible motion appears to stop.
+    this.timers.push(setInterval(() => { void this.poll() }, 140))
+    this.timers.push(setInterval(() => { void this.saveCurrentPlayer() }, 300))
     if (this.isHost) {
       this.timers.push(setInterval(() => { void this.hostHeartbeat() }, 5000))
-      this.timers.push(setInterval(() => { void this.saveSimulation() }, 350))
+      this.timers.push(setInterval(() => { void this.saveSimulation() }, 140))
     }
   }
 
@@ -420,13 +422,14 @@ export class MultiplayerClient {
     if (this.stopped || !this.isHost || !this.engine || this.savingSimulation) return
     this.savingSimulation = true
     try {
-      // Moving machines can drag wire endpoints to new voxel keys. Persist those
-      // changes too, so players who join later receive the same circuit topology.
+      // Never let slow wire persistence block the live physics snapshots.
+      // Wire endpoints are still persisted, but independently from the
+      // high-frequency authoritative machine state.
       for (const wire of this.engine.mech.wires) {
         const signature = this.wireSignature(wire)
         if (this.localWireSignature.get(wire.id) === signature) continue
         this.localWireSignature.set(wire.id, signature)
-        await this.publishWire(wire)
+        void this.publishWire(wire)
       }
       const sharedState = this.engine.mech.exportNetworkSnapshot()
       sharedState.worldTime = Date.now()
