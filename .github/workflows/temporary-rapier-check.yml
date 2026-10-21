@@ -25,5 +25,10 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Run physics mass and collision regression tests
+        run: |
+          pnpm exec tsc --target ES2022 --module commonjs --moduleResolution node --esModuleInterop --skipLibCheck --outDir .test-build tests/physics-mass.test.ts
+          node .test-build/tests/physics-mass.test.js
+          rm -rf .test-build
       - name: Build application
         run: pnpm build
