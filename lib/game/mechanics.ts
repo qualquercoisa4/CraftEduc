@@ -1005,7 +1005,10 @@ export class Mechanics {
         for (const b of c.blocks) {
           const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
           const center = rel.clone().add(pivot)
-          const halfY = 0.5 * (Math.abs(q.x * 0 + 1) + Math.abs(q.y * 0 + 1) + Math.abs(q.z * 0 + 1))
+          const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
+          const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
+          const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+          const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
           const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
           if (center.y - halfY <= GROUND_LEVEL + 0.04 && tangential.y < -0.08) {
             pressing = true
