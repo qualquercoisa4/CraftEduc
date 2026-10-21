@@ -945,6 +945,13 @@ export class Mechanics {
             // voxel is moving. This avoids waking neighboring blocks the arm
             // is merely passing by.
             if (delta.lengthSq() < 1e-8 || surfaceVelocity.dot(delta) <= 0.015) continue
+            // Contact candidates at diagonal corners are not reliable pushes.
+            // Require the target direction to be reasonably aligned with the
+            // moving voxel's surface velocity, preventing a spinning arm from
+            // waking diagonal supports and causing the whole chassis to drift.
+            const approachAlignment = surfaceVelocity.dot(delta) /
+              Math.max(1e-8, surfaceVelocity.length() * delta.length())
+            if (approachAlignment < 0.68) continue
 
             // A body moving down onto a block is landing on it, not pushing it
             // out of the way. Keep that support static so gravity settles the
