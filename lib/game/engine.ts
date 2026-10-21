@@ -169,7 +169,7 @@ export class Engine {
     if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
       this.player.pos.set(6.5, 5.2, 0.5)
       this.player.yaw = 0
-      this.player.pitch = -0.28
+      this.player.pitch = 0.48
       this.player.flying = true
     }
 
