@@ -704,19 +704,24 @@ export class Mechanics {
         const nextSpeed = power * 1.05 * direction
         let nextAngle = (c.angle + nextSpeed * dt) % (Math.PI * 2)
         if (nextAngle < 0) nextAngle += Math.PI * 2
-        if (model?.type === 'motor' && model.status !== 'stalled' && !this.canRotateContraption(c, nextAngle)) {
+        if (model?.type === 'motor' && !this.canRotateContraption(c, nextAngle)) {
           model.status = 'stalled'
           c.speed = 0
-        } else if (model?.type !== 'motor' || model.status !== 'stalled') {
+        } else {
           c.speed = nextSpeed
           c.angle = nextAngle
           if (model?.type === 'motor') model.status = 'driving'
         }
       } else {
-        const target = Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
-        c.angle = Math.min(target, c.angle + Math.max(c.speed, 1.2) * dt)
-        if (c.angle >= target - 1e-5) {
-          this.disassemble(c, Math.round(target / HALF_PI) % 4)
+        const direction = Math.sign(c.speed || 1)
+        const target = direction > 0
+          ? Math.ceil(c.angle / HALF_PI - 1e-4) * HALF_PI
+          : Math.floor(c.angle / HALF_PI + 1e-4) * HALF_PI
+        const step = direction * Math.max(Math.abs(c.speed), 1.2) * dt
+        c.angle = direction > 0 ? Math.min(target, c.angle + step) : Math.max(target, c.angle + step)
+        const reached = direction > 0 ? c.angle >= target - 1e-5 : c.angle <= target + 1e-5
+        if (reached) {
+          this.disassemble(c, ((Math.round(target / HALF_PI) % 4) + 4) % 4)
           continue
         }
       }
