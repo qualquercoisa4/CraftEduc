@@ -163,6 +163,15 @@ export class Engine {
     this.mech = new Mechanics(this.world, this.scene, this.blockMaterial, glueMat)
     this.world.onBlockChange = (x, y, z, o, n, oldHadGlue, newHasGlue) => this.mech.onBlockChange(x, y, z, o, n, oldHadGlue, newHasGlue)
     this.player = new Player(this.world)
+    // Diagnostic-only view: begin near and facing the demo rotor so automated
+    // and manual regression checks can target moving blocks. Normal gameplay
+    // retains the default spawn and camera.
+    if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+      this.player.pos.set(6.5, 5.2, 0.5)
+      this.player.yaw = 0
+      this.player.pitch = -0.28
+      this.player.flying = true
+    }
 
     this.particles = new Particles(this.blockMaterial, (x, y, z) => this.world.isSolid(x, y, z))
     this.scene.add(this.particles.mesh)
