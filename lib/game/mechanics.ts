@@ -41,6 +41,7 @@ export interface Wire {
   ta: string
   tb: string
   mesh: THREE.Group
+  networkId?: string
 }
 
 interface CBlock {
@@ -126,6 +127,8 @@ export class Mechanics {
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
   private networkAuthority = true
+  private networkBlockPublisher: ((x: number, y: number, z: number, block: number, state?: BlockState) => void) | null = null
+  private networkFallingVisuals = new Map<string, { group: THREE.Group; keys: string[]; signature: string }>()
 
   constructor(
     private world: World,
@@ -297,6 +300,20 @@ export class Mechanics {
     this.powerDirty = true
     this.mechDirty = true
     return removed.length
+  }
+
+  removeWireByNetworkId(networkId: string) {
+    const wire = this.wires.find((w) => w.networkId === networkId)
+    if (!wire) return false
+    disposeObject(wire.mesh)
+    this.wires = this.wires.filter((w) => w !== wire)
+    this.powerDirty = true
+    this.mechDirty = true
+    return true
+  }
+
+  setNetworkBlockPublisher(publisher: ((x: number, y: number, z: number, block: number, state?: BlockState) => void) | null) {
+    this.networkBlockPublisher = publisher
   }
 
   /* ---------------- Glue rendering ---------------- */
@@ -1237,6 +1254,15 @@ export class Mechanics {
     this.powerDirty = true
     this.mechDirty = true
     this.physicsDirty = true
+    if (this.networkAuthority && this.networkBlockPublisher) {
+      const placedKeys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
+      for (const block of body.blocks) {
+        if (placedKeys.has(block.originKey)) continue
+        const [x, y, z] = parseKey(block.originKey)
+        this.networkBlockPublisher(x, y, z, B.AIR)
+      }
+      for (const p of placements) this.networkBlockPublisher(p.x, p.y, p.z, p.id, p.state ? { ...p.state } : undefined)
+    }
     return keyMap
   }
 
@@ -1411,11 +1437,16 @@ export class Mechanics {
       linearVelocity: this.vectorSnapshot(body.body.linvel()),
       angularVelocity: this.vectorSnapshot(body.body.angvel()),
     }))
-    return { version: 1, machines, falling }
+    const wires = this.wires.slice(0, 3000).filter((wire) => wire.networkId).map((wire) => ({
+      id: wire.networkId!,
+      a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
+      pa: this.vectorSnapshot(wire.pa), pb: this.vectorSnapshot(wire.pb),
+    }))
+    return { version: 1, machines, falling, wires }
   }
 
   applyNetworkSnapshot(value: Record<string, unknown>) {
-    if (this.networkAuthority || !value || typeof value !== 'object') return
+    if (this.networkAuthority || !value || typeof value !== 'object' || Number((value as Record<string, unknown>).version) !== 1) return
     const validVector = (v: unknown): v is { x: number; y: number; z: number } =>
       !!v && typeof v === 'object' && ['x', 'y', 'z'].every(k => Number.isFinite(Number((v as Record<string, unknown>)[k])))
     const validRotation = (v: unknown): v is { x: number; y: number; z: number; w: number } =>
@@ -1429,7 +1460,16 @@ export class Mechanics {
       if (validVector(v.angularVelocity)) body.setAngvel(v.angularVelocity, true)
     }
     const record = value as Record<string, unknown>
-    if (Array.isArray(record.machines)) for (const raw of record.machines.slice(0, 128)) {
+    const incomingMachines = Array.isArray(record.machines) ? record.machines.slice(0, 128) : []
+    const activeMachineKeys = new Set(incomingMachines.flatMap((raw) =>
+      raw && typeof raw === 'object' && typeof (raw as Record<string, unknown>).motorKey === 'string'
+        ? [String((raw as Record<string, unknown>).motorKey)] : []
+    ))
+    // The host is authoritative for starting/stopping articulated machines too.
+    for (const c of [...this.contraptions.values()]) {
+      if (!activeMachineKeys.has(c.motorKey)) this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
+    }
+    for (const raw of incomingMachines) {
       if (!raw || typeof raw !== 'object') continue
       const machine = raw as Record<string, unknown>
       if (typeof machine.motorKey !== 'string') continue
@@ -1439,6 +1479,75 @@ export class Mechanics {
       pose(c.chassisBody, machine.chassis)
       if (Number.isFinite(Number(machine.angle))) c.angle = Number(machine.angle)
       if (Number.isFinite(Number(machine.speed))) c.speed = Number(machine.speed)
+    }
+    const incomingFalling = Array.isArray(record.falling) ? record.falling.slice(0, 128) : []
+    const liveVisualIds = new Set<string>()
+    for (const raw of incomingFalling) {
+      if (!raw || typeof raw !== 'object') continue
+      const item = raw as Record<string, unknown>
+      if (!Array.isArray(item.keys)) continue
+      const blocks = item.keys.filter((entry) => !!entry && typeof entry === 'object'
+        && typeof (entry as Record<string, unknown>).originKey === 'string'
+        && Number.isInteger((entry as Record<string, unknown>).id)
+        && validVector((entry as Record<string, unknown>).localOrigin)) as Record<string, unknown>[]
+      if (!blocks.length || !validVector(item.position) || !validRotation(item.rotation)) continue
+      const keys = blocks.map((b) => String(b.originKey))
+      const signature = JSON.stringify(blocks.map((b) => [b.originKey, b.id, b.localOrigin]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+      const id = keys.slice().sort().join('|').slice(0, 800)
+      liveVisualIds.add(id)
+      let visual = this.networkFallingVisuals.get(id)
+      if (!visual || visual.signature !== signature) {
+        if (visual) { disposeObject(visual.group); this.networkFallingVisuals.delete(id) }
+        const group = new THREE.Group()
+        group.name = 'CraftEducNetworkFallingBody'
+        for (const entry of blocks) {
+          const originKey = String(entry.originKey)
+          const [x, y, z] = parseKey(originKey)
+          const existing = this.world.getBlock(x, y, z)
+          if (existing !== B.AIR) {
+            this.suppress = true
+            this.world.setBlock(x, y, z, B.AIR)
+            this.suppress = false
+          }
+          const local = entry.localOrigin as { x: number; y: number; z: number }
+          const blockId = Number(entry.id)
+          if (blockId >= 0 && blockId <= 255 && blockId !== B.AIR) {
+            const buffers = newBuffers()
+            emitCube(buffers, -0.5, -0.5, -0.5, blockId, false, () => false)
+            const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
+            mesh.position.set(local.x, local.y, local.z)
+            group.add(mesh)
+          }
+          const model = this.models.get(originKey)
+          if (model && model.model.group.parent !== group) {
+            model.model.group.position.set(x + 0.5 - Number((item.position as Record<string, unknown>).x), y + 0.5 - Number((item.position as Record<string, unknown>).y), z + 0.5 - Number((item.position as Record<string, unknown>).z))
+            group.add(model.model.group)
+          }
+        }
+        this.scene.add(group)
+        visual = { group, keys, signature }
+        this.networkFallingVisuals.set(id, visual)
+      }
+      visual.group.position.set(item.position.x, item.position.y, item.position.z)
+      visual.group.quaternion.set(item.rotation.x, item.rotation.y, item.rotation.z, item.rotation.w)
+      visual.group.updateMatrixWorld(true)
+    }
+    for (const [id, visual] of this.networkFallingVisuals) {
+      if (liveVisualIds.has(id)) continue
+      disposeObject(visual.group)
+      this.networkFallingVisuals.delete(id)
+    }
+    if (Array.isArray(record.wires)) for (const raw of record.wires.slice(0, 3000)) {
+      if (!raw || typeof raw !== 'object') continue
+      const value = raw as Record<string, unknown>
+      if (typeof value.id !== 'string' || !validVector(value.pa) || !validVector(value.pb)) continue
+      const wire = this.wires.find((entry) => entry.networkId === value.id)
+      if (!wire) continue
+      wire.a = typeof value.a === 'string' ? value.a : wire.a
+      wire.b = typeof value.b === 'string' ? value.b : wire.b
+      wire.pa.set(value.pa.x, value.pa.y, value.pa.z)
+      wire.pb.set(value.pb.x, value.pb.y, value.pb.z)
+      updateWireMesh(wire.mesh, wire.pa, wire.pb)
     }
     if (Array.isArray(record.falling)) {
       const byKey = new Map<string, FallingBody>()
