@@ -570,9 +570,9 @@ export class Mechanics {
     const placements: { x: number; y: number; z: number; id: number; state?: BlockState; orig: string }[] = []
     for (const b of c.blocks) {
       const v = new THREE.Vector3(...b.rel).applyQuaternion(q)
-      const x = c.motorPos[0] + Math.round(v.x)
-      const y = c.motorPos[1] + Math.round(v.y)
-      const z = c.motorPos[2] + Math.round(v.z)
+      const x = Math.round(pivot.x - 0.5 + v.x)
+      const y = Math.round(pivot.y - 0.5 + v.y)
+      const z = Math.round(pivot.z - 0.5 + v.z)
       let state = b.state ? { ...b.state } : undefined
       if (state) {
         if (state.facing !== undefined) state.facing = rotDir(state.facing)
@@ -789,7 +789,7 @@ export class Mechanics {
     )
     for (const b of c.blocks) {
       const center = new THREE.Vector3(...b.rel).applyQuaternion(q)
-        .add(new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5))
+        .add(c.group.position)
       const minX = Math.floor(center.x - extent.x + 1e-5)
       const maxX = Math.floor(center.x + extent.x - 1e-5)
       const minY = Math.floor(center.y - extent.y + 1e-5)
@@ -1153,7 +1153,7 @@ export class Mechanics {
     const h = player.height
     for (const c of this.contraptions.values()) {
       const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
-      const pivot = new THREE.Vector3(c.motorPos[0]+0.5,c.motorPos[1]+0.5,c.motorPos[2]+0.5)
+      const pivot = c.group.position.clone()
       const ex=new THREE.Vector3(1,0,0).applyQuaternion(q)
       const ey=new THREE.Vector3(0,1,0).applyQuaternion(q)
       const ez=new THREE.Vector3(0,0,1).applyQuaternion(q)
