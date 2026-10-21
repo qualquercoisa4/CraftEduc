@@ -1471,6 +1471,29 @@ export class Mechanics {
     this.physicsDirty = true
   }
 
+  exportNetworkBlocks() {
+    const blocks = new Map<string, { x: number; y: number; z: number; block: number; state?: BlockState }>()
+    const add = (x: number, y: number, z: number, block: number, state?: BlockState) => {
+      if (y < GROUND_LEVEL || y >= WORLD_HEIGHT || block === B.AIR) return
+      blocks.set(posKey(x, y, z), { x, y, z, block, state: state ? { ...state } : undefined })
+    }
+    for (const c of this.contraptions.values()) {
+      for (const b of c.blocks) {
+        const [x, y, z] = parseKey(b.origKey)
+        add(x, y, z, b.id, b.state)
+      }
+      for (const b of c.chassisBlocks) {
+        const [x, y, z] = parseKey(b.origKey)
+        add(x, y, z, b.id, b.state)
+      }
+      add(c.motorPos[0], c.motorPos[1], c.motorPos[2], B.MOTOR, c.motorState)
+    }
+    for (const body of this.fallingBodies) {
+      for (const b of body.blocks) add(b.x, b.y, b.z, b.id, b.state)
+    }
+    return [...blocks.values()]
+  }
+
   private vectorSnapshot(v: { x: number; y: number; z: number }) {
     return { x: v.x, y: v.y, z: v.z }
   }
