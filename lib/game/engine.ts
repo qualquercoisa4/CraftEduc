@@ -454,10 +454,15 @@ export class Engine {
 
   applyMultiplayerWire(wire: NetworkWire) {
     if (!wire?.id || typeof wire.a !== 'string' || typeof wire.b !== 'string') return
-    if (this.mech.wires.some((existing) => existing.networkId === wire.id)) return
     const pa = new THREE.Vector3(wire.pa?.x, wire.pa?.y, wire.pa?.z)
     const pb = new THREE.Vector3(wire.pb?.x, wire.pb?.y, wire.pb?.z)
     if (![pa.x, pa.y, pa.z, pb.x, pb.y, pb.z].every(Number.isFinite)) return
+    // A moving machine can update the endpoints of an existing network wire.
+    // Replace its local mesh and mark the circuit dirty instead of ignoring every
+    // subsequent wire_upsert for the same network ID.
+    if (this.mech.wires.some((existing) => existing.networkId === wire.id)) {
+      this.mech.removeWireByNetworkId(wire.id)
+    }
     this.mech.addWire(wire.a, pa, wire.ta, wire.b, pb, wire.tb)
     const added = this.mech.wires[this.mech.wires.length - 1]
     if (added) added.networkId = wire.id
