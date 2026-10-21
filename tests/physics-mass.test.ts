@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import * as THREE from 'three'
 import { B, DEFAULT_HOTBAR } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
 import type { World } from '../lib/game/world'
@@ -26,12 +27,12 @@ async function main() {
         { x: 1, y: 8, z: 0, id: B.WOOD },
       ],
       // Center of mass of the two-block wooden arm.
-      new (require('three').Vector3)(1, 8.5, 0.5),
+      new THREE.Vector3(1, 8.5, 0.5),
       { canSleep: false, linearDamping: 0, angularDamping: 0 },
     )
     const target = physics.createRigidBody(
-      [{ x: 2, y: 9, z: 0, id: targetMaterial }],
-      new (require('three').Vector3)(2.5, 9.5, 0.5),
+      [{ x: 1, y: 9, z: 0, id: targetMaterial }],
+      new THREE.Vector3(1.5, 9.5, 0.5),
       { canSleep: false, linearDamping: 0, angularDamping: 0 },
     )
     assert.ok(arm && target, 'factory must create both rigid bodies')
