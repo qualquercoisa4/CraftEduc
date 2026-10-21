@@ -90,8 +90,6 @@ interface Contraption {
   angle: number
   speed: number
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
-  reactionTravel: number
-  velocity: THREE.Vector3
 }
 
 export class Mechanics {
@@ -114,7 +112,6 @@ export class Mechanics {
   private readonly gravity = 18
   private physicsScanCooldown = 0
   private powerCooldown = 0
-  private tractionVelocity = new Map<string, THREE.Vector3>()
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
 
@@ -697,8 +694,6 @@ export class Mechanics {
       angle: 0,
       speed: 0,
       wireEnds,
-      reactionTravel: 0,
-      velocity: new THREE.Vector3(),
     })
     this.physicsDirty = true
     this.powerDirty = true
@@ -744,7 +739,7 @@ export class Mechanics {
     }
     for (const b of c.blocks) pushPlacement(b.rel, rotorPivot, q, b.id, b.state, b.origKey)
     for (const b of c.chassisBlocks) pushPlacement(b.rel, chassisPivot, chassisQ, b.id, b.state, b.origKey)
-    pushPlacement([0, 0, 0], chassisPivot, chassisQ, B.MOTOR, rotatedState(c.motorState, chassisQ), c.motorKey)
+    pushPlacement([0, 0, 0], chassisPivot, chassisQ, B.MOTOR, c.motorState, c.motorKey)
 
     // Preserve the entire rigid assembly if snapping it back to voxel cells
     // would intersect something. Lift the whole assembly as one unit.
@@ -1111,171 +1106,6 @@ export class Mechanics {
     this.rebuildGlue()
     this.powerDirty = true
     this.mechDirty = true
-  }
-
-  private canRotateContraption(c: Contraption, angle: number) {
-    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
-    const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
-    const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
-    const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
-    const extent = new THREE.Vector3(
-      0.5 * (Math.abs(ex.x) + Math.abs(ey.x) + Math.abs(ez.x)),
-      0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y)),
-      0.5 * (Math.abs(ex.z) + Math.abs(ey.z) + Math.abs(ez.z)),
-    )
-    for (const b of c.blocks) {
-      const center = new THREE.Vector3(...b.rel).applyQuaternion(q)
-        .add(c.group.position)
-      const minX = Math.floor(center.x - extent.x + 1e-5)
-      const maxX = Math.floor(center.x + extent.x - 1e-5)
-      const minY = Math.floor(center.y - extent.y + 1e-5)
-      const maxY = Math.floor(center.y + extent.y - 1e-5)
-      const minZ = Math.floor(center.z - extent.z + 1e-5)
-      const maxZ = Math.floor(center.z + extent.z - 1e-5)
-      if (minY < 0 || maxY >= 64) return false
-      // The ground is a support surface, not a wall that blocks the rotor.
-      // Ignore the fixed floor layers so an arm can press against them.
-      for (let y = Math.max(GROUND_LEVEL, minY); y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
-        const key = posKey(x, y, z)
-        if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
-      }
-    }
-    return true
-  }
-
-  /**
-   * Move the motor pivot and its rotating assembly as one voxel body. Used for
-   * ground-reaction locomotion; the assembly stays assembled and keeps its
-   * relative block layout instead of being torn down and rebuilt every step.
-   */
-  /**
-   * Translate the motor and its non-rotating glued chassis together by one
-   * voxel while leaving the output-side rotor independently articulated.
-   * The rotor pivot remains grid-aligned during chassis movement.
-   */
-  private translateContraption(c: Contraption, dx: number, dy: number, dz: number, angle = c.angle) {
-    const [mx, my, mz] = c.motorPos
-    const delta = new THREE.Vector3(dx, dy, dz)
-    const nx = mx + dx, ny = my + dy, nz = mz + dz
-    if (ny < GROUND_LEVEL || ny >= 63) return false
-
-    const oldKey = c.motorKey
-    const targetKey = posKey(nx, ny, nz)
-    const motorState = this.world.getState(mx, my, mz)
-    const moving: { oldKey: string; newKey: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
-    moving.push({ oldKey, newKey: targetKey, x: nx, y: ny, z: nz, id: B.MOTOR, state: motorState ? { ...motorState } : undefined })
-    for (const b of c.chassisBlocks) {
-      const x = mx + b.rel[0], y = my + b.rel[1], z = mz + b.rel[2]
-      const newX = x + dx, newY = y + dy, newZ = z + dz
-      if (newY < GROUND_LEVEL || newY >= 64) return false
-      const oldBlockKey = posKey(x, y, z)
-      const state = this.world.getState(x, y, z)
-      moving.push({
-        oldKey: oldBlockKey, newKey: posKey(newX, newY, newZ), x: newX, y: newY, z: newZ,
-        id: this.world.getBlock(x, y, z), state: state ? { ...state } : (b.state ? { ...b.state } : undefined),
-      })
-    }
-    const sourceKeys = new Set(moving.map((b) => b.oldKey))
-    const destinationKeys = new Set<string>()
-    for (const b of moving) {
-      if (destinationKeys.has(b.newKey)) return false
-      destinationKeys.add(b.newKey)
-      if (b.id === B.AIR) return false
-      if (!sourceKeys.has(b.newKey) && this.world.getBlock(b.x, b.y, b.z) !== B.AIR) return false
-    }
-
-    // Check the rotating output assembly at its new pivot before moving the
-    // motor/chassis. Chassis source cells are treated as part of this body.
-    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
-    const pivot = new THREE.Vector3(mx + 0.5, my + 0.5, mz + 0.5)
-    const axes = [
-      new THREE.Vector3(1, 0, 0).applyQuaternion(q),
-      new THREE.Vector3(0, 1, 0).applyQuaternion(q),
-      new THREE.Vector3(0, 0, 1).applyQuaternion(q),
-    ]
-    const ext = new THREE.Vector3(
-      0.5 * axes.reduce((n, a) => n + Math.abs(a.x), 0),
-      0.5 * axes.reduce((n, a) => n + Math.abs(a.y), 0),
-      0.5 * axes.reduce((n, a) => n + Math.abs(a.z), 0),
-    )
-    for (const b of c.blocks) {
-      const center = new THREE.Vector3(...b.rel).applyQuaternion(q).add(pivot).add(delta)
-      const minX = Math.floor(center.x - ext.x + 1e-4), maxX = Math.floor(center.x + ext.x - 1e-4)
-      const minY = Math.floor(center.y - ext.y + 1e-4), maxY = Math.floor(center.y + ext.y - 1e-4)
-      const minZ = Math.floor(center.z - ext.z + 1e-4), maxZ = Math.floor(center.z + ext.z - 1e-4)
-      if (minY < GROUND_LEVEL || maxY >= 64) return false
-      for (let y = minY; y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
-        const key = posKey(x, y, z)
-        if (sourceKeys.has(key) || key === oldKey) continue
-        if (this.world.getBlock(x, y, z) !== B.AIR) return false
-      }
-    }
-
-    // Remove all moving voxels first so the assembly can move into its own
-    // former cells without overwriting a neighbouring chassis block.
-    this.suppress = true
-    for (const b of moving) {
-      const [x, y, z] = parseKey(b.oldKey)
-      this.world.setBlock(x, y, z, B.AIR)
-    }
-    for (const b of moving) this.world.setBlock(b.x, b.y, b.z, b.id, b.state)
-    this.suppress = false
-
-    const keyMap = new Map(moving.map((b) => [b.oldKey, b.newKey]))
-    for (const b of moving) {
-      const entry = this.models.get(b.oldKey)
-      if (entry) {
-        this.models.delete(b.oldKey)
-        this.models.set(b.newKey, entry)
-        // Motor and chassis-mounted component models translate but do not
-        // inherit the rotor's quaternion.
-        entry.model.group.position.add(delta)
-      }
-      const mounted = this.mountedWheels.get(b.oldKey)
-      if (mounted) {
-        this.mountedWheels.delete(b.oldKey)
-        this.mountedWheels.set(b.newKey, mounted)
-      }
-      const glow = this.glows.get(b.oldKey)
-      if (glow) {
-        this.glows.delete(b.oldKey)
-        glow.position.add(delta)
-        this.glows.set(b.newKey, glow)
-      }
-    }
-
-    for (const wire of this.wires) {
-      let changed = false
-      if (keyMap.has(wire.a)) { wire.a = keyMap.get(wire.a)!; wire.pa.add(delta); changed = true }
-      if (keyMap.has(wire.b)) { wire.b = keyMap.get(wire.b)!; wire.pb.add(delta); changed = true }
-      if (changed) updateWireMesh(wire.mesh, wire.pa, wire.pb)
-    }
-
-    // Keep the moving chassis records relative to the motor. Refresh their
-    // keys/states so later steps use the current world state.
-    for (const b of c.chassisBlocks) {
-      b.origKey = posKey(nx + b.rel[0], ny + b.rel[1], nz + b.rel[2])
-      const state = this.world.getState(nx + b.rel[0], ny + b.rel[1], nz + b.rel[2])
-      b.state = state ? { ...state } : undefined
-    }
-
-    const power = this.motorPower.get(oldKey)
-    const direction = this.motorDirection.get(oldKey)
-    this.motorPower.delete(oldKey)
-    this.motorDirection.delete(oldKey)
-    if (power !== undefined) this.motorPower.set(targetKey, power)
-    if (direction !== undefined) this.motorDirection.set(targetKey, direction)
-    this.tractionVelocity.delete(oldKey)
-
-    c.group.position.copy(new THREE.Vector3(nx + 0.5, ny + 0.5, nz + 0.5))
-    c.motorPos = [nx, ny, nz]
-    c.motorKey = targetKey
-    this.contraptions.delete(oldKey)
-    this.contraptions.set(targetKey, c)
-    this.rebuildGlue()
-    this.physicsDirty = true
-    this.powerDirty = true
-    return true
   }
 
   /* ---------------- Frame update ---------------- */
