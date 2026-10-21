@@ -311,15 +311,32 @@ export class Mechanics {
     const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
     const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
     const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
+
+    // Conductivity acts as efficiency along a circuit: every conductive block
+    // contributes its material factor (e.g. iron 0.90, aluminum 0.95).
+    const efficiencyByRoot = new Map<string, number>()
+    for (const chunk of this.world.chunks.values()) {
+      const minX = chunk.cx * 16
+      const minZ = chunk.cz * 16
+      for (let y = GROUND_LEVEL; y <= chunk.maxY; y++) for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+        const conductivity = BLOCK_CONDUCTIVITY[this.world.getBlock(x, y, z)] ?? 0
+        if (conductivity <= 0) continue
+        const root = find(node(posKey(x, y, z), 'face:0'))
+        efficiencyByRoot.set(root, (efficiencyByRoot.get(root) ?? 1) * conductivity)
+      }
+    }
+    const efficiency = (terminal: string) => efficiencyByRoot.get(find(terminal)) ?? 1
     const leds = new Set<string>()
     this.motorPower.clear()
     for (const d of devices) {
       const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
       const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
       const source = activeBoxes.reduce((max, b) => Math.max(max, b.batteries), 0)
-      if (source <= 0 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
+      const transmission = efficiency(d.a) * efficiency(d.b)
+      const deliveredPower = source * transmission
+      if (source <= 0 || deliveredPower < 0.15 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
       if (d.id === B.LED && plusA) leds.add(d.key)
-      if (d.id === B.MOTOR) this.motorPower.set(d.key, source)
+      if (d.id === B.MOTOR) this.motorPower.set(d.key, deliveredPower)
     }
 
     const prev = this.world.poweredLeds
