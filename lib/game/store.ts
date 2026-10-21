@@ -1,0 +1,91 @@
+'use client'
+
+import { useSyncExternalStore } from 'react'
+import { type CategoryId, DEFAULT_HOTBAR, type ItemId } from './constants'
+
+export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls'
+
+export interface Settings {
+  renderDistance: number
+  sensitivity: number
+  fov: number
+}
+
+export interface GameState {
+  screen: Screen
+  returnScreen: Screen
+  hotbar: (ItemId | null)[]
+  selected: number
+  isTouch: boolean
+  flying: boolean
+  sneaking: boolean
+  hint: string | null
+  toast: { text: string; id: number } | null
+  itemLabel: { text: string; id: number } | null
+  debug: boolean
+  debugInfo: string
+  settings: Settings
+  inventoryTab: CategoryId
+  breakProgress: number
+}
+
+type Listener = () => void
+
+function createStore(initial: GameState) {
+  let state = initial
+  const listeners = new Set<Listener>()
+  return {
+    get: () => state,
+    set(partial: Partial<GameState> | ((s: GameState) => Partial<GameState>)) {
+      const next = typeof partial === 'function' ? partial(state) : partial
+      let changed = false
+      for (const k in next) {
+        if ((next as Record<string, unknown>)[k] !== (state as unknown as Record<string, unknown>)[k]) {
+          changed = true
+          break
+        }
+      }
+      if (!changed) return
+      state = { ...state, ...next }
+      for (const l of listeners) l()
+    },
+    subscribe(l: Listener) {
+      listeners.add(l)
+      return () => listeners.delete(l)
+    },
+  }
+}
+
+export const gameStore = createStore({
+  screen: 'title',
+  returnScreen: 'title',
+  hotbar: [...DEFAULT_HOTBAR],
+  selected: 0,
+  isTouch: false,
+  flying: false,
+  sneaking: false,
+  hint: null,
+  toast: null,
+  itemLabel: null,
+  debug: false,
+  debugInfo: '',
+  settings: { renderDistance: 8, sensitivity: 1, fov: 70 },
+  inventoryTab: 'all',
+  breakProgress: 0,
+})
+
+let toastId = 0
+export function showToast(text: string) {
+  gameStore.set({ toast: { text, id: ++toastId } })
+}
+export function showItemLabel(text: string) {
+  gameStore.set({ itemLabel: { text, id: ++toastId } })
+}
+
+export function useGame<T>(selector: (s: GameState) => T): T {
+  return useSyncExternalStore(
+    gameStore.subscribe,
+    () => selector(gameStore.get()),
+    () => selector(gameStore.get()),
+  )
+}
