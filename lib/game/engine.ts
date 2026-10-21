@@ -391,6 +391,19 @@ export class Engine {
     return { blocks: [...blocks.values()], wires }
   }
 
+  setLocalMultiplayerPlayer(data: Record<string, unknown> | null | undefined) {
+    if (!data) return
+    const finite = (value: unknown, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback
+    this.player.pos.set(finite(data.x, 0.5), finite(data.y, GROUND_LEVEL), finite(data.z, 0.5))
+    this.player.yaw = finite(data.yaw, 0)
+    this.player.pitch = Math.max(-Math.PI / 2 + 0.001, Math.min(Math.PI / 2 - 0.001, finite(data.pitch, 0)))
+    this.player.vel.set(finite(data.velocityX, 0), finite(data.velocityY, 0), finite(data.velocityZ, 0))
+    this.player.flying = Boolean(data.flying) && this.multiplayerCanFly
+    this.player.sneaking = Boolean(data.sneaking)
+    this.player.onGround = Boolean(data.onGround)
+    gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
+  }
+
   setMultiplayerBridge(bridge: MultiplayerBridge | null) {
     this.multiplayerBridge = bridge
     this.mech.setNetworkBlockPublisher(
