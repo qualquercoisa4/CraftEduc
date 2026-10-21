@@ -141,7 +141,7 @@ async function loadWires(roomId: string) {
   return (data ?? []).map((w) => ({ id: w.wire_id, ...(w.wire_data as Record<string, unknown>), ownerKey: w.owner_key }));
 }
 async function loadPlayers(roomId: string) {
-  const cutoff = new Date(Date.now() - 12_000).toISOString();
+  const cutoff = new Date(Date.now() - 20_000).toISOString();
   const { data, error } = await db!.from("crafteduc_multiplayer_players")
     .select("player_key,player_name,player_data,skin,updated_at")
     .eq("room_id", roomId).gte("updated_at", cutoff).order("updated_at", { ascending: true }).limit(64);
@@ -168,8 +168,14 @@ async function latestEventId(roomId: string) {
   return Number(data?.id ?? 0);
 }
 async function roomPayload(roomId: string, playerKey: unknown, world: Record<string, unknown>) {
-  const [blocks, wires, players, cursor, chat] = await Promise.all([
-    loadBlocks(roomId), loadWires(roomId), loadPlayers(roomId), latestEventId(roomId), loadChat(roomId),
+  // Capture the event cursor BEFORE loading the snapshot. If the cursor and
+  // blocks are loaded concurrently, a block edit can land between those
+  // queries: the snapshot misses it while the cursor skips its event forever.
+  // A cursor-first snapshot may replay an edit already included in the snapshot,
+  // which is safe because block and wire application are idempotent.
+  const cursor = await latestEventId(roomId);
+  const [blocks, wires, players, chat] = await Promise.all([
+    loadBlocks(roomId), loadWires(roomId), loadPlayers(roomId), loadChat(roomId),
   ]);
   let playerSave = null;
   if (validPlayerKey(playerKey)) {
