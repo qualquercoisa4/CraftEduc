@@ -89,6 +89,8 @@ export class Mechanics {
   private mechDirty = true
   private wireId = 0
   private gravityTimer = 0
+  private physicsDirty = true
+  private mountedWheels = new Map<string, { model: WheelModel; spin: number }>()
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
@@ -148,8 +150,24 @@ export class Mechanics {
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    this.powerDirty = true
+    const electrical = (id: number) => id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    if (electrical(oldId) || electrical(newId)) this.powerDirty = true
+    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
+    this.physicsDirty = true
+  }
+
+  mountWheel(x: number, y: number, z: number) {
+    const key = posKey(x, y, z)
+    if (this.mountedWheels.has(key)) return false
+    const entry = this.models.get(key)
+    if (!entry || entry.type !== 'motor') return false
+    const wheel = createArduinoWheelModel(this.world.getState(x, y, z)?.facing ?? 2)
+    wheel.group.position.set(0, 0, 0.43)
+    wheel.group.scale.setScalar(0.88)
+    entry.model.shaft.add(wheel.group)
+    this.mountedWheels.set(key, { model: wheel, spin: 0 })
     this.mechDirty = true
+    return true
   }
 
   /* ---------------- Interactions ---------------- */
@@ -609,8 +627,9 @@ export class Mechanics {
    */
   private updateGravity(dt: number) {
     this.gravityTimer += dt
-    if (this.gravityTimer >= 0.22) {
+    if (this.physicsDirty && this.gravityTimer >= 0.12) {
       this.gravityTimer = 0
+      this.physicsDirty = false
       this.detectUnsupportedBodies()
     }
     if (!this.fallingBodies.length) return
@@ -818,6 +837,11 @@ export class Mechanics {
       } else if (power > 0 && e.status !== 'stalled') {
         e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
         e.model.shaft.rotation.z = e.spin
+      }
+      const mounted = this.mountedWheels.get(key)
+      if (mounted) {
+        mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
+        mounted.model.rim.rotation.z = mounted.spin
       }
     }
 
