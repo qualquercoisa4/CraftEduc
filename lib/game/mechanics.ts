@@ -651,15 +651,28 @@ export class Mechanics {
 
   private canRotateContraption(c: Contraption, angle: number) {
     const q = new THREE.Quaternion().setFromAxisAngle(c.axis, angle)
+    const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
+    const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
+    const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+    const extent = new THREE.Vector3(
+      0.5 * (Math.abs(ex.x) + Math.abs(ey.x) + Math.abs(ez.x)),
+      0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y)),
+      0.5 * (Math.abs(ex.z) + Math.abs(ey.z) + Math.abs(ez.z)),
+    )
     for (const b of c.blocks) {
       const center = new THREE.Vector3(...b.rel).applyQuaternion(q)
         .add(new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5))
-      const x = Math.floor(center.x)
-      const y = Math.floor(center.y)
-      const z = Math.floor(center.z)
-      if (y < GROUND_LEVEL || y >= 64) return false
-      const key = posKey(x, y, z)
-      if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
+      const minX = Math.floor(center.x - extent.x + 1e-5)
+      const maxX = Math.floor(center.x + extent.x - 1e-5)
+      const minY = Math.floor(center.y - extent.y + 1e-5)
+      const maxY = Math.floor(center.y + extent.y - 1e-5)
+      const minZ = Math.floor(center.z - extent.z + 1e-5)
+      const maxZ = Math.floor(center.z + extent.z - 1e-5)
+      if (minY < GROUND_LEVEL || maxY >= 64) return false
+      for (let y = minY; y <= maxY; y++) for (let z = minZ; z <= maxZ; z++) for (let x = minX; x <= maxX; x++) {
+        const key = posKey(x, y, z)
+        if (key !== c.motorKey && this.world.getBlock(x, y, z) !== B.AIR) return false
+      }
     }
     return true
   }
