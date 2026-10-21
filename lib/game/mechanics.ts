@@ -1011,14 +1011,49 @@ export class Mechanics {
             const halfY=0.5*(Math.abs(ex.y)+Math.abs(ey.y)+Math.abs(ez.y))
             if (center.y-halfY < GROUND_LEVEL-1e-4) { floorContact=true; break }
           }
-          if (floorContact && this.translateContraption(c,0,1,0,nextAngle)) {
+          if (floorContact) {
+            // Resolve the impact at the attempted angle BEFORE lifting. The
+            // old code lifted vertically first, which removed ground contact
+            // before the horizontal reaction had a chance to move the chassis.
+            let pushX = 0, pushZ = 0, pushWeight = 0
+            for (const b of c.blocks) {
+              const rel = new THREE.Vector3(...b.rel).applyQuaternion(qNext)
+              const center = rel.clone().add(pivot)
+              const ex = new THREE.Vector3(1,0,0).applyQuaternion(qNext)
+              const ey = new THREE.Vector3(0,1,0).applyQuaternion(qNext)
+              const ez = new THREE.Vector3(0,0,1).applyQuaternion(qNext)
+              const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
+              const bottom = center.y - halfY
+              const tangent = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(nextSpeed)
+              if (bottom <= GROUND_LEVEL + 0.12 && tangent.y < -0.01) {
+                pushX -= tangent.x
+                pushZ -= tangent.z
+                pushWeight += 1
+              }
+            }
+            if (pushWeight) { pushX /= pushWeight; pushZ /= pushWeight }
+            let moved = false
+            if (pushWeight && Math.hypot(pushX,pushZ) > 0.01) {
+              const dx = Math.abs(pushX) >= Math.abs(pushZ) ? Math.sign(pushX) : 0
+              const dz = dx ? 0 : Math.sign(pushZ)
+              // Move opposite the arm sweep while raising the entire machine;
+              // this creates a real step instead of erasing/clipping the arm.
+              if (dx || dz) moved = this.translateContraption(c,dx,1,dz,nextAngle)
+            }
+            if (!moved) moved = this.translateContraption(c,0,1,0,nextAngle)
+            if (moved) {
+              c.speed = nextSpeed
+              c.angle = nextAngle
+              const movedModel=this.models.get(c.motorKey)
+              if (movedModel?.type==='motor') movedModel.status='driving'
+            } else {
+              model.status = 'stalled'
+              c.speed = 0
+            }
+          } else {
             c.speed = nextSpeed
             c.angle = nextAngle
-            const movedModel=this.models.get(c.motorKey)
-            if (movedModel?.type==='motor') movedModel.status='driving'
-          } else {
-            model.status = 'stalled'
-            c.speed = 0
+            if (model?.type === 'motor') model.status = 'driving'
           }
         } else {
           c.speed = nextSpeed
@@ -1039,47 +1074,57 @@ export class Mechanics {
         }
       }
       c.group.quaternion.setFromAxisAngle(c.axis, c.angle)
-      // Ground reaction acts for the entire interval in which a powered arm
-      // is touching the floor and its tangential velocity points into it.
-      // The equal-and-opposite impulse is opposite the arm's sweep.
+      // Continuous ground reaction. Evaluate the current and next angle so a
+      // fast arm cannot skip the narrow contact interval between frames.
       if (power > 0 && Math.abs(c.axis.y) < 0.5 && c.blocks.length) {
-        const q = new THREE.Quaternion().setFromAxisAngle(c.axis, c.angle)
         const pivot = new THREE.Vector3(c.motorPos[0] + 0.5, c.motorPos[1] + 0.5, c.motorPos[2] + 0.5)
-        let reactionX = 0, reactionZ = 0, liftImpulse = 0
-        for (const b of c.blocks) {
-          const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
-          const center = rel.clone().add(pivot)
+        let reactionX = 0, reactionZ = 0, liftImpulse = 0, contacts = 0
+        const sampleAngles = [c.angle, c.angle - c.speed * dt * 0.5, c.angle - c.speed * dt]
+        for (const sampleAngle of sampleAngles) {
+          const q = new THREE.Quaternion().setFromAxisAngle(c.axis, sampleAngle)
           const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
           const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
           const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
           const halfY = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
-          const bottom = center.y - halfY
-          const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
-          const touchingFloor = bottom <= GROUND_LEVEL + 0.08 && bottom >= GROUND_LEVEL - 0.65
-          if (touchingFloor && tangential.y < -0.015) {
-            const depth = Math.max(0.15, Math.min(1, (GROUND_LEVEL + 0.08 - bottom) * 2 + 0.15))
-            reactionX -= tangential.x * depth
-            reactionZ -= tangential.z * depth
-            liftImpulse += -tangential.y * depth
+          for (const b of c.blocks) {
+            const rel = new THREE.Vector3(...b.rel).applyQuaternion(q)
+            const center = rel.clone().add(pivot)
+            const bottom = center.y - halfY
+            const tangential = new THREE.Vector3().crossVectors(c.axis, rel).multiplyScalar(c.speed)
+            // Count near-floor contact even before numerical penetration. A
+            // block that is moving away from the floor contributes no push.
+            if (bottom <= GROUND_LEVEL + 0.12 && bottom >= GROUND_LEVEL - 0.55 && tangential.y < 0.03) {
+              const weight = Math.max(0.2, Math.min(1, (GROUND_LEVEL + 0.12 - bottom) / 0.25 + 0.2))
+              reactionX -= tangential.x * weight
+              reactionZ -= tangential.z * weight
+              liftImpulse += Math.max(0, -tangential.y) * weight
+              contacts++
+            }
           }
         }
-        const horizontalForce = Math.hypot(reactionX, reactionZ)
-        if (horizontalForce > 0.015) {
-          c.reactionTravel += Math.min(0.35, horizontalForce * dt * 0.95)
-          if (c.reactionTravel >= 0.28) {
+        if (contacts > 0) {
+          // Average samples to make force stable across frame rates.
+          reactionX /= contacts
+          reactionZ /= contacts
+          liftImpulse /= contacts
+          const horizontalForce = Math.hypot(reactionX, reactionZ)
+          // Do not wait for a large threshold: accumulate only a small fraction
+          // of the opposing sweep, so movement continues during the whole contact.
+          c.reactionTravel += Math.min(0.2, horizontalForce * dt * 1.6)
+          if (c.reactionTravel >= 0.12) {
             const dx = Math.abs(reactionX) >= Math.abs(reactionZ) ? Math.sign(reactionX) : 0
             const dz = dx ? 0 : Math.sign(reactionZ)
             if (dx || dz) {
               let moved = this.translateContraption(c, dx, 0, dz)
-              if (!moved && liftImpulse > 0.02) {
+              if (!moved && liftImpulse > 0.005) {
                 moved = this.translateContraption(c, 0, 1, 0)
                 if (moved) moved = this.translateContraption(c, dx, 0, dz)
               }
-              if (moved) c.reactionTravel = Math.max(0, c.reactionTravel - 0.28)
-              else c.reactionTravel = Math.min(c.reactionTravel, 0.35)
+              if (moved) c.reactionTravel = Math.max(0, c.reactionTravel - 0.12)
+              else c.reactionTravel = Math.min(c.reactionTravel, 0.24)
             }
           }
-        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.3)
+        } else c.reactionTravel = Math.max(0, c.reactionTravel - dt * 0.5)
       }
       if (c.wireEnds.length) {
         c.group.updateMatrixWorld(true)
