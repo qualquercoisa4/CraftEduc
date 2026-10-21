@@ -1472,23 +1472,43 @@ export class Mechanics {
       const index = this.fallingBodies.findIndex((body) => body.blocks.some((block) => block.originKey === key))
       if (index < 0) return null
       const body = this.fallingBodies[index]
-      const rotation = body.body.rotation()
-      const euler = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w), 'XYZ')
-      euler.set(
-        Math.round(euler.x / HALF_PI) * HALF_PI,
-        Math.round(euler.y / HALF_PI) * HALF_PI,
-        Math.round(euler.z / HALF_PI) * HALF_PI,
-      )
-      body.body.setRotation(new THREE.Quaternion().setFromEuler(euler), true)
+      const originalRotation = body.body.rotation()
+      const originalLinear = body.body.linvel()
+      const originalAngular = body.body.angvel()
+      const originalQ = new THREE.Quaternion(originalRotation.x, originalRotation.y, originalRotation.z, originalRotation.w)
+      const euler = new THREE.Euler().setFromQuaternion(originalQ, 'XYZ')
+      const base = [
+        Math.round(euler.x / HALF_PI),
+        Math.round(euler.y / HALF_PI),
+        Math.round(euler.z / HALF_PI),
+      ]
+      const candidates: { q: THREE.Quaternion; score: number }[] = []
+      for (let x = 0; x < 4; x++) for (let y = 0; y < 4; y++) for (let z = 0; z < 4; z++) {
+        const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(
+          ((base[0] + x) % 4) * HALF_PI,
+          ((base[1] + y) % 4) * HALF_PI,
+          ((base[2] + z) % 4) * HALF_PI,
+          'XYZ',
+        ))
+        candidates.push({ q, score: 1 - Math.abs(q.dot(originalQ)) })
+      }
+      candidates.sort((a, b) => a.score - b.score)
       body.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
       body.body.setAngvel({ x: 0, y: 0, z: 0 }, true)
-      const keyMap = this.landBody(body)
-      if (!keyMap) return null
-      this.fallingBodies.splice(index, 1)
-      const target = keyMap.get(key)
-      if (!target) return null
-      const [x, y, z] = parseKey(target)
-      return { x, y, z, id: this.world.getBlock(x, y, z) }
+      for (const candidate of candidates) {
+        body.body.setRotation(candidate.q, true)
+        const keyMap = this.landBody(body)
+        if (!keyMap) continue
+        this.fallingBodies.splice(index, 1)
+        const target = keyMap.get(key)
+        if (!target) return null
+        const [x, y, z] = parseKey(target)
+        return { x, y, z, id: this.world.getBlock(x, y, z) }
+      }
+      body.body.setRotation(originalQ, true)
+      body.body.setLinvel(originalLinear, true)
+      body.body.setAngvel(originalAngular, true)
+      return null
     }
 
     for (const c of [...this.contraptions.values()]) {
@@ -1496,14 +1516,19 @@ export class Mechanics {
         ? c.blocks.some((block) => block.origKey === key)
         : c.motorKey === key || c.chassisBlocks.some((block) => block.origKey === key)
       if (!contains) continue
-      // Snapping to a quarter-turn makes the resulting voxels unambiguous while
-      // preserving the whole assembly; the motor can power it again next frame.
-      const turns = ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4
-      const keyMap = this.disassemble(c, turns)
-      const target = keyMap?.get(key)
-      if (!target) return null
-      const [x, y, z] = parseKey(target)
-      return { x, y, z, id: this.world.getBlock(x, y, z) }
+      // Try every quarter-turn, starting with the nearest, until the assembly
+      // can be safely restored to distinct voxel cells without intersecting
+      // another object. This keeps editing reliable even mid-rotation.
+      const preferred = ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4
+      for (let offset = 0; offset < 4; offset++) {
+        const turns = (preferred + offset) % 4
+        const keyMap = this.disassemble(c, turns)
+        const target = keyMap?.get(key)
+        if (!target) continue
+        const [x, y, z] = parseKey(target)
+        return { x, y, z, id: this.world.getBlock(x, y, z) }
+      }
+      return null
     }
     return null
   }
