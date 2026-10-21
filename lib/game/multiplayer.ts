@@ -227,7 +227,8 @@ export class MultiplayerClient {
       canFly: () => this.isHost || this.rules.playersCanFly,
       canBreakBlock: (x, y, z, actorKey) => this.canBreakBlock(x, y, z, actorKey),
       movingAction: (intent) => { void this.request('request_moving_action', { intent: { ...intent, playerKey: this.playerKey, playerName: this.playerName } }).catch((error) => this.callbacks.onError?.(error instanceof Error ? error.message : 'Não foi possível enviar a ação da máquina.')) },
-      blockChanged: (x, y, z, block, state) => { void this.publishBlock(x, y, z, block, state) },
+      blockChanged: (x, y, z, block, state, ownerKey) => { void this.publishBlock(x, y, z, block, state, ownerKey) },
+      ownerForBlock: (x, y, z) => this.lastBlockOwners.get(`${x},${y},${z}`) ?? null,
       wireCreated: (wire) => { void this.publishWire(wire) },
       wiresRemovedAt: (key) => { void this.removeWiresAt(key) },
     })
@@ -301,16 +302,19 @@ export class MultiplayerClient {
     }
   }
 
-  private async publishBlock(x: number, y: number, z: number, block: number, state?: BlockState) {
+  private async publishBlock(x: number, y: number, z: number, block: number, state?: BlockState, ownerKeyOverride?: string | null) {
     const key = `${x},${y},${z}`
-    if (block === 0) this.lastBlockOwners.delete(key)
-    else this.lastBlockOwners.set(key, this.playerKey)
+    const desiredOwner = block === 0 ? null : (this.isHost && ownerKeyOverride !== undefined ? ownerKeyOverride : this.playerKey)
+    if (desiredOwner) this.lastBlockOwners.set(key, desiredOwner)
+    else this.lastBlockOwners.delete(key)
     try {
-      const data = await this.request<{ block: BlockEdit }>('save_block', { x, y, z, block, state })
+      const body: Record<string, unknown> = { x, y, z, block, state }
+      if (this.isHost && ownerKeyOverride !== undefined) body.ownerKey = ownerKeyOverride
+      const data = await this.request<{ block: BlockEdit }>('save_block', body)
       if (data.block?.ownerKey) this.lastBlockOwners.set(key, data.block.ownerKey)
+      else this.lastBlockOwners.delete(key)
     } catch (error) {
       this.callbacks.onError?.(error instanceof Error ? error.message : 'Não foi possível sincronizar o bloco.')
-      // Reconcile a rejected edit with the server's last accepted version on the next snapshot.
       void this.poll()
     }
   }
