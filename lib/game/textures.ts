@@ -406,9 +406,12 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(10, 7, 4, 2, [18, 93, 184])
       rect(4, 2, 8, 1, [245, 245, 240])
       rect(7, 1, 2, 3, [245, 245, 240])
-      for (const [x, color] of [[4, [86, 56, 45]], [7, [201, 54, 53]], [10, [244, 206, 49]]] as [number, number[]][]) {
-        rect(x, 12, 1, 3, color)
-      }
+      const leads: { x: number; color: RGBA }[] = [
+        { x: 4, color: [86, 56, 45] },
+        { x: 7, color: [201, 54, 53] },
+        { x: 10, color: [244, 206, 49] },
+      ]
+      for (const lead of leads) rect(lead.x, 12, 1, 3, lead.color)
       break
     }
     case 'paintbrush': {
