@@ -18,6 +18,7 @@ export const B = {
   SWITCH: 11,
   PROXIMITY_SENSOR: 12,
   COLOR_BLOCK: 13,
+  SERVO: 14,
 } as const
 
 export const COLOR_VARIANTS = [
@@ -60,6 +61,7 @@ export const BLOCK_CONDUCTIVITY: Readonly<Record<number, number>> = {
   [B.WHEEL]: 0,
   [B.SWITCH]: 0,
   [B.PROXIMITY_SENSOR]: 0,
+  [B.SERVO]: 0,
 }
 
 export function blockConductivity(id: number) {
@@ -79,11 +81,11 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR
+  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO
 }
 
 export function isModelBlock(id: number) {
-  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR
+  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
@@ -115,6 +117,7 @@ export type ItemId =
   | 'wheel'
   | 'switch'
   | 'proximity_sensor'
+  | 'servo'
   | 'programming_tablet'
   | 'paintbrush'
   | `colored_block_${ColorVariantId}`
@@ -181,6 +184,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'components',
     block: B.PROXIMITY_SENSOR,
   },
+  servo: {
+    name: 'Servo motor SG90',
+    description: 'Servo de posição. Conecte GND (marrom), VCC (vermelho) e sinal (amarelo); programe as posições de 0° a 180° pelo tablet.',
+    category: 'motors',
+    block: B.SERVO,
+  },
   programming_tablet: {
     name: 'Tablet de Programação',
     description: 'Use na mão para abrir e editar a programação de componentes compatíveis.',
@@ -246,6 +255,7 @@ export const ITEM_ORDER: ItemId[] = [
   'led',
   'switch',
   'proximity_sensor',
+  'servo',
   'motor',
   'wire',
   'glue',
@@ -270,6 +280,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.LED]: 'led',
   [B.SWITCH]: 'switch',
   [B.PROXIMITY_SENSOR]: 'proximity_sensor',
+  [B.SERVO]: 'servo',
   [B.COLOR_BLOCK]: 'colored_block_red',
   [B.MOTOR]: 'motor',
   [B.BATTERY_BOX]: 'battery_box',
