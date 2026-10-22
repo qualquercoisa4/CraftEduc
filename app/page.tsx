@@ -9,6 +9,7 @@ import { MobileControls } from '@/components/game/mobile-controls'
 import { MultiplayerPanel } from '@/components/game/multiplayer-panel'
 import { ProximitySensorConfig } from '@/components/game/proximity-sensor-config'
 import { BrushColorPicker } from '@/components/game/brush-color-picker'
+import { ServoConfig } from '@/components/game/servo-config'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 
 export default function Page() {
@@ -124,6 +125,7 @@ export default function Page() {
       {!bootError && screen === 'inventory' && <Inventory />}
       {!bootError && screen === 'sensor_config' && <ProximitySensorConfig />}
       {!bootError && screen === 'brush_color' && <BrushColorPicker />}
+      {!bootError && screen === 'servo_config' && <ServoConfig />}
 
       {!bootError && screen === 'paused' && (
         <section className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-4 text-center backdrop-blur-[2px]">
