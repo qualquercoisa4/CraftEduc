@@ -276,7 +276,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.WHEEL]: 'wheel',
 }
 
-export function isWireItem(item: ItemId | null | undefined): item is ItemId {
+export function isWireItem(item: ItemId | null | undefined): item is 'wire' | `wire_${ColorVariantId}` {
   return item === 'wire' || Boolean(item?.startsWith('wire_'))
 }
 

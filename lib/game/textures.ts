@@ -330,9 +330,17 @@ function drawItemPixels(item: ItemId, px: Px) {
   const blockVariant = COLOR_VARIANTS.find((variant) => item === `colored_block_${variant.id}`)
   if (blockVariant) {
     const rgb = Number.parseInt(blockVariant.color.slice(1), 16)
-    const base: RGBA = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
-    const lighten = (factor: number): RGBA => base.map((channel) => Math.min(255, Math.round(channel + (255 - channel) * factor))) as RGBA
-    const darken = (factor: number): RGBA => base.map((channel) => Math.round(channel * (1 - factor))) as RGBA
+    const base: [number, number, number] = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
+    const lighten = (factor: number): RGBA => [
+      Math.min(255, Math.round(base[0] + (255 - base[0]) * factor)),
+      Math.min(255, Math.round(base[1] + (255 - base[1]) * factor)),
+      Math.min(255, Math.round(base[2] + (255 - base[2]) * factor)),
+    ]
+    const darken = (factor: number): RGBA => [
+      Math.round(base[0] * (1 - factor)),
+      Math.round(base[1] * (1 - factor)),
+      Math.round(base[2] * (1 - factor)),
+    ]
     rect(2, 2, 12, 12, base)
     rect(2, 2, 12, 2, lighten(0.45))
     rect(2, 2, 2, 12, lighten(0.18))
@@ -345,8 +353,12 @@ function drawItemPixels(item: ItemId, px: Px) {
     : undefined
   if (wireVariant) {
     const rgb = Number.parseInt(wireVariant.color.slice(1), 16)
-    const wireRgb: RGBA = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
-    const shadeRgb: RGBA = wireRgb.map((channel) => Math.round(channel * 0.68)) as RGBA
+    const wireRgb: [number, number, number] = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
+    const shadeRgb: RGBA = [
+      Math.round(wireRgb[0] * 0.68),
+      Math.round(wireRgb[1] * 0.68),
+      Math.round(wireRgb[2] * 0.68),
+    ]
     rect(2, 2, 2, 12, [74, 74, 80])
     rect(12, 2, 2, 12, [74, 74, 80])
     for (let y = 4; y < 12; y++) rect(4, y, 8, 1, y % 2 ? wireRgb : shadeRgb)
