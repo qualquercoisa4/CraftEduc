@@ -837,14 +837,19 @@ export class Engine {
     this.swing = 0
     this.lastUseWasPlace = false
 
+    // Resolve the block from the voxel grid as well as the raycast payload:
+    // custom 3D models can report their mesh hit separately from the block id.
+    const targetBlockId = hit
+      ? (this.world.getBlock(hit.x, hit.y, hit.z) || hit.id)
+      : B.AIR
     // Open a programmable component only when the programming tablet is held.
     // Other items, especially wire, continue through their normal interaction paths.
-    if (hit?.id === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
+    if (hit && targetBlockId === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
       gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
       return
     }
-    if (hit?.id === B.SERVO && item === 'programming_tablet') {
+    if (hit && targetBlockId === B.SERVO && item === 'programming_tablet') {
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
       gameStore.set({ servoConfigKey: key, screen: 'servo_config' })
       return
