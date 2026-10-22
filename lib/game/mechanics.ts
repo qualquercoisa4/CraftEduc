@@ -2871,9 +2871,16 @@ export class Mechanics {
       // angle from the relative quaternion; Rapier's impulse joint exposes no
       // public angle() accessor in the version used by this project.
       const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
-      c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
-      if (c.angle < 0) c.angle += Math.PI * 2
-      if (c.actuatorId === B.SERVO) c.angle = THREE.MathUtils.clamp(c.angle, 0, Math.PI)
+      const signedAngle = 2 * Math.atan2(projected, relativeRotorQ.w)
+      if (c.actuatorId === B.SERVO) {
+        // Do not wrap a tiny negative servo angle to almost 360 degrees. Near
+        // the zero stop, floating-point noise should stay at 0°, not command
+        // a full sweep to the opposite limit.
+        c.angle = THREE.MathUtils.clamp(signedAngle, 0, Math.PI)
+      } else {
+        c.angle = signedAngle
+        if (c.angle < 0) c.angle += Math.PI * 2
+      }
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor' || motor?.type === 'servo') motor.model.shaft.rotation.z = c.angle
       for (const extra of c.extraRotors ?? []) {
