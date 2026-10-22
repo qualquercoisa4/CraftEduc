@@ -200,7 +200,7 @@ async function main() {
   if (!mountedWheel) throw new Error('mounted wheel missing')
   for (let face = 0; face < 6; face++) {
     scene.updateMatrixWorld(true)
-    const motorOrientation = wheelMotorEntry.model.group.getWorldQuaternion(new THREE.Quaternion())
+    const motorOrientation = wheelMotorGroup.getWorldQuaternion(new THREE.Quaternion())
     const wheelOrientation = mountedWheel.model.group.getWorldQuaternion(new THREE.Quaternion())
     assert.ok(wheelOrientation.angleTo(motorOrientation) < 1e-5, `mounted wheel axle must follow motor facing ${face}`)
     mechanics.rotateMotor(21, 5, 20)
