@@ -3,6 +3,8 @@ import { sfx, unlockAudio } from './audio'
 import {
   B,
   BLOCK_TO_ITEM,
+  COLOR_VARIANTS,
+  isWireItem,
   CHUNK_SIZE,
   DIRS,
   DIR_NAMES,
@@ -496,7 +498,7 @@ export class Engine {
     }
 
     const item = intent.item
-    if (item === 'wire') {
+    if (isWireItem(item)) {
       showToast('Conecte fios após a máquina ser estabilizada')
       return
     }
@@ -708,7 +710,8 @@ export class Engine {
       return
     }
     if (e.code === 'Escape') {
-      if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
+      if (s.screen === 'brush_color') gameStore.set({ screen: s.returnScreen === 'brush_color' ? 'playing' : s.returnScreen })
+      else if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
       else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
       else if (s.screen === 'paused') gameStore.set({ screen: 'playing' })
@@ -763,6 +766,11 @@ export class Engine {
   private onMouseDown(e: MouseEvent) {
     const s = gameStore.get()
     if (s.screen !== 'playing' || s.isTouch) return
+    if (e.button === 2 && e.shiftKey && this.selectedItem() === 'paintbrush') {
+      e.preventDefault()
+      gameStore.set({ returnScreen: 'playing', screen: 'brush_color' })
+      return
+    }
     if (!this.locked && !this.lockFailed) {
       this.requestLock()
       return
@@ -833,7 +841,7 @@ export class Engine {
     // Articulated bodies are authoritative on the host. Guests send an intent
     // rather than disassembling their local visual replica independently.
     if (hit?.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
-      if (item === 'wire') {
+      if (isWireItem(item)) {
         showToast('Conecte fios após a máquina ser estabilizada')
         return
       }
@@ -866,7 +874,7 @@ export class Engine {
       this.target = hit
     }
 
-    if (item === 'wire') {
+    if (isWireItem(item)) {
       if (!hit) return
       const key = posKey(hit.x, hit.y, hit.z)
       const terminal = this.mech.resolveTerminal(key, hit.point, hit.face)
@@ -887,7 +895,7 @@ export class Engine {
       }
       this.mech.addWire(
         this.wireStart.key, this.wireStart.point, this.wireStart.terminal,
-        key, terminal.point.clone(), terminal.terminal,
+        key, terminal.point.clone(), terminal.terminal, ITEMS[item]?.color ?? '#fdd835',
       )
       const createdWire = this.mech.wires[this.mech.wires.length - 1]
       if (createdWire) this.multiplayerBridge?.wireCreated(createdWire)
@@ -921,6 +929,16 @@ export class Engine {
         sfx.click()
         showToast('Interruptor ' + (enabled ? 'ligado' : 'desligado'))
       }
+      return
+    }
+
+    if (item === 'paintbrush') {
+      if (!hit || hit.id === B.AIR) return
+      const previous = this.world.getState(hit.x, hit.y, hit.z)
+      this.world.setBlock(hit.x, hit.y, hit.z, hit.id, { ...(previous ?? {}), color: gameStore.get().brushColor })
+      this.world.markBlockDirty(hit.x, hit.y, hit.z)
+      sfx.click()
+      showToast(`Bloco pintado: ${gameStore.get().brushColor.toUpperCase()}`)
       return
     }
 
@@ -973,7 +991,8 @@ export class Engine {
     if (py < 0 || py >= WORLD_HEIGHT) return
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
-    const state: import('./world').BlockState | undefined = block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
@@ -985,7 +1004,7 @@ export class Engine {
     this.swing = 0
     let hit = this.target
     const item = this.selectedItem()
-    if (item === 'wire' && this.wireStart) {
+    if (isWireItem(item) && this.wireStart) {
       this.wireStart = null
       showToast('Fio cancelado')
       return
@@ -1003,7 +1022,7 @@ export class Engine {
       })
       return
     }
-    if (item === 'wire') {
+    if (isWireItem(item)) {
       const removed = this.mech.removeWiresAt(posKey(hit.x, hit.y, hit.z))
       if (removed) {
         this.multiplayerBridge?.wiresRemovedAt(posKey(hit.x, hit.y, hit.z))
@@ -1036,7 +1055,12 @@ export class Engine {
   pickBlock() {
     const hit = this.target
     if (!hit) return
-    const item = BLOCK_TO_ITEM[hit.id]
+    let item: ItemId | undefined = BLOCK_TO_ITEM[hit.id]
+    if (hit.id === B.COLOR_BLOCK) {
+      const color = this.world.getState(hit.x, hit.y, hit.z)?.color
+      const variant = COLOR_VARIANTS.find((candidate) => candidate.color.toLowerCase() === color?.toLowerCase()) ?? COLOR_VARIANTS[0]
+      item = `colored_block_${variant.id}`
+    }
     if (!item) return
     const s = gameStore.get()
     const existing = s.hotbar.indexOf(item)
@@ -1451,7 +1475,7 @@ export class Engine {
     const hit = this.target
     const use = s.isTouch ? 'Toque' : 'Botão direito'
     let hint: string | null = null
-    if (item === 'wire') {
+    if (isWireItem(item)) {
       hint = this.wireStart
         ? `${use} em um terminal para terminar o fio  •  ${s.isTouch ? 'Segure' : 'Botão esquerdo'} para cancelar`
         : `${use} em um terminal para começar o fio`

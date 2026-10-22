@@ -8,6 +8,7 @@ import { Inventory } from '@/components/game/inventory'
 import { MobileControls } from '@/components/game/mobile-controls'
 import { MultiplayerPanel } from '@/components/game/multiplayer-panel'
 import { ProximitySensorConfig } from '@/components/game/proximity-sensor-config'
+import { BrushColorPicker } from '@/components/game/brush-color-picker'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 
 export default function Page() {
@@ -122,6 +123,7 @@ export default function Page() {
 
       {!bootError && screen === 'inventory' && <Inventory />}
       {!bootError && screen === 'sensor_config' && <ProximitySensorConfig />}
+      {!bootError && screen === 'brush_color' && <BrushColorPicker />}
 
       {!bootError && screen === 'paused' && (
         <section className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-4 text-center backdrop-blur-[2px]">
@@ -146,6 +148,7 @@ export default function Page() {
               <p><strong>Blocos:</strong> botão esquerdo quebra; botão direito coloca ou usa. Teclas 1–9 selecionam a barra.</p>
               <p><strong>Inventário:</strong> E abre e fecha. Pressione Espaço duas vezes para alternar o voo.</p>
               <p><strong>Robótica:</strong> use fios para conectar componentes, coloque pilhas na caixa de bateria e aplique cola quente para fixar peças.</p>
+              <p><strong>Cores:</strong> equipe o pincel, use Shift + botão direito para escolher uma cor e botão direito sobre um bloco para pintá-lo.</p>
               <p><strong>Celular:</strong> use o direcional esquerdo para andar e os botões à direita para pular, agachar ou voar.</p>
             </div>
             <button className="mc-btn mt-5" onClick={returnFromSubscreen}>Voltar</button>

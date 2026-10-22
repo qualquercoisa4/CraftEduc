@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { B, type ItemId } from './constants'
+import { B, COLOR_VARIANTS, type ItemId } from './constants'
 
 export const TILE = 16
 
@@ -12,7 +12,8 @@ export const T = {
   LED_ON: 5,
   ALUMINUM: 6,
   GEAR: 7,
-  COUNT: 8,
+  COLOR_BLOCK: 8,
+  COUNT: 9,
 } as const
 
 export function tileFor(id: number, powered: boolean): number {
@@ -31,6 +32,8 @@ export function tileFor(id: number, powered: boolean): number {
       return T.ALUMINUM
     case B.GEAR:
       return T.GEAR
+    case B.COLOR_BLOCK:
+      return T.COLOR_BLOCK
     default:
       return T.IRON
   }
@@ -222,6 +225,17 @@ const tileDrawers: Record<number, (px: Px, r: () => number) => void> = {
         px(x, y, c)
       }
   },
+  [T.COLOR_BLOCK]: (px, r) => {
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        let c: RGBA = jitter([246, 246, 246], r, 8)
+        if (x === 0 || y === 0 || x === 15 || y === 15) c = [180, 180, 180]
+        else if (x === 1 || y === 1) c = [255, 255, 255]
+        else if (x === 14 || y === 14) c = [220, 220, 220]
+        px(x, y, c)
+      }
+    }
+  },
 }
 
 let atlasCanvas: HTMLCanvasElement | null = null
@@ -313,6 +327,32 @@ function drawItemPixels(item: ItemId, px: Px) {
   const rect = (x: number, y: number, w: number, h: number, c: RGBA) => {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) px(x + i, y + j, c)
   }
+  const blockVariant = COLOR_VARIANTS.find((variant) => item === `colored_block_${variant.id}`)
+  if (blockVariant) {
+    const rgb = Number.parseInt(blockVariant.color.slice(1), 16)
+    const base: RGBA = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
+    const lighten = (factor: number): RGBA => base.map((channel) => Math.min(255, Math.round(channel + (255 - channel) * factor))) as RGBA
+    const darken = (factor: number): RGBA => base.map((channel) => Math.round(channel * (1 - factor))) as RGBA
+    rect(2, 2, 12, 12, base)
+    rect(2, 2, 12, 2, lighten(0.45))
+    rect(2, 2, 2, 12, lighten(0.18))
+    rect(12, 2, 2, 12, darken(0.28))
+    rect(4, 6, 8, 1, lighten(0.28))
+    return
+  }
+  const wireVariant = item.startsWith('wire_')
+    ? COLOR_VARIANTS.find((variant) => item === `wire_${variant.id}`)
+    : undefined
+  if (wireVariant) {
+    const rgb = Number.parseInt(wireVariant.color.slice(1), 16)
+    const wireRgb: RGBA = [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255]
+    const shadeRgb: RGBA = wireRgb.map((channel) => Math.round(channel * 0.68)) as RGBA
+    rect(2, 2, 2, 12, [74, 74, 80])
+    rect(12, 2, 2, 12, [74, 74, 80])
+    for (let y = 4; y < 12; y++) rect(4, y, 8, 1, y % 2 ? wireRgb : shadeRgb)
+    rect(11, 2, 2, 2, wireRgb)
+    return
+  }
   switch (item) {
     case 'switch': {
       // Pixel-art rocker, four contacts and a blue circuit board.
@@ -342,6 +382,14 @@ function drawItemPixels(item: ItemId, px: Px) {
       }
       rect(4, 12, 1, 3, [216, 178, 74]); rect(7, 12, 1, 3, [216, 178, 74])
       rect(10, 12, 1, 3, [216, 178, 74]); rect(13, 12, 1, 3, [216, 178, 74])
+      break
+    }
+    case 'paintbrush': {
+      rect(3, 10, 9, 3, [109, 72, 42])
+      rect(8, 4, 4, 8, [170, 120, 68])
+      rect(6, 2, 6, 5, [229, 57, 53])
+      rect(7, 1, 4, 2, [250, 128, 114])
+      px(9, 4, [255, 255, 255])
       break
     }
     case 'programming_tablet': {

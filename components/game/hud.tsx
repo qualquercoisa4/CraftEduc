@@ -126,6 +126,7 @@ function Debug() {
 export function Hud() {
   const isTouch = useGame((s) => s.isTouch)
   const flying = useGame((s) => s.flying)
+  const selectedItem = useGame((s) => s.hotbar[s.selected])
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
       <Crosshair />
@@ -134,6 +135,19 @@ export function Hud() {
         <p className="mc-shadow absolute left-1/2 top-3 -translate-x-1/2 text-sm text-[#55ffff] md:text-base" aria-live="polite">
           Voando
         </p>
+      )}
+      {isTouch && selectedItem === 'paintbrush' && (
+        <button
+          type="button"
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            gameStore.set({ returnScreen: 'playing', screen: 'brush_color' })
+          }}
+          className="pointer-events-auto absolute bottom-24 left-1/2 -translate-x-1/2 border-2 border-black bg-black/70 px-3 py-2 text-sm text-white"
+          style={{ boxShadow: 'inset 0 0 0 2px #5d5d5d' }}
+        >
+          Cor do pincel
+        </button>
       )}
       <div
         className="absolute inset-x-0 flex flex-col items-center gap-2"

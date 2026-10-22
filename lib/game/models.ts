@@ -325,10 +325,22 @@ export function wireCurve(a: THREE.Vector3, b: THREE.Vector3) {
   return new THREE.QuadraticBezierCurve3(a.clone(), mid, b.clone())
 }
 
-export function createWireMesh(a: THREE.Vector3, b: THREE.Vector3) {
+const coloredWireMaterials = new Map<string, THREE.MeshLambertMaterial>()
+
+function wireMaterial(color: string) {
+  const normalized = color.toLowerCase()
+  let material = coloredWireMaterials.get(normalized)
+  if (!material) {
+    material = new THREE.MeshLambertMaterial({ color: normalized })
+    coloredWireMaterials.set(normalized, material)
+  }
+  return material
+}
+
+export function createWireMesh(a: THREE.Vector3, b: THREE.Vector3, color = '#fdd835') {
   const m = getMaterials()
   const group = new THREE.Group()
-  const tube = new THREE.Mesh(new THREE.TubeGeometry(wireCurve(a, b), 20, 0.035, 5, false), m.wire)
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(wireCurve(a, b), 20, 0.035, 5, false), wireMaterial(color))
   group.add(tube)
   for (const p of [a, b]) {
     const blob = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 0.1), m.solder)
@@ -338,10 +350,11 @@ export function createWireMesh(a: THREE.Vector3, b: THREE.Vector3) {
   return group
 }
 
-export function updateWireMesh(group: THREE.Group, a: THREE.Vector3, b: THREE.Vector3) {
+export function updateWireMesh(group: THREE.Group, a: THREE.Vector3, b: THREE.Vector3, color?: string) {
   const tube = group.children[0] as THREE.Mesh
   tube.geometry.dispose()
   tube.geometry = new THREE.TubeGeometry(wireCurve(a, b), 20, 0.035, 5, false)
+  if (color) tube.material = wireMaterial(color)
   group.children[1].position.copy(a)
   group.children[2].position.copy(b)
 }

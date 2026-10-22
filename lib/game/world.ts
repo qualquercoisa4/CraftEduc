@@ -11,6 +11,7 @@ export interface BlockState {
   proximityOperator?: 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
   proximityDistance?: number
   proximityActive?: boolean
+  color?: string
 }
 
 const CS = CHUNK_SIZE
@@ -80,7 +81,14 @@ export class World {
     const oldHadGlue = Boolean(this.states.get(key)?.glue)
     const newHasGlue = Boolean(state?.glue)
     if (old === id) {
-      if (state) this.states.set(posKey(x, y, z), state)
+      if (state) {
+        const previous = this.states.get(key)
+        this.states.set(key, state)
+        if (JSON.stringify(previous ?? null) !== JSON.stringify(state)) {
+          c.modified = true
+          this.markDirtyAround(x, y, z)
+        }
+      }
       return false
     }
     c.data[idx(lx, y, lz)] = id
@@ -147,7 +155,7 @@ export class World {
             if (ny >= WORLD_HEIGHT) return false
             if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
-          })
+          }, this.getState(wx, y, wz)?.color)
         }
     if (c.mesh) {
       c.mesh.geometry.dispose()

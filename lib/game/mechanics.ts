@@ -102,6 +102,7 @@ export interface Wire {
   ta: string
   tb: string
   mesh: THREE.Group
+  color: string
   networkId?: string
 }
 
@@ -653,10 +654,10 @@ export class Mechanics {
     return { terminal: `face:${face}`, point }
   }
 
-  addWire(a: string, pa: THREE.Vector3, ta: string, b: string, pb: THREE.Vector3, tb: string) {
-    const mesh = createWireMesh(pa, pb)
+  addWire(a: string, pa: THREE.Vector3, ta: string, b: string, pb: THREE.Vector3, tb: string, color = '#fdd835') {
+    const mesh = createWireMesh(pa, pb, color)
     this.scene.add(mesh)
-    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), ta, tb, mesh })
+    this.wires.push({ id: ++this.wireId, a, b, pa: pa.clone(), pb: pb.clone(), ta, tb, mesh, color })
     this.powerDirty = true
     this.mechDirty = true
   }
@@ -1079,6 +1080,7 @@ export class Mechanics {
         const powered = b.id === B.LED && this.world.poweredLeds.has(b.origKey)
         emitCube(out, rx - 0.5, ry - 0.5, rz - 0.5, b.id, powered, (dx, dy, dz) =>
           isOpaque(relMap.get(posKey(rx + dx, ry + dy, rz + dz)) ?? 0),
+          b.state?.color,
         )
       }
       if (b.state?.glue) glueEntries.push({ x: rx - 0.5, y: ry - 0.5, z: rz - 0.5, mask: b.state.glue })
@@ -1511,7 +1513,7 @@ export class Mechanics {
         else { we.wire.b = newKey; we.wire.pb.copy(point) }
       }
     }
-    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
+    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb, wire.color)
     this.rebuildGlue()
     this.powerDirty = true
     this.mechDirty = true
@@ -1919,7 +1921,7 @@ export class Mechanics {
       if (we.end === 'a') { we.wire.a = newKey; we.wire.pa.copy(point) }
       else { we.wire.b = newKey; we.wire.pb.copy(point) }
     }
-    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb)
+    for (const wire of this.wires) updateWireMesh(wire.mesh, wire.pa, wire.pb, wire.color)
     disposeObject(body.group)
     this.rebuildGlue()
     this.powerDirty = true

@@ -70,8 +70,10 @@ export function emitCube(
   id: number,
   powered: boolean,
   solid: (dx: number, dy: number, dz: number) => boolean,
+  tintHex?: string,
 ) {
   const tile = tileFor(id, powered)
+  const tint = tintHex ? new THREE.Color(tintHex) : null
   const [u0, v0, u1, v1] = tileUV(tile)
   for (let d = 0; d < 6; d++) {
     const n = DIRS[d]
@@ -104,7 +106,7 @@ export function emitCube(
       }
       ao.push(level)
       const l = powered ? 1 : (AO_LEVELS[level] * FACE_SHADE[d]) ** 2.2
-      out.colors.push(l, l, l)
+      out.colors.push(l * (tint?.r ?? 1), l * (tint?.g ?? 1), l * (tint?.b ?? 1))
     }
     if (ao[0] + ao[3] > ao[1] + ao[2]) {
       out.indices.push(base, base + 1, base + 3, base, base + 3, base + 2)
