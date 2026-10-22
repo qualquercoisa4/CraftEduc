@@ -702,15 +702,17 @@ export class Mechanics {
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
     }
-    if (id === B.SERVO) {
-      const facing = this.world.getState(x, y, z)?.facing ?? 2
-      const q = facingQuaternion(facing)
-      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+    const servoEntry = this.models.get(key)
+    if (servoEntry?.type === 'servo') {
+      servoEntry.model.group.updateWorldMatrix(true, false)
       const terminals = [
         { terminal: 'gnd', local: new THREE.Vector3(-0.2, -0.365, -0.19) },
         { terminal: 'vcc', local: new THREE.Vector3(0, -0.365, -0.19) },
         { terminal: 'signal', local: new THREE.Vector3(0.2, -0.365, -0.19) },
-      ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
+      ].map((terminal) => ({
+        terminal: terminal.terminal,
+        point: servoEntry.model.group.localToWorld(terminal.local),
+      }))
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.45 ? terminals[0] : null
     }
@@ -3076,7 +3078,7 @@ export class Mechanics {
         new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z),
         new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
         [
-          { rel: [0, 0, 0] as [number, number, number], id: B.MOTOR, key: c.motorKey, kind: 'chassis' as const },
+          { rel: [0, 0, 0] as [number, number, number], id: c.actuatorId, key: c.motorKey, kind: 'chassis' as const },
           ...c.chassisBlocks.map((b) => ({ rel: b.rel, id: b.id, key: b.origKey, kind: 'chassis' as const })),
         ],
       )
