@@ -1347,6 +1347,22 @@ export class Mechanics {
       this.mechDirty = true
       return 'idle'
     }
+    // Preserve the servo's current neutral/off pose when its first powered
+    // circuit turns the glued assembly into a rigid rotor.
+    const servoEntry = this.models.get(motorKey)
+    const initialServoAngle = isServo
+      ? Math.max(0, Math.min(Math.PI, servoEntry?.type === 'servo'
+        ? servoEntry.model.shaft.rotation.z
+        : (motorState?.servoOffAngle ?? 0) * Math.PI / 180))
+      : 0
+    if (isServo) {
+      const initialRotation = new THREE.Quaternion().setFromAxisAngle(rotorAxis, initialServoAngle)
+      rotorBody.setRotation({
+        x: initialRotation.x, y: initialRotation.y, z: initialRotation.z, w: initialRotation.w,
+      }, true)
+      group.quaternion.copy(initialRotation)
+    }
+
     const parentAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(0.64) : new THREE.Vector3()
     const childAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(-0.64) : new THREE.Vector3()
     const joint = this.rigidPhysics.createRevoluteJoint(
