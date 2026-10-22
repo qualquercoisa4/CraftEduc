@@ -10,7 +10,10 @@ import {
   type WheelModel,
   type SwitchModel,
   type ProximitySensorModel,
+  type ServoModel,
   createProximitySensorModel,
+  createServoModel,
+  setServoFacing,
   setProximitySensorActive,
   setProximitySensorFacing,
   createBatteryBoxModel,
@@ -92,6 +95,7 @@ type ModelEntry =
   | { type: 'wheel'; model: WheelModel; spin: number }
   | { type: 'switch'; model: SwitchModel }
   | { type: 'sensor'; model: ProximitySensorModel }
+  | { type: 'servo'; model: ServoModel; status: 'idle' | 'stalled' | 'driving' }
 
 export interface Wire {
   id: number
@@ -164,6 +168,7 @@ interface ExtraRotor {
 
 interface Contraption {
   motorKey: string
+  actuatorId: number
   motorPos: [number, number, number]
   motorState?: BlockState
   axis: THREE.Vector3
@@ -193,6 +198,7 @@ export class Mechanics {
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
   motorDirection = new Map<string, number>()
+  servoPowered = new Set<string>()
   private glueMesh: THREE.Mesh | null = null
   private suppress = false
   private powerDirty = true
@@ -248,7 +254,7 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR) {
+    if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -307,12 +313,22 @@ export class Mechanics {
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'sensor', model })
+    } else if (newId === B.SERVO) {
+      const state = this.world.ensureState(x, y, z)
+      state.facing ??= 2
+      state.servoOffAngle ??= 0
+      state.servoOnAngle ??= 90
+      const model = createServoModel(state.facing)
+      model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+      model.shaft.rotation.z = state.servoOffAngle * Math.PI / 180
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'servo', model, status: 'idle' })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    const electrical = (id: number) => id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
-    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
+    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
     this.physicsDirty = true
   }
 
@@ -353,7 +369,7 @@ export class Mechanics {
   }
 
   private isElectricalBlock(id: number) {
-    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON
+    return id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON
       || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
   }
 
@@ -505,6 +521,10 @@ export class Mechanics {
         entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
         setProximitySensorFacing(entry.model, state?.facing ?? 5)
         setProximitySensorActive(entry.model, Boolean(state?.proximityActive))
+        break
+      case 'servo':
+        entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+        setServoFacing(entry.model, state?.facing ?? 2)
         break
     }
   }
@@ -1113,6 +1133,7 @@ export class Mechanics {
       const [rx, ry, rz] = b.rel
       if (isOpaque(b.id)) emitCube(chassisOut, rx - 0.5, ry - 0.5, rz - 0.5, b.id, false, (dx, dy, dz) =>
         isOpaque(chassisRelMap.get(posKey(rx + dx, ry + dy, rz + dz)) ?? 0),
+        b.state?.color,
       )
       if (b.state?.glue) chassisGlue.push({ x: rx - 0.5, y: ry - 0.5, z: rz - 0.5, mask: b.state.glue })
       const model = this.models.get(b.origKey)
@@ -1143,6 +1164,7 @@ export class Mechanics {
           const powered = block.id === B.LED && this.world.poweredLeds.has(block.origKey)
           emitCube(extraOut, rx - 0.5, ry - 0.5, rz - 0.5, block.id, powered, (dx, dy, dz) =>
             isOpaque(extraRelMap.get(posKey(rx + dx, ry + dy, rz + dz)) ?? 0),
+            block.state?.color,
           )
         }
         if (block.state?.glue) extraGlue.push({ x: rx - 0.5, y: ry - 0.5, z: rz - 0.5, mask: block.state.glue })
@@ -1784,7 +1806,7 @@ export class Mechanics {
       const keys = new Set(blocksInGroup.map((b) => b.key))
       for (const b of blocksInGroup) {
         const buffers = newBuffers()
-        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false)
+        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.color)
         const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
         mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
         mesh.castShadow = true
