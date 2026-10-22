@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ChangeEvent } from 'react'
 import { getEngine } from '@/lib/game/engine'
 import { gameStore, showToast, useGame } from '@/lib/game/store'
 
@@ -34,7 +34,7 @@ export function ServoConfig() {
     close()
   }
 
-  const boundedInput = (value: number, setValue: (next: number) => void) => (event: React.ChangeEvent<HTMLInputElement>) => {
+  const boundedInput = (value: number, setValue: (next: number) => void) => (event: ChangeEvent<HTMLInputElement>) => {
     const parsed = Number(event.target.value)
     setValue(Number.isFinite(parsed) ? Math.max(0, Math.min(180, Math.round(parsed))) : value)
   }
