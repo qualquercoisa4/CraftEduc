@@ -120,6 +120,7 @@ interface Contraption {
   joint: RAPIER.RevoluteImpulseJoint
   chassisWireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
   unpoweredTime: number
+  disassemblyRetryCooldown: number
   group: THREE.Group
   angle: number
   speed: number
@@ -288,8 +289,11 @@ export class Mechanics {
     if (this.mountedWheels.has(key)) return false
     const entry = this.models.get(key)
     if (!entry || entry.type !== 'motor') return false
-    const wheel = createArduinoWheelModel(this.world.getState(x, y, z)?.facing ?? 2)
-    wheel.group.position.set(0, 0, 0.36)
+    // This wheel is parented to the motor shaft, whose parent already has the
+    // motor's facing quaternion. Keep the wheel axle on local +Z so facing is
+    // applied exactly once and follows all six motor orientations.
+    const wheel = createArduinoWheelModel(4)
+    wheel.group.position.set(0, 0, 0.36
     wheel.group.scale.setScalar(0.88)
     entry.model.shaft.add(wheel.group)
     this.world.ensureState(x, y, z).mountedWheel = true
@@ -659,12 +663,17 @@ export class Mechanics {
     const facing = motorState?.facing ?? 2
     const d = DIRS[facing]
     const sx = mx + d[0], sy = my + d[1], sz = mz + d[2]
-    if (this.world.getBlock(sx, sy, sz) === B.AIR || this.world.getBlock(sx, sy, sz) === B.MOTOR || !this.isGlued(mx, my, mz, facing)) return 'idle'
+    const outputId = this.world.getBlock(sx, sy, sz)
+    // A mounted wheel is a valid shaft load even if there is no voxel glued to
+    // the output face. Model it with a small sensor rotor so its motor can still
+    // assemble a chassis and use the same powered-wheel traction path.
+    const wheelOnlyRotor = outputId === B.AIR && Boolean(motorState?.mountedWheel)
+    if (!wheelOnlyRotor && (outputId === B.AIR || outputId === B.MOTOR || !this.isGlued(mx, my, mz, facing))) return 'idle'
 
     // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
-    const visited = new Set<string>([seedKey])
-    const queue: [number, number, number][] = [[sx, sy, sz]]
+    const visited = new Set<string>(wheelOnlyRotor ? [] : [seedKey])
+    const queue: [number, number, number][] = wheelOnlyRotor ? [] : [[sx, sy, sz]]
     while (queue.length) {
       const [x, y, z] = queue.shift()!
       if (y < GROUND_LEVEL || visited.size > MAX_CONTRAPTION) return 'stalled'
@@ -942,17 +951,22 @@ export class Mechanics {
       // A chassis carrying any mounted motor wheel must react to traction torque.
       lockRotation: !chassisHasWheel, canSleep: false, linearDamping: 0.12, angularDamping: chassisHasWheel ? 0.22 : 0.65,
     })
-    const rotorBody = this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
-      canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
-    })
+    const rotorAxis = new THREE.Vector3(d[0], d[1], d[2])
+    const rotorBody = wheelOnlyRotor
+      ? this.rigidPhysics.createWheelRotorBody(pivot, rotorAxis)
+      : this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
+        canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
+      })
     if (!chassisBody || !rotorBody) {
       if (chassisBody) this.rigidPhysics.removeRigidBody(chassisBody)
       if (rotorBody) this.rigidPhysics.removeRigidBody(rotorBody)
       this.mechDirty = true
       return 'idle'
     }
+    const parentAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(0.36) : new THREE.Vector3()
+    const childAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(-0.36) : new THREE.Vector3()
     const joint = this.rigidPhysics.createRevoluteJoint(
-      chassisBody, rotorBody, new THREE.Vector3(d[0], d[1], d[2]),
+      chassisBody, rotorBody, rotorAxis, parentAnchor, childAnchor,
     )
     if (!joint) {
       this.rigidPhysics.removeRigidBody(chassisBody)
@@ -1056,6 +1070,7 @@ export class Mechanics {
       joint,
       chassisWireEnds,
       unpoweredTime: 0,
+      disassemblyRetryCooldown: 0,
       group,
       angle: 0,
       speed: 0,
@@ -1722,12 +1737,12 @@ export class Mechanics {
     }
 
     if (hasPrimaryWheel) {
-      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.64), power, direction)
+      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.36), power, direction)
     }
     for (const extra of extraWheels) {
       const extraPower = this.motorPower.get(extra.motorKey) ?? 0
       const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-      const offset = new THREE.Vector3(...extra.motorOffset).addScaledVector(extra.axis, 0.64)
+      const offset = new THREE.Vector3(...extra.motorOffset).addScaledVector(extra.axis, 0.36)
       applyWheel(extra.axis, offset, extraPower, extraDirection)
     }
   }
@@ -1780,10 +1795,21 @@ export class Mechanics {
       if (e.type === 'wheel') {
         const [x, y, z] = parseKey(key)
         let drive = 0
-        for (const d of DIRS) {
-          const neighbor = posKey(x + d[0], y + d[1], z + d[2])
-          if (this.world.getBlock(x + d[0], y + d[1], z + d[2]) === B.MOTOR && (this.motorPower.get(neighbor) ?? 0) > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * (this.motorPower.get(neighbor) ?? 0)
+        let motorFacing: number | null = null
+        for (let face = 0; face < DIRS.length; face++) {
+          const d = DIRS[face]
+          const nx = x + d[0], ny = y + d[1], nz = z + d[2]
+          const neighbor = posKey(nx, ny, nz)
+          if (this.world.getBlock(nx, ny, nz) !== B.MOTOR) continue
+          const facing = this.world.getState(nx, ny, nz)?.facing ?? 2
+          // A standalone wheel responds only to a motor pointing at it.
+          if (facing !== OPPOSITE[face]) continue
+          motorFacing = facing
+          const power = this.motorPower.get(neighbor) ?? 0
+          if (power > 0) drive = (this.motorDirection.get(neighbor) ?? 1) * power
+          break
         }
+        if (motorFacing !== null) e.model.group.quaternion.copy(facingQuaternion(motorFacing))
         if (this.networkAuthority || this.desiredNetworkMachines !== null) e.spin += drive * dt * 5
         e.model.rim.rotation.z = e.spin
         continue
@@ -1802,16 +1828,16 @@ export class Mechanics {
       }
       const mounted = this.mountedWheels.get(key)
       if (mounted) {
-        if (this.networkAuthority || this.desiredNetworkMachines !== null) mounted.spin += power * dt * 5 * (this.motorDirection.get(key) ?? 1)
-        mounted.model.rim.rotation.z = mounted.spin
-        // The wheel is visual here. Do not translate/disassemble the voxel
-        // assembly from this legacy traction path: the continuous rigid-body
-        // solver below must own both translation and rotation.
+        // This wheel is a child of the shaft; the shaft angle already rotates
+        // the whole wheel around its axle. Spinning its rim separately doubled
+        // the visible rotation and could make the wheel appear disconnected.
+        mounted.model.rim.rotation.z = 0
       }
     }
 
     if (this.networkAuthority) {
     for (const c of [...this.contraptions.values()]) {
+      c.disassemblyRetryCooldown = Math.max(0, c.disassemblyRetryCooldown - dt)
       const motorAlive = this.models.get(c.motorKey)?.type === 'motor'
       if (!motorAlive) {
         this.disassemble(c, Math.round(c.angle / HALF_PI) % 4)
@@ -1824,6 +1850,7 @@ export class Mechanics {
       if (power > 0) {
         c.speed = power * 1.05 * direction
         c.unpoweredTime = 0
+        c.disassemblyRetryCooldown = 0
         // Torque is applied through the shaft joint. Rapier computes the
         // resulting rotation, chassis reaction, and every contact impulse.
         // The second parameter is damping, not force. Keep it in a
@@ -1858,8 +1885,15 @@ export class Mechanics {
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
         const otherMotorPowered = (c.extraRotors ?? []).some((extra) => (this.motorPower.get(extra.motorKey) ?? 0) > 0)
-        if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered) {
-          this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
+        if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered && c.disassemblyRetryCooldown <= 0) {
+          // disassemble() removes the rigid bodies from Rapier. Immediately skip
+          // the rest of this contraption's update on success; touching its body
+          // handles below causes a Rapier exception and stops the render loop.
+          const restored = this.disassemble(c, ((Math.round(c.angle / HALF_PI) % 4) + 4) % 4)
+          if (restored) continue
+          // If its snapped voxel layout is blocked, avoid repeating the full
+          // placement scan each frame while keeping the dynamic machine alive.
+          c.disassemblyRetryCooldown = 2
         }
       }
 
@@ -2111,8 +2145,9 @@ export class Mechanics {
       if (typeof item.key !== 'string' || !Number.isFinite(Number(item.spin))) continue
       const entry = this.mountedWheels.get(item.key)
       if (entry) {
-        entry.spin = Number(item.spin)
-        entry.model.rim.rotation.z = entry.spin
+        // Parent shaft rotation is authoritative for a mounted wheel.
+        entry.spin = 0
+        entry.model.rim.rotation.z = 0
       }
     }
     const incomingMachines = Array.isArray(record.machines) ? record.machines.slice(0, 128) : []

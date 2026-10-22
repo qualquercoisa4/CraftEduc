@@ -164,6 +164,30 @@ export class RigidPhysics {
     return body
   }
 
+  /** Create the hidden rotating load used by a mounted wheel with no output voxel. */
+  createWheelRotorBody(pivot: THREE.Vector3, axis: THREE.Vector3) {
+    if (!this.ready || !this.rapierWorld) return null
+    const axle = axis.clone().normalize()
+    const center = pivot.clone().addScaledVector(axle, 0.36)
+    const body = this.rapierWorld.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(center.x, center.y, center.z)
+        .setCanSleep(false)
+        .setCcdEnabled(true)
+        .setLinearDamping(0.02)
+        .setAngularDamping(0.03),
+    )
+    const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axle)
+    this.rapierWorld.createCollider(
+      RAPIER.ColliderDesc.cylinder(0.075, 0.49)
+        .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w })
+        .setDensity(blockMass(B.WHEEL))
+        .setSensor(true),
+      body,
+    )
+    return body
+  }
+
   createRevoluteJoint(
     parent: RAPIER.RigidBody,
     child: RAPIER.RigidBody,

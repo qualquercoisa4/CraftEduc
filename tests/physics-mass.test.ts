@@ -61,7 +61,7 @@ async function main() {
   // an immovable world collider. A moving wooden arm must wake it into Rapier
   // when the arm is travelling into it, then push the now-dynamic aluminum.
   const blockMap = new Map<string, number>()
-  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number; switchOn?: boolean }>()
+  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number; mountedWheel?: boolean; switchOn?: boolean }>()
   const chunks = new Map([['0,0', { cx: 0, cz: 0, maxY: 8 }]])
   let mechanicsRef: Mechanics | null = null
   const mockGameWorld = {
@@ -164,6 +164,64 @@ async function main() {
   for (const body of dynamicBodies) mechanicsPhysics.removeRigidBody(body.body)
   mechanics.contraptions.clear()
 
+  // Wheel-only motor regression: the mount must follow all six shaft facings,
+  // and the motor must drive a grounded chassis with no glued output voxel.
+  const wheelMotorKey = posKey(21, 5, 20)
+  blockMap.set(posKey(20, 4, 20), B.ROBOTICS)
+  blockMap.set(posKey(21, 4, 20), B.ROBOTICS)
+  mechanicsPhysics.syncStaticBlock(20, 4, 20)
+  mechanicsPhysics.syncStaticBlock(21, 4, 20)
+  mockGameWorld.setBlock(20, 5, 20, B.ALUMINUM, { glue: 1 << 0 })
+  mockGameWorld.setBlock(21, 5, 20, B.MOTOR, { facing: 0, glue: 1 << 1, mountedWheel: true })
+  const wheelMotorEntry = mechanics.models.get(wheelMotorKey)
+  assert.ok(wheelMotorEntry && wheelMotorEntry.type === 'motor', 'wheel test motor should have a model')
+  if (!wheelMotorEntry || wheelMotorEntry.type !== 'motor') throw new Error('wheel test motor model missing')
+  const mountedWheels = (mechanics as unknown as { mountedWheels: Map<string, { model: { group: THREE.Group; rim: THREE.Group }; spin: number }> }).mountedWheels
+  const mountedWheel = mountedWheels.get(wheelMotorKey)
+  assert.ok(mountedWheel, 'the wheel accessory must mount on the motor shaft')
+  if (!mountedWheel) throw new Error('mounted wheel missing')
+  for (let face = 0; face < 6; face++) {
+    scene.updateMatrixWorld(true)
+    const motorOrientation = wheelMotorEntry.model.group.getWorldQuaternion(new THREE.Quaternion())
+    const wheelOrientation = mountedWheel.model.group.getWorldQuaternion(new THREE.Quaternion())
+    assert.ok(wheelOrientation.angleTo(motorOrientation) < 1e-5, `mounted wheel axle must follow motor facing ${face}`)
+    mechanics.rotateMotor(21, 5, 20)
+  }
+  mechanics.motorPower.set(wheelMotorKey, 3)
+  mechanics.motorDirection.set(wheelMotorKey, 1)
+  const wheelInternals = mechanics as unknown as {
+    tryAssemble: (key: string) => string
+    powerDirty: boolean; powerCooldown: number; mechDirty: boolean
+    physicsSynced: boolean; physicsDirty: boolean; physicsScanCooldown: number
+  }
+  assert.equal(wheelInternals.tryAssemble(wheelMotorKey), 'driving', 'mounted wheel should assemble a rotor without a glued output voxel')
+  const wheelMachine = mechanics.contraptions.get(wheelMotorKey)
+  assert.ok(wheelMachine, 'wheel-only machine must register its chassis physics body')
+  if (!wheelMachine) throw new Error('wheel-only machine failed to assemble')
+  assert.equal(wheelMachine.blocks.length, 0, 'wheel-only rotor must not create fake voxel blocks')
+  wheelInternals.powerDirty = false
+  wheelInternals.powerCooldown = 30
+  wheelInternals.mechDirty = false
+  wheelInternals.physicsSynced = true
+  wheelInternals.physicsDirty = false
+  wheelInternals.physicsScanCooldown = 30
+  const wheelStart = wheelMachine.chassisBody.translation()
+  for (let step = 0; step < 60; step++) mechanics.update(1 / 60)
+  const wheelEnd = wheelMachine.chassisBody.translation()
+  assert.ok(wheelEnd.z > wheelStart.z + 0.05, `mounted wheel should propel chassis (dz=${(wheelEnd.z - wheelStart.z).toFixed(3)}m)`)
+  console.log(`PASS: mounted wheel followed all six motor facings and propelled chassis by ${(wheelEnd.z - wheelStart.z).toFixed(3)}m`)
+  mechanicsPhysics.removeRigidBody(wheelMachine.rotorBody)
+  mechanicsPhysics.removeRigidBody(wheelMachine.chassisBody)
+  mechanics.contraptions.delete(wheelMotorKey)
+  mechanics.models.delete(wheelMotorKey)
+  mountedWheels.delete(wheelMotorKey)
+  mechanics.motorPower.delete(wheelMotorKey)
+  mechanics.motorDirection.delete(wheelMotorKey)
+  blockMap.delete(posKey(20, 5, 20)); blockMap.delete(wheelMotorKey)
+  stateMap.delete(posKey(20, 5, 20)); stateMap.delete(wheelMotorKey)
+  blockMap.delete(posKey(20, 4, 20)); blockMap.delete(posKey(21, 4, 20))
+  mechanicsPhysics.syncStaticBlock(20, 4, 20); mechanicsPhysics.syncStaticBlock(21, 4, 20)
+
   // Recreate the reported failure with an actual motor + chassis + rotor:
   // battery compartment and aluminum chassis are glued to the motor's fixed
   // side, while three wood blocks form a rotating arm on its output face.
@@ -173,7 +231,7 @@ async function main() {
   const motorKey = posKey(4, 5, 2)
   const targetKey = posKey(5, 6, 3)
   const switchKey = posKey(4, 6, 2)
-  const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number; switchOn?: boolean }) => {
+  const putTestBlock = (x: number, y: number, z: number, id: number, state: { glue?: number; facing?: number; batteries?: number; mountedWheel?: boolean; switchOn?: boolean }) => {
     const key = posKey(x, y, z)
     blockMap.set(key, id)
     stateMap.set(key, { ...state })
@@ -313,6 +371,16 @@ async function main() {
     `the rotating three-block wood arm must push the aluminum target sideways (max horizontal travel=${maxTargetHorizontalTravel.toFixed(3)} m)`)
   console.log(`PASS: after 120 frames, rotor angle=${machine.angle.toFixed(3)} rad; chassis ΔY=${(finalChassisY - initialChassisY).toFixed(3)} m`)
   console.log(`PASS: powered rotating arm pushed aluminum target ${maxTargetHorizontalTravel.toFixed(3)} m sideways`)
+
+  // Turning off a live rotor must never leave update() using Rapier handles
+  // that disassemble() has already removed; that exception used to halt frames.
+  assert.equal(mechanics.toggleSwitchAtKey(switchKey), false, 'switch must turn off while rotor is moving')
+  let shutdownFrames = 0
+  for (; shutdownFrames < 240 && mechanics.contraptions.has(motorKey); shutdownFrames++) {
+    assert.doesNotThrow(() => mechanics.update(1 / 60), `switch-off frame ${shutdownFrames + 1} must not touch removed bodies`)
+  }
+  assert.equal(mechanics.contraptions.has(motorKey), false, 'stopped unpowered rotor should safely disassemble')
+  console.log(`PASS: switch-off safely disassembled mechanism after ${shutdownFrames} frames`)
 
   for (const wire of mechanics.wires) {
     wire.mesh.traverse((obj) => {
