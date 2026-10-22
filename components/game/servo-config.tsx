@@ -83,7 +83,7 @@ export function ServoConfig() {
           <p><strong>Vermelho:</strong> VCC / positivo</p>
           <p><strong>Amarelo:</strong> sinal / comando</p>
           <p className="mt-2 text-xs">
-            Para este protótipo, o servo considera ligado quando GND está no negativo e VCC e sinal estão ligados ao positivo. Ao perder o sinal positivo, retorna à posição desligado.
+            Para este protótipo, conecte GND ao negativo. VCC e sinal podem usar a mesma fonte positiva (os dois podem compartilhar a mesma rede). Quando ambos estiverem positivos, o servo vai à posição ligado; quando o sinal perder o positivo, retorna à posição desligado.
           </p>
         </div>
 
