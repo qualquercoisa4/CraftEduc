@@ -402,6 +402,74 @@ export class Mechanics {
     return st.facing
   }
 
+  rotateServo(x: number, y: number, z: number) {
+    const key = posKey(x, y, z)
+    if (this.world.getBlock(x, y, z) !== B.SERVO || this.contraptions.has(key)) return null
+    const state = this.world.ensureState(x, y, z)
+    state.facing = ((state.facing ?? 2) + 1) % 6
+    const entry = this.models.get(key)
+    if (entry?.type === 'servo') setServoFacing(entry.model, state.facing)
+    this.mechDirty = true
+    return state.facing
+  }
+
+  private getServoState(key: string): BlockState | undefined {
+    const [x, y, z] = parseKey(key)
+    if (this.world.getBlock(x, y, z) === B.SERVO) {
+      const state = this.world.ensureState(x, y, z)
+      state.servoOffAngle ??= 0
+      state.servoOnAngle ??= 90
+      return state
+    }
+    for (const machine of this.contraptions.values()) {
+      if (machine.motorKey === key && machine.actuatorId === B.SERVO) {
+        machine.motorState ??= { facing: machine.facing, servoOffAngle: 0, servoOnAngle: 90 }
+        machine.motorState.servoOffAngle ??= 0
+        machine.motorState.servoOnAngle ??= 90
+        return machine.motorState
+      }
+    }
+    const moving = this.findMovingBlock(key)
+    if (moving?.id === B.SERVO) {
+      moving.state ??= { servoOffAngle: 0, servoOnAngle: 90 }
+      moving.state.servoOffAngle ??= 0
+      moving.state.servoOnAngle ??= 90
+      return moving.state
+    }
+    for (const body of this.fallingBodies) {
+      const block = body.blocks.find((candidate) => candidate.originKey === key && candidate.id === B.SERVO)
+      if (block) {
+        block.state ??= { servoOffAngle: 0, servoOnAngle: 90 }
+        block.state.servoOffAngle ??= 0
+        block.state.servoOnAngle ??= 90
+        return block.state
+      }
+    }
+    return undefined
+  }
+
+  getServoConfig(key: string) {
+    const state = this.getServoState(key)
+    if (!state) return null
+    return {
+      offAngle: Math.max(0, Math.min(180, Math.round(state.servoOffAngle ?? 0))),
+      onAngle: Math.max(0, Math.min(180, Math.round(state.servoOnAngle ?? 90))),
+      powered: this.servoPowered.has(key),
+    }
+  }
+
+  configureServo(key: string, offAngle: number, onAngle: number) {
+    if (!Number.isFinite(offAngle) || !Number.isFinite(onAngle)) return false
+    const state = this.getServoState(key)
+    if (!state) return false
+    state.servoOffAngle = Math.max(0, Math.min(180, Math.round(offAngle)))
+    state.servoOnAngle = Math.max(0, Math.min(180, Math.round(onAngle)))
+    this.powerDirty = true
+    this.powerCooldown = 0
+    this.mechDirty = true
+    return true
+  }
+
   changeBatteries(x: number, y: number, z: number, delta: number) {
     const st = this.world.ensureState(x, y, z)
     const before = st.batteries ?? 0
@@ -634,6 +702,18 @@ export class Mechanics {
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
     }
+    if (id === B.SERVO) {
+      const facing = this.world.getState(x, y, z)?.facing ?? 2
+      const q = facingQuaternion(facing)
+      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      const terminals = [
+        { terminal: 'gnd', local: new THREE.Vector3(-0.2, -0.365, -0.19) },
+        { terminal: 'vcc', local: new THREE.Vector3(0, -0.365, -0.19) },
+        { terminal: 'signal', local: new THREE.Vector3(0.2, -0.365, -0.19) },
+      ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.45 ? terminals[0] : null
+    }
     if (id === B.PROXIMITY_SENSOR) {
       const facing = this.world.getState(x, y, z)?.facing ?? 5
       const q = facingQuaternion(facing)
@@ -800,12 +880,15 @@ export class Mechanics {
       }
       // The motor itself is the joint between the moving electrical assembly
       // and the rotating rotor, and is no longer a voxel in World.
-      electricalBlocks.set(c.motorKey, { id: B.MOTOR, state: c.motorState })
+      electricalBlocks.set(c.motorKey, { id: c.actuatorId, state: c.motorState })
     }
 
     // Conductive blocks connect their six face terminals internally. This
     // includes aluminum/iron/component blocks inside moving chassis or rotors.
     for (const [key, block] of electricalBlocks) {
+      if (block.id === B.SERVO) {
+        for (const terminal of ['gnd', 'vcc', 'signal']) allNodes.add(node(key, terminal))
+      }
       if (block.id === B.PROXIMITY_SENSOR) {
         for (const terminal of ['in+', 'in-', 'out+', 'out-']) allNodes.add(node(key, terminal))
         if (block.state?.proximityActive) {
@@ -830,6 +913,7 @@ export class Mechanics {
 
     const terminalRoot = (key: string, terminal: string) => find(node(key, terminal))
     const boxes: { key: string; positive: string; negative: string; batteries: number }[] = []
+    const servos: { key: string; gnd: string; vcc: string; signal: string }[] = []
     const devices: { key: string; id: number; a: string; b: string }[] = []
     for (const [key, block] of electricalBlocks) {
       if (block.id === B.BATTERY_BOX) {
@@ -840,6 +924,12 @@ export class Mechanics {
           allNodes.add(positive); allNodes.add(negative)
           boxes.push({ key, positive, negative, batteries: count })
         }
+      } else if (block.id === B.SERVO) {
+        const gnd = node(key, 'gnd')
+        const vcc = node(key, 'vcc')
+        const signal = node(key, 'signal')
+        allNodes.add(gnd); allNodes.add(vcc); allNodes.add(signal)
+        servos.push({ key, gnd, vcc, signal })
       } else if (block.id === B.LED || block.id === B.MOTOR) {
         const a = node(key, block.id === B.LED ? 'anode' : 'A')
         const b = node(key, block.id === B.LED ? 'cathode' : 'B')
@@ -867,6 +957,7 @@ export class Mechanics {
     const leds = new Set<string>()
     this.motorPower.clear()
     this.motorDirection.clear()
+    this.servoPowered.clear()
     for (const d of devices) {
       const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
       const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
@@ -878,6 +969,17 @@ export class Mechanics {
       if (d.id === B.MOTOR) {
         this.motorPower.set(d.key, deliveredPower)
         this.motorDirection.set(d.key, plusA ? 1 : -1)
+      }
+    }
+
+    for (const servo of servos) {
+      const groundRoot = find(servo.gnd)
+      const voltageRoot = find(servo.vcc)
+      const signalRoot = find(servo.signal)
+      const source = activeBoxes.reduce((max, box) => Math.max(max, box.batteries), 0)
+      if (source > 0 && groundRoot !== voltageRoot && groundRoot !== signalRoot
+        && negativeRoots.has(groundRoot) && positiveRoots.has(voltageRoot) && positiveRoots.has(signalRoot)) {
+        this.servoPowered.add(servo.key)
       }
     }
 
