@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import * as THREE from 'three'
 import { B, DIRS } from '../lib/game/constants'
-import { measureProximityDistance, proximityConditionMatches } from '../lib/game/mechanics'
+import { measureProximityDistance, measureProximityRayDistance, proximityConditionMatches } from '../lib/game/mechanics'
 import type { World } from '../lib/game/world'
 
 const makeWorld = (blocks: Set<string>) => ({
@@ -16,6 +17,17 @@ for (let facing = 0; facing < DIRS.length; facing++) {
 
 assert.equal(measureProximityDistance(makeWorld(new Set()), 0, 8, 0, 5), 33,
   'an empty line of sight should report beyond the 32-block maximum range')
+
+// The ray must use a moving sensor's current world-space position, not its old voxel key.
+const movingWorld = makeWorld(new Set(['9,8,0']))
+assert.equal(measureProximityRayDistance(
+  movingWorld, new THREE.Vector3(6.5, 8.5, 0.5), new THREE.Vector3(1, 0, 0),
+), 3, 'a moving sensor should measure from its translated world position')
+
+const rotatedWorld = makeWorld(new Set(['6,8,4']))
+assert.equal(measureProximityRayDistance(
+  rotatedWorld, new THREE.Vector3(6.5, 8.5, 1.5), new THREE.Vector3(0, 0, 1),
+), 3, 'a rotated sensor should detect blocks in its current forward direction')
 assert.equal(proximityConditionMatches(2, 'less', 3), true, 'less-than condition must pass below threshold')
 assert.equal(proximityConditionMatches(3, 'less', 3), false, 'less-than condition is strict')
 assert.equal(proximityConditionMatches(4, 'greater', 3), true, 'greater-than condition must pass above threshold')

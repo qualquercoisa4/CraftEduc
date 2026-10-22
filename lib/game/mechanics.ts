@@ -35,17 +35,43 @@ const MAX_CONTRAPTION = 400
 export const PROXIMITY_SENSOR_RANGE = 32
 export type ProximityComparison = 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
 
+/** Cast a voxel ray from the sensor's actual world-space position and orientation. */
+export function measureProximityRayDistance(
+  world: Pick<World, 'getBlock'>,
+  origin: THREE.Vector3,
+  direction: THREE.Vector3,
+  maxRange = PROXIMITY_SENSOR_RANGE,
+) {
+  const rayDirection = direction.clone()
+  if (rayDirection.lengthSq() < 1e-8) return maxRange + 1
+  rayDirection.normalize()
+  const startX = Math.floor(origin.x)
+  const startY = Math.floor(origin.y)
+  const startZ = Math.floor(origin.z)
+  // Sample at 10 cm intervals so a rotated sensor notices voxel faces it
+  // crosses between whole-block distances. Return distance in whole blocks.
+  for (let travelled = 0.1; travelled <= maxRange + 0.5; travelled += 0.1) {
+    const x = Math.floor(origin.x + rayDirection.x * travelled)
+    const y = Math.floor(origin.y + rayDirection.y * travelled)
+    const z = Math.floor(origin.z + rayDirection.z * travelled)
+    if (x === startX && y === startY && z === startZ) continue
+    if (world.getBlock(x, y, z) !== B.AIR) return Math.max(1, Math.ceil(travelled - 1e-8))
+  }
+  return maxRange + 1
+}
+
 export function measureProximityDistance(
   world: Pick<World, 'getBlock'>,
   x: number, y: number, z: number, facing: number,
   maxRange = PROXIMITY_SENSOR_RANGE,
 ) {
   const direction = DIRS[facing] ?? DIRS[5]
-  for (let distance = 1; distance <= maxRange; distance++) {
-    if (world.getBlock(x + direction[0] * distance, y + direction[1] * distance, z + direction[2] * distance) !== B.AIR)
-      return distance
-  }
-  return maxRange + 1
+  return measureProximityRayDistance(
+    world,
+    new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+    new THREE.Vector3(direction[0], direction[1], direction[2]),
+    maxRange,
+  )
 }
 
 export function proximityConditionMatches(distance: number, comparison: ProximityComparison, threshold: number) {
@@ -416,15 +442,84 @@ export class Mechanics {
     return undefined
   }
 
+  private getProximitySensorState(key: string): BlockState | undefined {
+    const [x, y, z] = parseKey(key)
+    if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR)
+      return this.world.ensureState(x, y, z)
+    const moving = this.findMovingBlock(key)
+    if (moving?.id === B.PROXIMITY_SENSOR) {
+      moving.state ??= {}
+      return moving.state
+    }
+    for (const body of this.fallingBodies) {
+      const block = body.blocks.find((candidate) => candidate.originKey === key && candidate.id === B.PROXIMITY_SENSOR)
+      if (block) {
+        block.state ??= {}
+        return block.state
+      }
+    }
+    return undefined
+  }
+
+  private measureSensorWorldDistance(model: ProximitySensorModel) {
+    model.group.updateWorldMatrix(true, false)
+    // The transducers sit near the front of the board, not at its voxel center.
+    const origin = model.group.localToWorld(new THREE.Vector3(0, 0, 0.32))
+    const orientation = model.group.getWorldQuaternion(new THREE.Quaternion())
+    const direction = new THREE.Vector3(0, 0, 1).applyQuaternion(orientation)
+    return measureProximityRayDistance(this.world, origin, direction)
+  }
+
+  /** Re-anchor a detached component after its rigid body returns to the voxel grid. */
+  private snapModelToGrid(entry: ModelEntry, key: string, stopMotorShaft: boolean) {
+    const [x, y, z] = parseKey(key)
+    const state = this.world.getState(x, y, z)
+    entry.model.group.rotation.set(0, 0, 0)
+    switch (entry.type) {
+      case 'motor':
+        entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+        setMotorFacing(entry.model, state?.facing ?? 2)
+        if (stopMotorShaft) entry.model.shaft.rotation.set(0, 0, 0)
+        break
+      case 'box':
+        entry.model.group.position.set(x + 0.5, y, z + 0.5)
+        entry.model.group.quaternion.identity()
+        setBatteryCount(entry.model, state?.batteries ?? 0)
+        break
+      case 'led':
+        entry.model.group.position.set(x, y, z)
+        entry.model.group.quaternion.identity()
+        break
+      case 'wheel':
+        entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+        entry.model.group.quaternion.copy(facingQuaternion(state?.facing ?? 0))
+        entry.model.rim.rotation.z = entry.spin
+        break
+      case 'switch':
+        entry.model.group.position.set(x, y, z)
+        entry.model.group.quaternion.identity()
+        setSwitchState(entry.model, Boolean(state?.switchOn))
+        break
+      case 'sensor':
+        entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+        setProximitySensorFacing(entry.model, state?.facing ?? 5)
+        setProximitySensorActive(entry.model, Boolean(state?.proximityActive))
+        break
+    }
+  }
+
   getProximitySensorConfig(key: string) {
     const block = this.lookup(key)
     if (block.id !== B.PROXIMITY_SENSOR) return null
     const state = block.state ?? {}
     const [x, y, z] = parseKey(key)
+    const model = this.models.get(key)
     return {
       operator: (state.proximityOperator ?? 'less') as ProximityComparison,
       threshold: Math.max(1, Math.min(PROXIMITY_SENSOR_RANGE, Math.floor(state.proximityDistance ?? 3))),
-      distance: measureProximityDistance(this.world, x, y, z, state.facing ?? 5),
+      distance: model?.type === 'sensor'
+        ? this.measureSensorWorldDistance(model.model)
+        : measureProximityDistance(this.world, x, y, z, state.facing ?? 5),
       active: Boolean(state.proximityActive),
       facing: state.facing ?? 5,
     }
@@ -474,20 +569,22 @@ export class Mechanics {
   private refreshProximitySensors() {
     for (const [key, entry] of this.models) {
       if (entry.type !== 'sensor') continue
-      const [x, y, z] = parseKey(key)
-      let state: BlockState | undefined
-      if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR) state = this.world.ensureState(x, y, z)
-      else state = this.findMovingBlock(key)?.state
+      const state = this.getProximitySensorState(key)
       if (!state) continue
       const threshold = Math.max(1, Math.min(PROXIMITY_SENSOR_RANGE, Math.floor(state.proximityDistance ?? 3)))
       const comparison = state.proximityOperator ?? 'less'
-      const distance = measureProximityDistance(this.world, x, y, z, state.facing ?? 5)
+      // World transforms include translation, chassis yaw and rotor spin.
+      const distance = this.measureSensorWorldDistance(entry.model)
       const active = proximityConditionMatches(distance, comparison, threshold)
-      if (Boolean(state.proximityActive) === active) continue
+      if (Boolean(state.proximityActive) === active) {
+        setProximitySensorActive(entry.model, active)
+        continue
+      }
       state.proximityActive = active
       setProximitySensorActive(entry.model, active)
       this.powerDirty = true
       this.powerCooldown = 0
+      const [x, y, z] = parseKey(key)
       if (this.networkAuthority && this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR)
         this.networkBlockPublisher?.(x, y, z, B.PROXIMITY_SENSOR, { ...state }, this.networkBlockOwner?.(x, y, z))
     }
@@ -1370,39 +1467,11 @@ export class Mechanics {
     // Re-key and snap every model to its final voxel anchor. A body's world
     // pose is not the same as the final restored block's grid pose.
     for (const [oldKey, newKey] of keyMap) {
-      const [x, y, z] = parseKey(newKey)
-      const state = this.world.getState(x, y, z)
       const entry = this.models.get(oldKey)
       if (entry) {
         this.models.delete(oldKey)
         this.models.set(newKey, entry)
-        entry.model.group.rotation.set(0, 0, 0)
-        switch (entry.type) {
-          case 'motor':
-            entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
-            setMotorFacing(entry.model, state?.facing ?? 2)
-            entry.model.shaft.rotation.set(0, 0, 0)
-            break
-          case 'box':
-            entry.model.group.position.set(x + 0.5, y, z + 0.5)
-            entry.model.group.quaternion.identity()
-            setBatteryCount(entry.model, state?.batteries ?? 0)
-            break
-          case 'led':
-            entry.model.group.position.set(x, y, z)
-            entry.model.group.quaternion.identity()
-            break
-          case 'wheel':
-            entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
-            entry.model.group.quaternion.copy(facingQuaternion(state?.facing ?? 0))
-            entry.model.rim.rotation.z = entry.spin
-            break
-          case 'switch':
-            entry.model.group.position.set(x, y, z)
-            entry.model.group.quaternion.identity()
-            setSwitchState(entry.model, Boolean(state?.switchOn))
-            break
-        }
+        this.snapModelToGrid(entry, newKey, true)
       }
       const mounted = this.mountedWheels.get(oldKey)
       if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
@@ -1834,10 +1903,7 @@ export class Mechanics {
       if (entry) {
         this.models.delete(oldKey)
         this.models.set(newKey, entry)
-        const [x, y, z] = parseKey(newKey)
-        const state = this.world.getState(x, y, z)
-        if (entry.type === 'motor' && state?.facing !== undefined) setMotorFacing(entry.model, state.facing)
-        if (entry.type === 'box') setBatteryCount(entry.model, state?.batteries ?? 0)
+        this.snapModelToGrid(entry, newKey, false)
       }
       const mounted = this.mountedWheels.get(oldKey)
       if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
@@ -1956,10 +2022,8 @@ export class Mechanics {
       this.mechDirty = true
     }
     this.proximityScanCooldown -= dt
-    if (this.proximityScanCooldown <= 0) {
-      this.proximityScanCooldown = 0.1
-      this.refreshProximitySensors()
-    }
+    const shouldRefreshProximitySensors = this.proximityScanCooldown <= 0
+    if (shouldRefreshProximitySensors) this.proximityScanCooldown = 0.1
     this.powerCooldown -= dt
     if (this.powerDirty && this.powerCooldown <= 0) {
       this.powerCooldown = 0.08
@@ -2143,6 +2207,8 @@ export class Mechanics {
       } else this.updateNetworkPoseInterpolation(dt)
       this.syncRigidTransforms()
     }
+    // Sample after physics synchronization so moving sensors see the latest pose.
+    if (shouldRefreshProximitySensors) this.refreshProximitySensors()
   }
 
   /** Called by the multiplayer layer when a remote block or wire changes. */
