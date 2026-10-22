@@ -28,6 +28,11 @@ function createMaterials() {
     switchMark: new THREE.MeshLambertMaterial({ color: 0xf0f1f3 }),
     sensorOn: new THREE.MeshLambertMaterial({ color: 0x46df63, emissive: 0x154c20 }),
     sensorOff: new THREE.MeshLambertMaterial({ color: 0xd3483d, emissive: 0x40100d }),
+    servoBlue: new THREE.MeshLambertMaterial({ color: 0x126bd1 }),
+    servoWhite: new THREE.MeshLambertMaterial({ color: 0xf4f4ef }),
+    servoSignal: new THREE.MeshLambertMaterial({ color: 0xf4ce31 }),
+    servoVoltage: new THREE.MeshLambertMaterial({ color: 0xc93635 }),
+    servoGround: new THREE.MeshLambertMaterial({ color: 0x56382d }),
   }
 }
 
@@ -90,6 +95,63 @@ export function createMotorModel(facing: number): MotorModel {
 }
 
 export function setMotorFacing(model: MotorModel, facing: number) {
+  model.group.quaternion.copy(facingQuaternion(facing))
+}
+
+export interface ServoModel {
+  group: THREE.Group
+  shaft: THREE.Group
+}
+
+/** Compact SG90-style servo with ground, voltage and signal pins. */
+export function createServoModel(facing = 2): ServoModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.48, 0.56), m.servoBlue)
+  body.position.z = -0.06
+  group.add(body)
+  const top = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.045, 0.43), m.plastic)
+  top.position.set(0, 0.265, -0.06)
+  group.add(top)
+  for (const side of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.09, 0.32), m.servoBlue)
+    ear.position.set(side * 0.42, -0.05, -0.07)
+    group.add(ear)
+    const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.095, 12), m.batteryBlack)
+    hole.rotation.z = Math.PI / 2
+    hole.position.set(side * 0.42, -0.05, -0.07)
+    group.add(hole)
+  }
+  group.add(cylZ(0.16, 0.08, m.plastic, 0.245))
+  group.add(cylZ(0.07, 0.14, m.servoWhite, 0.31))
+  const shaft = new THREE.Group()
+  shaft.position.set(0, 0, 0.37)
+  const horn = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.055, 0.085), m.servoWhite)
+  horn.position.z = 0.055
+  shaft.add(horn)
+  const hornHub = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.06, 16), m.servoWhite)
+  hornHub.rotation.x = Math.PI / 2
+  hornHub.position.z = 0.015
+  shaft.add(hornHub)
+  group.add(shaft)
+  const pins = [
+    { x: -0.2, material: m.servoGround },
+    { x: 0, material: m.servoVoltage },
+    { x: 0.2, material: m.servoSignal },
+  ]
+  for (const pin of pins) {
+    const connector = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.075, 0.105), m.plastic)
+    connector.position.set(pin.x, -0.285, -0.19)
+    group.add(connector)
+    const terminal = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.15, 0.035), pin.material)
+    terminal.position.set(pin.x, -0.365, -0.19)
+    group.add(terminal)
+  }
+  group.quaternion.copy(facingQuaternion(facing))
+  return { group, shaft }
+}
+
+export function setServoFacing(model: ServoModel, facing: number) {
   model.group.quaternion.copy(facingQuaternion(facing))
 }
 
