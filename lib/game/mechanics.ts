@@ -195,6 +195,7 @@ export class Mechanics {
         disposeObject(e.model.group)
         this.models.delete(key)
       }
+      if (oldId === B.MOTOR) this.mountedWheels.delete(key)
     }
     if (oldId !== B.AIR) {
       this.removeWiresAt(key)
@@ -257,7 +258,6 @@ export class Mechanics {
     if (id === B.WHEEL && model?.type === 'wheel' && next?.facing !== undefined) {
       const replacement = createArduinoWheelModel(next.facing)
       replacement.group.position.copy(model.model.group.position)
-      replacement.group.quaternion.copy(model.model.group.quaternion)
       replacement.group.scale.copy(model.model.group.scale)
       this.scene.add(replacement.group)
       disposeObject(model.model.group)
@@ -948,8 +948,10 @@ export class Mechanics {
     const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
     const chassisHasWheel = Boolean(motorState?.mountedWheel || chassisBlocks.some((block) => block.id === B.MOTOR && block.state?.mountedWheel))
     const chassisBody = this.rigidPhysics.createRigidBody(chassisVoxels, pivot, {
-      // A chassis carrying any mounted motor wheel must react to traction torque.
-      lockRotation: !chassisHasWheel, canSleep: false, linearDamping: 0.12, angularDamping: chassisHasWheel ? 0.22 : 0.65,
+      // A vehicle can steer around Y, but unrestricted roll/pitch makes the
+      // discrete voxel chassis pogo under traction impulses.
+      lockRotation: !chassisHasWheel, yawOnly: chassisHasWheel,
+      canSleep: false, linearDamping: 0.12, angularDamping: chassisHasWheel ? 0.22 : 0.65,
     })
     const rotorAxis = new THREE.Vector3(d[0], d[1], d[2])
     const rotorBody = wheelOnlyRotor
@@ -963,8 +965,8 @@ export class Mechanics {
       this.mechDirty = true
       return 'idle'
     }
-    const parentAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(0.36) : new THREE.Vector3()
-    const childAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(-0.36) : new THREE.Vector3()
+    const parentAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(0.64) : new THREE.Vector3()
+    const childAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(-0.64) : new THREE.Vector3()
     const joint = this.rigidPhysics.createRevoluteJoint(
       chassisBody, rotorBody, rotorAxis, parentAnchor, childAnchor,
     )
@@ -1083,12 +1085,17 @@ export class Mechanics {
   }
 
   private disassemble(c: Contraption, quarterTurns: number): Map<string, string> | null {
-    const q = new THREE.Quaternion().setFromAxisAngle(c.axis, quarterTurns * HALF_PI)
     const rotorTranslation = c.rotorBody.translation()
     const chassisTranslation = c.chassisBody.translation()
     const rotorPivot = new THREE.Vector3(rotorTranslation.x, rotorTranslation.y, rotorTranslation.z)
     const chassisPivot = new THREE.Vector3(chassisTranslation.x, chassisTranslation.y, chassisTranslation.z)
-    const chassisQ = new THREE.Quaternion()
+    const chassisRotation = c.chassisBody.rotation()
+    const chassisActualQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
+    const chassisEuler = new THREE.Euler().setFromQuaternion(chassisActualQ, 'YXZ')
+    const chassisTurns = ((Math.round(chassisEuler.y / HALF_PI) % 4) + 4) % 4
+    const chassisQ = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), chassisTurns * HALF_PI)
+    // Compose chassis yaw with the rotor's local quarter-turn before snapping grid positions.
+    const q = chassisQ.clone().multiply(new THREE.Quaternion().setFromAxisAngle(c.axis, quarterTurns * HALF_PI))
     const rotateDirection = (dir: number, rotation: THREE.Quaternion) => {
       const v = new THREE.Vector3(...DIRS[dir]).applyQuaternion(rotation)
       const r = [Math.round(v.x), Math.round(v.y), Math.round(v.z)]
@@ -1116,7 +1123,9 @@ export class Mechanics {
       const t = extra.rotorBody.translation()
       const pivot = new THREE.Vector3(t.x, t.y, t.z)
       const turns = ((Math.round(extra.angle / HALF_PI) % 4) + 4) % 4
-      const rotation = new THREE.Quaternion().setFromAxisAngle(extra.axis, turns * HALF_PI)
+      const rotation = chassisQ.clone().multiply(
+        new THREE.Quaternion().setFromAxisAngle(extra.axis, turns * HALF_PI),
+      )
       return { extra, pivot, rotation }
     })
     const pushPlacement = (rel: [number, number, number], pivot: THREE.Vector3, rotation: THREE.Quaternion, id: number, state: BlockState | undefined, orig: string) => {
@@ -1204,20 +1213,51 @@ export class Mechanics {
     }
     this.suppress = false
 
-    // Re-key models and mounted accessories to their snapped positions.
+    // Re-key and snap every model to its final voxel anchor. A body's world
+    // pose is not the same as the final restored block's grid pose.
     for (const [oldKey, newKey] of keyMap) {
+      const [x, y, z] = parseKey(newKey)
+      const state = this.world.getState(x, y, z)
       const entry = this.models.get(oldKey)
       if (entry) {
         this.models.delete(oldKey)
         this.models.set(newKey, entry)
-        const [x, y, z] = parseKey(newKey)
-        if (entry.type === 'motor' && this.world.getState(x, y, z)?.facing !== undefined) setMotorFacing(entry.model, this.world.getState(x, y, z)!.facing!)
-        if (entry.type === 'box') setBatteryCount(entry.model, this.world.getState(x, y, z)?.batteries ?? 0)
+        entry.model.group.rotation.set(0, 0, 0)
+        switch (entry.type) {
+          case 'motor':
+            entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+            setMotorFacing(entry.model, state?.facing ?? 2)
+            entry.model.shaft.rotation.set(0, 0, 0)
+            break
+          case 'box':
+            entry.model.group.position.set(x + 0.5, y, z + 0.5)
+            entry.model.group.quaternion.identity()
+            setBatteryCount(entry.model, state?.batteries ?? 0)
+            break
+          case 'led':
+            entry.model.group.position.set(x, y, z)
+            entry.model.group.quaternion.identity()
+            break
+          case 'wheel':
+            entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+            entry.model.group.quaternion.copy(facingQuaternion(state?.facing ?? 0))
+            entry.model.rim.rotation.z = entry.spin
+            break
+          case 'switch':
+            entry.model.group.position.set(x, y, z)
+            entry.model.group.quaternion.identity()
+            setSwitchState(entry.model, Boolean(state?.switchOn))
+            break
+        }
       }
       const mounted = this.mountedWheels.get(oldKey)
       if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
       const glow = this.glows.get(oldKey)
-      if (glow) { this.glows.delete(oldKey); this.glows.set(newKey, glow) }
+      if (glow) {
+        this.glows.delete(oldKey)
+        glow.position.set(x + 0.5, y + 0.5, z + 0.5)
+        this.glows.set(newKey, glow)
+      }
     }
 
     for (const we of c.wireEnds) {
@@ -1683,22 +1723,22 @@ export class Mechanics {
     return keyMap
   }
 
-  /** Apply ground force through every mounted wheel in the shared chassis. */
+  /** Apply smooth ground traction from every mounted wheel on a shared chassis. */
   private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
-    const extraWheels = (c.extraRotors ?? []).filter((extra) => this.mountedWheels.has(extra.motorKey))
-    const hasPrimaryWheel = this.mountedWheels.has(c.motorKey)
-    if (!hasPrimaryWheel && extraWheels.length === 0) return
+    const hasPrimaryWheel = Boolean(c.motorState?.mountedWheel) || this.mountedWheels.has(c.motorKey)
+    const chassisWheels = c.chassisBlocks.filter((block) =>
+      block.id === B.MOTOR && Boolean(block.state?.mountedWheel),
+    )
+    if (!hasPrimaryWheel && chassisWheels.length === 0) return
 
-    // Clear only wheel input from the preceding physics frame, then combine all
-    // wheel forces before stepping so no wheel erases another wheel's torque.
-    c.chassisBody.resetForces(true)
-    c.chassisBody.resetTorques(true)
     const t = c.chassisBody.translation()
     const r = c.chassisBody.rotation()
     const chassisPosition = new THREE.Vector3(t.x, t.y, t.z)
     const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
     const up = new THREE.Vector3(0, 1, 0)
 
+    // Aggregate each wheel's input once. Do not reset the chassis forces from
+    // inside this helper; doing so used to erase other wheel forces.
     const applyWheel = (axisLocal: THREE.Vector3, offsetLocal: THREE.Vector3, wheelPower: number, wheelDirection: number) => {
       if (wheelPower <= 0) return
       const axle = axisLocal.clone().applyQuaternion(rotation).normalize()
@@ -1710,7 +1750,7 @@ export class Mechanics {
       drive.normalize().multiplyScalar(wheelDirection < 0 ? -1 : 1)
 
       const center = chassisPosition.clone().add(offsetLocal.clone().applyQuaternion(rotation))
-      const bottomY = center.y - 0.41 * horizontalAxle
+      const bottomY = center.y - 0.49 * horizontalAxle
       const cellX = Math.floor(center.x)
       const cellZ = Math.floor(center.z)
       let supportY = GROUND_LEVEL
@@ -1726,24 +1766,30 @@ export class Mechanics {
       const velocity = c.chassisBody.linvel()
       const forwardSpeed = velocity.x * drive.x + velocity.z * drive.z
       const targetSpeed = Math.max(0.8, Math.min(3.2, wheelPower * 1.05))
-      const effort = Math.max(0, Math.min(1.35, 1 - forwardSpeed / targetSpeed))
-      const force = Math.min(36, wheelPower * 12) * effort
+      const effort = Math.max(0, Math.min(1, 1 - forwardSpeed / targetSpeed))
+      const force = Math.min(24, wheelPower * 8) * effort
       if (force <= 0.05) return
+      // Apply at axle/chassis height to avoid abrupt pitch impulses when a
+      // wheel crosses a voxel edge; lateral offsets can still produce steering yaw.
       c.chassisBody.addForceAtPoint(
         { x: drive.x * force, y: 0, z: drive.z * force },
-        { x: center.x, y: bottomY, z: center.z },
+        { x: center.x, y: center.y, z: center.z },
         true,
       )
     }
 
     if (hasPrimaryWheel) {
-      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.36), power, direction)
+      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.64), power, direction)
     }
-    for (const extra of extraWheels) {
-      const extraPower = this.motorPower.get(extra.motorKey) ?? 0
-      const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-      const offset = new THREE.Vector3(...extra.motorOffset).addScaledVector(extra.axis, 0.36)
-      applyWheel(extra.axis, offset, extraPower, extraDirection)
+    // A four-wheel vehicle often has extra motors glued into its chassis but
+    // no block glued to each output shaft. Those wheels still need traction.
+    for (const block of chassisWheels) {
+      const facing = (((block.state?.facing ?? 2) % 6) + 6) % 6
+      const axis = new THREE.Vector3(...DIRS[facing])
+      const wheelPower = this.motorPower.get(block.origKey) ?? 0
+      const wheelDirection = this.motorDirection.get(block.origKey) ?? 1
+      const offset = new THREE.Vector3(...block.rel).addScaledVector(axis, 0.64)
+      applyWheel(axis, offset, wheelPower, wheelDirection)
     }
   }
 
@@ -2381,15 +2427,18 @@ export class Mechanics {
     for (const c of this.contraptions.values()) {
       syncGroup(c.chassisGroup, c.chassisBody)
       syncGroup(c.group, c.rotorBody)
-      // Keep the motor shaft aligned to the same interpolated rotor pose on every peer.
+      // Shaft angle is relative to the chassis; a world-space quaternion drifts
+      // when a wheeled vehicle steers around Y.
       const rotation = c.rotorBody.rotation()
-      const projected = rotation.x * c.axis.x + rotation.y * c.axis.y + rotation.z * c.axis.z
-      c.angle = 2 * Math.atan2(projected, rotation.w)
+      const chassisR = c.chassisBody.rotation()
+      const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
+      const rotorQ = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+      const relativeRotorQ = chassisQ.clone().invert().multiply(rotorQ)
+      const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
+      c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
       if (c.angle < 0) c.angle += Math.PI * 2
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor') motor.model.shaft.rotation.z = c.angle
-      const chassisR = c.chassisBody.rotation()
-      const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
       for (const extra of c.extraRotors ?? []) {
         syncGroup(extra.group, extra.rotorBody)
         const rr = extra.rotorBody.rotation()
@@ -2707,7 +2756,9 @@ export class Mechanics {
     for (const c of [...this.contraptions.values()]) {
       const contains = kind === 'rotor'
         ? c.blocks.some((block) => block.origKey === key)
+          || (c.extraRotors ?? []).some((rotor) => rotor.blocks.some((block) => block.origKey === key))
         : c.motorKey === key || c.chassisBlocks.some((block) => block.origKey === key)
+          || (c.extraRotors ?? []).some((rotor) => rotor.motorKey === key)
       if (!contains) continue
       // Try every quarter-turn, starting with the nearest, until the assembly
       // can be safely restored to distinct voxel cells without intersecting
@@ -2716,8 +2767,11 @@ export class Mechanics {
       for (let offset = 0; offset < 4; offset++) {
         const turns = (preferred + offset) % 4
         const keyMap = this.disassemble(c, turns)
-        const target = keyMap?.get(key)
-        if (!target) continue
+        if (!keyMap) continue
+        const target = keyMap.get(key)
+        // A non-null map means the machine has already been dismantled; do not
+        // retry using stale physics bodies if the target identity is missing.
+        if (!target) return null
         const [x, y, z] = parseKey(target)
         return { x, y, z, id: this.world.getBlock(x, y, z) }
       }

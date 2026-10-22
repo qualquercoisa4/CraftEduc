@@ -38,6 +38,7 @@ export function blockMass(id: number) {
 
 export interface PhysicsBodyOptions {
   lockRotation?: boolean
+  yawOnly?: boolean
   canSleep?: boolean
   linearDamping?: number
   angularDamping?: number
@@ -147,7 +148,8 @@ export class RigidPhysics {
       .setCcdEnabled(true)
       .setLinearDamping(options.linearDamping ?? 0.08)
       .setAngularDamping(options.angularDamping ?? 0.12)
-    if (options.lockRotation) desc = desc.lockRotations()
+    if (options.yawOnly) desc = desc.enabledRotations(false, true, false)
+    else if (options.lockRotation) desc = desc.lockRotations()
     const body = this.rapierWorld.createRigidBody(desc)
     for (const voxel of voxels) {
       this.rapierWorld.createCollider(
@@ -168,7 +170,7 @@ export class RigidPhysics {
   createWheelRotorBody(pivot: THREE.Vector3, axis: THREE.Vector3) {
     if (!this.ready || !this.rapierWorld) return null
     const axle = axis.clone().normalize()
-    const center = pivot.clone().addScaledVector(axle, 0.36)
+    const center = pivot.clone().addScaledVector(axle, 0.64)
     const body = this.rapierWorld.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(center.x, center.y, center.z)
