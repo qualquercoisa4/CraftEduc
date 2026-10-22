@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { RigidPhysics } from './rigid-physics'
-import { B, BLOCK_CONDUCTIVITY, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
+import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
   type BatteryBoxModel,
@@ -471,6 +471,10 @@ export class Mechanics {
     const [x, y, z] = parseKey(key)
     if (this.world.getBlock(x, y, z) === B.SERVO) {
       this.world.setBlock(x, y, z, B.SERVO, { ...state })
+      // The state object above may have been mutated before setBlock compared it
+      // with the previous reference. Force the chunk/save layer to notice it.
+      this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
+      this.world.markBlockDirty(x, y, z)
     } else {
       // During articulated simulation, the servo is temporarily absent from the
       // voxel grid. Store changes directly on the active assembly/block state.
