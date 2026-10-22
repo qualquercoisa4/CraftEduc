@@ -1033,6 +1033,9 @@ export class Mechanics {
     }
 
     const [mx, my, mz] = parseKey(motorKey)
+    const actuatorId = this.world.getBlock(mx, my, mz)
+    if (actuatorId !== B.MOTOR && actuatorId !== B.SERVO) return 'idle'
+    const isServo = actuatorId === B.SERVO
     const motorState = this.world.getState(mx, my, mz)
     const facing = motorState?.facing ?? 2
     const d = DIRS[facing]
@@ -1042,7 +1045,7 @@ export class Mechanics {
     // the output face. Model it with a small sensor rotor so its motor can still
     // assemble a chassis and use the same powered-wheel traction path.
     const wheelOnlyRotor = outputId === B.AIR && Boolean(motorState?.mountedWheel)
-    if (!wheelOnlyRotor && (outputId === B.AIR || outputId === B.MOTOR || !this.isGlued(mx, my, mz, facing))) return 'idle'
+    if (!wheelOnlyRotor && (outputId === B.AIR || outputId === B.MOTOR || outputId === B.SERVO || !this.isGlued(mx, my, mz, facing))) return 'idle'
 
     // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
@@ -1055,7 +1058,7 @@ export class Mechanics {
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
         const key = posKey(nx, ny, nz)
-        if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR) continue
+        if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR || this.world.getBlock(nx, ny, nz) === B.SERVO) continue
         if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
         visited.add(key)
         queue.push([nx, ny, nz])
@@ -1080,7 +1083,7 @@ export class Mechanics {
       const [x, y, z] = chassisQueue.shift()!
       const currentId = this.world.getBlock(x, y, z)
       const currentState = this.world.getState(x, y, z)
-      const outputFace = currentId === B.MOTOR ? (((currentState?.facing ?? 2) % 6) + 6) % 6 : -1
+      const outputFace = currentId === B.MOTOR || currentId === B.SERVO ? (((currentState?.facing ?? 2) % 6) + 6) % 6 : -1
       for (let face = 0; face < 6; face++) {
         // A second motor is part of the chassis, but its output face must seed
         // an independent rotor instead of gluing that arm rigidly to the frame.
@@ -1116,7 +1119,7 @@ export class Mechanics {
       const extraDir = DIRS[extraFacing]
       const ex = rx + extraDir[0], ey = ry + extraDir[1], ez = rz + extraDir[2]
       const seed = posKey(ex, ey, ez)
-      if (this.world.getBlock(ex, ey, ez) === B.AIR || this.world.getBlock(ex, ey, ez) === B.MOTOR
+      if (this.world.getBlock(ex, ey, ez) === B.AIR || this.world.getBlock(ex, ey, ez) === B.MOTOR || this.world.getBlock(ex, ey, ez) === B.SERVO
         || !this.isGlued(rx, ry, rz, extraFacing) || visited.has(seed)
         || chassisVisited.has(seed) || extraRotorKeys.has(seed)) continue
 
@@ -1131,7 +1134,7 @@ export class Mechanics {
           const nx = x + n[0], ny = y + n[1], nz = z + n[2]
           const key = posKey(nx, ny, nz)
           const id = this.world.getBlock(nx, ny, nz)
-          if (id === B.AIR || id === B.MOTOR || key === motorKey || visited.has(key)
+          if (id === B.AIR || id === B.MOTOR || id === B.SERVO || key === motorKey || visited.has(key)
             || chassisVisited.has(key) || extraVisited.has(key) || extraRotorKeys.has(key)) continue
           if (!this.isGlued(x, y, z, face)) continue
           extraVisited.add(key)
@@ -1297,7 +1300,7 @@ export class Mechanics {
     })
 
     const motorModel = this.models.get(motorKey)
-    if (motorModel?.type === 'motor') {
+    if (motorModel?.type === 'motor' || motorModel?.type === 'servo') {
       motorModel.model.group.position.sub(pivot)
       chassisGroup.add(motorModel.model.group)
     }
@@ -1319,7 +1322,7 @@ export class Mechanics {
     }
 
     const chassisVoxels = [
-      { x: mx, y: my, z: mz, id: B.MOTOR },
+      { x: mx, y: my, z: mz, id: actuatorId },
       ...chassisBlocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id })),
     ]
     const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
@@ -1347,6 +1350,7 @@ export class Mechanics {
     const joint = this.rigidPhysics.createRevoluteJoint(
       chassisBody, rotorBody, rotorAxis, parentAnchor, childAnchor,
     )
+    if (joint && isServo) joint.setLimits(0, Math.PI)
     if (!joint) {
       this.rigidPhysics.removeRigidBody(chassisBody)
       this.rigidPhysics.removeRigidBody(rotorBody)
@@ -1435,6 +1439,7 @@ export class Mechanics {
 
     this.contraptions.set(motorKey, {
       motorKey,
+      actuatorId,
       motorPos: [mx, my, mz],
       motorState: motorState ? { ...motorState } : undefined,
       axis: new THREE.Vector3(d[0], d[1], d[2]),
@@ -1514,7 +1519,7 @@ export class Mechanics {
     }
     for (const b of c.blocks) pushPlacement(b.rel, rotorPivot, q, b.id, b.state, b.origKey)
     for (const b of c.chassisBlocks) pushPlacement(b.rel, chassisPivot, chassisQ, b.id, b.state, b.origKey)
-    pushPlacement([0, 0, 0], chassisPivot, chassisQ, B.MOTOR, c.motorState, c.motorKey)
+    pushPlacement([0, 0, 0], chassisPivot, chassisQ, c.actuatorId, c.motorState, c.motorKey)
     for (const pose of extraPoses) for (const block of pose.extra.blocks) {
       pushPlacement(block.rel, pose.pivot, pose.rotation, block.id, block.state, block.origKey)
     }
@@ -2164,14 +2169,16 @@ export class Mechanics {
     if (this.mechDirty) {
       this.mechDirty = false
       for (const [key, e] of this.models) {
-        if (e.type !== 'motor') continue
+        if (e.type !== 'motor' && e.type !== 'servo') continue
         const extra = this.findExtraRotor(key)
         if (extra) {
           e.status = (this.motorPower.get(key) ?? 0) > 0 ? 'driving' : 'idle'
           continue
         }
-        const shouldAssemble = this.networkAuthority
-          ? (this.motorPower.get(key) ?? 0) > 0
+        const shouldAssemble = e.type === 'servo'
+          ? this.servoPowered.has(key)
+          : this.networkAuthority
+            ? (this.motorPower.get(key) ?? 0) > 0
           : this.desiredNetworkMachines !== null
             ? this.desiredNetworkMachines.has(key)
             : (this.motorPower.get(key) ?? 0) > 0
@@ -2210,6 +2217,18 @@ export class Mechanics {
         e.model.rim.rotation.z = e.spin
         continue
       }
+      if (e.type === 'servo') {
+        if (!this.contraptions.has(key)) {
+          const state = this.getServoState(key)
+          const degrees = this.servoPowered.has(key) ? state?.servoOnAngle ?? 90 : state?.servoOffAngle ?? 0
+          const target = Math.max(0, Math.min(180, degrees)) * Math.PI / 180
+          const current = e.model.shaft.rotation.z
+          const step = Math.max(-4 * dt, Math.min(4 * dt, target - current))
+          e.model.shaft.rotation.z = current + step
+          e.status = Math.abs(target - e.model.shaft.rotation.z) > 0.025 ? 'driving' : 'idle'
+        }
+        continue
+      }
       if (e.type !== 'motor') continue
       const power = this.motorPower.get(key) ?? 0
       const c = this.contraptions.get(key)
@@ -2234,7 +2253,8 @@ export class Mechanics {
     if (this.networkAuthority) {
     for (const c of [...this.contraptions.values()]) {
       c.disassemblyRetryCooldown = Math.max(0, c.disassemblyRetryCooldown - dt)
-      const motorAlive = this.models.get(c.motorKey)?.type === 'motor'
+      const actuator = this.models.get(c.motorKey)
+      const motorAlive = actuator?.type === 'motor' || actuator?.type === 'servo'
       if (!motorAlive) {
         this.disassemble(c, Math.round(c.angle / HALF_PI) % 4)
         continue
@@ -2790,7 +2810,7 @@ export class Mechanics {
       c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
       if (c.angle < 0) c.angle += Math.PI * 2
       const motor = this.models.get(c.motorKey)
-      if (motor?.type === 'motor') motor.model.shaft.rotation.z = c.angle
+      if (motor?.type === 'motor' || motor?.type === 'servo') motor.model.shaft.rotation.z = c.angle
       for (const extra of c.extraRotors ?? []) {
         syncGroup(extra.group, extra.rotorBody)
         const rr = extra.rotorBody.rotation()
