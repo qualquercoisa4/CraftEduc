@@ -49,6 +49,9 @@ export function ProximitySensorConfig() {
             className="border-2 border-black bg-white px-2 py-2 font-semibold"
           >
             <option value="less">menor que</option>
+            <option value="lessEqual">menor ou igual a</option>
+            <option value="equal">igual a</option>
+            <option value="greaterEqual">maior ou igual a</option>
             <option value="greater">maior que</option>
           </select>
         </div>
@@ -69,7 +72,7 @@ export function ProximitySensorConfig() {
 
         <p className="mt-3 text-center text-xs leading-5 text-[#555]">
           Mede até 32 blocos à frente. Sem obstáculo nessa faixa, a distância é considerada maior que 32 blocos.
-          Use Shift + botão direito no sensor para mudar a direção.
+          Para girar o sensor, use a mão vazia ou selecione o item Sensor de proximidade e clique com o botão direito. O Tablet de Programação abre esta interface.
         </p>
 
         <div className="mt-6 grid grid-cols-2 gap-3">

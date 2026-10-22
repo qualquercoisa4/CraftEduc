@@ -94,6 +94,7 @@ export type ItemId =
   | 'wheel'
   | 'switch'
   | 'proximity_sensor'
+  | 'programming_tablet'
 
 export type CategoryId = 'all' | 'blocks' | 'components' | 'motors' | 'wiring' | 'tools' | 'power'
 
@@ -155,6 +156,11 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'components',
     block: B.PROXIMITY_SENSOR,
   },
+  programming_tablet: {
+    name: 'Tablet de Programação',
+    description: 'Use na mão para abrir e editar a programação de componentes compatíveis.',
+    category: 'tools',
+  },
   motor: {
     name: 'Motor CC Pequeno',
     description: 'Motor CC polarizado: os dois terminais definem o sentido. Só move peças coladas e pode travar ao colidir.',
@@ -197,6 +203,7 @@ export const ITEM_ORDER: ItemId[] = [
   'motor',
   'wire',
   'glue',
+  'programming_tablet',
   'battery_box',
   'battery',
   'wheel',

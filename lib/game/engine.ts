@@ -822,16 +822,11 @@ export class Engine {
     this.swing = 0
     this.lastUseWasPlace = false
 
-    // Right-click opens the sensor programming panel; Shift + right-click rotates it.
-    if (hit?.id === B.PROXIMITY_SENSOR) {
+    // Open a programmable component only when the programming tablet is held.
+    // Other items, especially wire, continue through their normal interaction paths.
+    if (hit?.id === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
-      if (this.player.sneaking) {
-        const facing = this.mech.rotateProximitySensor(key)
-        if (facing !== null) {
-          sfx.rotate()
-          showToast(`Sensor virado para: ${DIR_NAMES[facing]}`)
-        }
-      } else gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
+      gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
       return
     }
 
@@ -904,15 +899,17 @@ export class Engine {
 
     if (!hit) return
 
-    if (hit.id === B.PROXIMITY_SENSOR) {
+    // Match the motor's ergonomics: the empty hand or sensor item rotates it.
+    // Holding a wire reaches the wiring handler above; the tablet opens its panel earlier.
+    if (hit.id === B.PROXIMITY_SENSOR && (item === null || item === 'proximity_sensor') && !this.player.sneaking) {
       const key = posKey(hit.x, hit.y, hit.z)
-      if (this.player.sneaking) {
-        const facing = this.mech.rotateProximitySensor(key)
-        if (facing !== null) {
-          sfx.rotate()
-          showToast(`Sensor virado para: ${DIR_NAMES[facing]}`)
-        }
-      } else gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
+      const facing = this.mech.rotateProximitySensor(key)
+      if (facing !== null) {
+        const state = this.world.getState(hit.x, hit.y, hit.z)
+        this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, B.PROXIMITY_SENSOR, state ? { ...state } : undefined)
+        sfx.rotate()
+        showToast(`Sensor virado para: ${DIR_NAMES[facing]}`)
+      }
       return
     }
 

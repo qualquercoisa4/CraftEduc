@@ -8,7 +8,7 @@ export interface BlockState {
   glue?: number
   mountedWheel?: boolean
   switchOn?: boolean
-  proximityOperator?: 'greater' | 'less'
+  proximityOperator?: 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
   proximityDistance?: number
   proximityActive?: boolean
 }

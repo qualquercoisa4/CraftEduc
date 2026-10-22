@@ -344,6 +344,19 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(10, 12, 1, 3, [216, 178, 74]); rect(13, 12, 1, 3, [216, 178, 74])
       break
     }
+    case 'programming_tablet': {
+      // Compact tablet with a blue screen, code marks and a gold edge.
+      rect(2, 1, 12, 14, [28, 34, 43])
+      rect(3, 2, 10, 11, [44, 52, 65])
+      rect(4, 3, 8, 9, [18, 83, 133])
+      rect(5, 4, 4, 1, [105, 202, 255])
+      rect(5, 6, 6, 1, [223, 237, 247])
+      rect(6, 8, 4, 1, [105, 202, 255])
+      rect(5, 10, 5, 1, [223, 237, 247])
+      px(8, 13, [216, 178, 74])
+      rect(3, 0, 10, 1, [98, 109, 123])
+      break
+    }
     case 'motor': {
       rect(2, 4, 9, 8, [185, 190, 196])
       rect(3, 3, 7, 1, [150, 155, 162])

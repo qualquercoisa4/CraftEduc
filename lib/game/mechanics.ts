@@ -33,7 +33,7 @@ import type { Player } from './player'
 const HALF_PI = Math.PI / 2
 const MAX_CONTRAPTION = 400
 export const PROXIMITY_SENSOR_RANGE = 32
-export type ProximityComparison = 'greater' | 'less'
+export type ProximityComparison = 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
 
 export function measureProximityDistance(
   world: Pick<World, 'getBlock'>,
@@ -49,7 +49,14 @@ export function measureProximityDistance(
 }
 
 export function proximityConditionMatches(distance: number, comparison: ProximityComparison, threshold: number) {
-  return comparison === 'greater' ? distance > threshold : distance < threshold
+  switch (comparison) {
+    case 'less': return distance < threshold
+    case 'lessEqual': return distance <= threshold
+    case 'equal': return distance === threshold
+    case 'greaterEqual': return distance >= threshold
+    case 'greater': return distance > threshold
+  }
+  return false
 }
 
 type ModelEntry =
@@ -424,7 +431,7 @@ export class Mechanics {
   }
 
   configureProximitySensor(key: string, operator: ProximityComparison, threshold: number) {
-    if (operator !== 'greater' && operator !== 'less') return false
+    if (!['greater', 'greaterEqual', 'equal', 'lessEqual', 'less'].includes(operator)) return false
     if (!Number.isFinite(threshold)) return false
     const [x, y, z] = parseKey(key)
     let state: BlockState | undefined
