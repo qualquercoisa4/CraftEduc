@@ -523,6 +523,12 @@ export class Engine {
       }
       return
     }
+    if (cell.id === B.SERVO && (item === null || item === 'servo') && !intent.sneaking) {
+      this.mech.rotateServo(cell.x, cell.y, cell.z)
+      const state = this.world.getState(cell.x, cell.y, cell.z)
+      this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      return
+    }
     if (cell.id === B.MOTOR && (item === null || item === 'motor') && !intent.sneaking) {
       this.mech.rotateMotor(cell.x, cell.y, cell.z)
       const state = this.world.getState(cell.x, cell.y, cell.z)
@@ -539,7 +545,7 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
-    const state: import('./world').BlockState | undefined = block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
