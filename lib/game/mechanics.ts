@@ -293,7 +293,7 @@ export class Mechanics {
     // motor's facing quaternion. Keep the wheel axle on local +Z so facing is
     // applied exactly once and follows all six motor orientations.
     const wheel = createArduinoWheelModel(4)
-    wheel.group.position.set(0, 0, 0.36
+    wheel.group.position.set(0, 0, 0.36)
     wheel.group.scale.setScalar(0.88)
     entry.model.shaft.add(wheel.group)
     this.world.ensureState(x, y, z).mountedWheel = true
