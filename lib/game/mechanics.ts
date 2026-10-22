@@ -1475,6 +1475,7 @@ export class Mechanics {
       }
       const mounted = this.mountedWheels.get(oldKey)
       if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
+      const [x, y, z] = parseKey(newKey)
       const glow = this.glows.get(oldKey)
       if (glow) {
         this.glows.delete(oldKey)
