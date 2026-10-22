@@ -191,6 +191,7 @@ interface Contraption {
   disassemblyRetryCooldown: number
   group: THREE.Group
   angle: number
+  servoCommandAngle?: number
   speed: number
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
   extraRotors: ExtraRotor[]
