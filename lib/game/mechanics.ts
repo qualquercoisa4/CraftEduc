@@ -2193,13 +2193,21 @@ export class Mechanics {
           e.status = (this.motorPower.get(key) ?? 0) > 0 ? 'driving' : 'idle'
           continue
         }
+        const hasGluedServoLoad = e.type === 'servo' && (() => {
+          const [x, y, z] = parseKey(key)
+          const facing = this.world.getState(x, y, z)?.facing ?? 2
+          const [dx, dy, dz] = DIRS[facing]
+          const outputId = this.world.getBlock(x + dx, y + dy, z + dz)
+          return outputId !== B.AIR && outputId !== B.MOTOR && outputId !== B.SERVO
+            && this.isGlued(x, y, z, facing)
+        })()
         const shouldAssemble = e.type === 'servo'
-          ? this.servoPowered.has(key)
+          ? this.servoPowered.has(key) || hasGluedServoLoad
           : this.networkAuthority
             ? (this.motorPower.get(key) ?? 0) > 0
-          : this.desiredNetworkMachines !== null
-            ? this.desiredNetworkMachines.has(key)
-            : (this.motorPower.get(key) ?? 0) > 0
+            : this.desiredNetworkMachines !== null
+              ? this.desiredNetworkMachines.has(key)
+              : (this.motorPower.get(key) ?? 0) > 0
         if (shouldAssemble && !this.contraptions.has(key)) {
           e.status = this.tryAssemble(key)
         } else if (!this.contraptions.has(key)) {
