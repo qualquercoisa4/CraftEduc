@@ -1726,7 +1726,7 @@ export class Mechanics {
   /** Apply smooth ground traction from every mounted wheel on a shared chassis. */
   private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
     const hasPrimaryWheel = Boolean(c.motorState?.mountedWheel) || this.mountedWheels.has(c.motorKey)
-    const chassisWheels = c.chassisBlocks.filter((block) =>
+    const chassisWheels = (c.chassisBlocks ?? []).filter((block) =>
       block.id === B.MOTOR && Boolean(block.state?.mountedWheel),
     )
     if (!hasPrimaryWheel && chassisWheels.length === 0) return
