@@ -2263,7 +2263,27 @@ export class Mechanics {
       const motor = this.models.get(c.motorKey)
       const direction = this.motorDirection.get(c.motorKey) ?? 1
       this.applyMountedWheelTraction(c, power, direction)
-      if (power > 0) {
+      if (c.actuatorId === B.SERVO) {
+        const targetDegrees = this.servoPowered.has(c.motorKey)
+          ? c.motorState?.servoOnAngle ?? 90
+          : c.motorState?.servoOffAngle ?? 0
+        const target = Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180
+        const currentAngle = Math.max(0, Math.min(Math.PI, c.angle))
+        const error = target - currentAngle
+        const targetSpeed = Math.max(-3.2, Math.min(3.2, error * 4.2))
+        c.speed = targetSpeed
+        c.unpoweredTime = 0
+        c.joint.configureMotorPosition(target, 18, 3)
+        const angular = c.rotorBody.angvel()
+        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
+        const torque = Math.max(-24, Math.min(24, (targetSpeed - axialSpeed) * 18))
+        c.rotorBody.addTorque({
+          x: c.axis.x * torque,
+          y: c.axis.y * torque,
+          z: c.axis.z * torque,
+        }, true)
+        if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
+      } else if (power > 0) {
         c.speed = power * 1.05 * direction
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
