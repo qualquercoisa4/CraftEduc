@@ -11,6 +11,8 @@ export interface BlockState {
   proximityOperator?: 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
   proximityDistance?: number
   proximityActive?: boolean
+  servoOffAngle?: number
+  servoOnAngle?: number
   color?: string
 }
 
