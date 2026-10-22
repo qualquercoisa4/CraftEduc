@@ -1510,6 +1510,10 @@ export class Engine {
       hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.BATTERY_BOX && item === null) {
       hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
+    } else if (hit?.id === B.SERVO && item === 'programming_tablet') {
+      hint = `${use} para programar o servo motor`
+    } else if (hit?.id === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
+      hint = `${use} para programar o sensor de proximidade`
     } else if (hit?.id === B.MOTOR && (item === null || item === 'motor')) {
       const f = this.world.getState(hit.x, hit.y, hit.z)?.facing ?? 2
       const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
