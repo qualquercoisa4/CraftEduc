@@ -2317,7 +2317,7 @@ export class Mechanics {
         // Use the hinge position motor as the only servo controller. Applying
         // a second world-space torque double-drives the servo and can inject
         // torque around an incorrect axis, causing uncommanded spins.
-        const currentAngle = THREE.MathUtils.clamp(c.joint.angle(), 0, Math.PI)
+        const currentAngle = THREE.MathUtils.clamp(c.angle, 0, Math.PI)
         const error = target - currentAngle
         c.speed = Math.max(-3.2, Math.min(3.2, error * 4.2))
         c.unpoweredTime = 0
@@ -2866,15 +2866,14 @@ export class Mechanics {
       const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
       const rotorQ = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
       const relativeRotorQ = chassisQ.clone().invert().multiply(rotorQ)
-      if (c.actuatorId === B.SERVO) {
-        // joint.angle() is the hinge-local angle. The quaternion is relative to
-        // the chassis, so projecting it on a world-space axis can mix frames.
-        c.angle = THREE.MathUtils.clamp(c.joint.angle(), 0, Math.PI)
-      } else {
-        const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
-        c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
-        if (c.angle < 0) c.angle += Math.PI * 2
-      }
+      // The chassis and rotor are created with identity rotations, so c.axis is
+      // also the hinge axis in the chassis-local frame. Derive the signed hinge
+      // angle from the relative quaternion; Rapier's impulse joint exposes no
+      // public angle() accessor in the version used by this project.
+      const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
+      c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
+      if (c.angle < 0) c.angle += Math.PI * 2
+      if (c.actuatorId === B.SERVO) c.angle = THREE.MathUtils.clamp(c.angle, 0, Math.PI)
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor' || motor?.type === 'servo') motor.model.shaft.rotation.z = c.angle
       for (const extra of c.extraRotors ?? []) {
