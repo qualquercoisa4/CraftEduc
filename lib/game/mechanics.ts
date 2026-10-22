@@ -34,6 +34,11 @@ import type { BlockState, World } from './world'
 import type { Player } from './player'
 
 const HALF_PI = Math.PI / 2
+// Rapier 0.12 becomes unstable at the exact pi-radian revolute-motor boundary.
+// Keep servo motion slightly inside that endpoint and approach targets gradually.
+const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
+const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
+const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
 export const PROXIMITY_SENSOR_RANGE = 32
 export type ProximityComparison = 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
@@ -1388,7 +1393,7 @@ export class Mechanics {
     const joint = this.rigidPhysics.createRevoluteJoint(
       chassisBody, rotorBody, rotorAxis, parentAnchor, childAnchor,
     )
-    if (joint && isServo) joint.setLimits(0, Math.PI)
+    if (joint && isServo) joint.setLimits(0, SERVO_MAX_ANGLE_RAD)
     if (!joint) {
       this.rigidPhysics.removeRigidBody(chassisBody)
       this.rigidPhysics.removeRigidBody(rotorBody)
@@ -2267,7 +2272,7 @@ export class Mechanics {
         if (!this.contraptions.has(key)) {
           const state = this.getServoState(key)
           const degrees = this.servoPowered.has(key) ? state?.servoOnAngle ?? 90 : state?.servoOffAngle ?? 0
-          const target = Math.max(0, Math.min(180, degrees)) * Math.PI / 180
+          const target = Math.min(SERVO_MAX_ANGLE_RAD, Math.max(0, Math.min(180, degrees)) * Math.PI / 180)
           const current = e.model.shaft.rotation.z
           const step = Math.max(-4 * dt, Math.min(4 * dt, target - current))
           e.model.shaft.rotation.z = current + step
@@ -2313,15 +2318,34 @@ export class Mechanics {
         const targetDegrees = this.servoPowered.has(c.motorKey)
           ? c.motorState?.servoOnAngle ?? 90
           : c.motorState?.servoOffAngle ?? 0
-        const target = Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180
-        // Use the hinge position motor as the only servo controller. Applying
-        // a second world-space torque double-drives the servo and can inject
-        // torque around an incorrect axis, causing uncommanded spins.
-        const currentAngle = THREE.MathUtils.clamp(c.angle, 0, Math.PI)
+        const requestedTarget = Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180
+        const target = Math.min(requestedTarget, SERVO_MAX_ANGLE_RAD)
+        // Do not command exactly PI: Rapier 0.12 has an unstable revolute-motor
+        // boundary there. Also slew-limit the setpoint and keep it near the
+        // measured angle, so a loaded or obstructed assembly cannot accumulate
+        // an enormous position error and receive an abrupt corrective impulse.
+        const currentAngle = THREE.MathUtils.clamp(c.angle, 0, SERVO_MAX_ANGLE_RAD)
+        const previousCommand = THREE.MathUtils.clamp(
+          c.servoCommandAngle ?? currentAngle,
+          0,
+          SERVO_MAX_ANGLE_RAD,
+        )
+        const maxStep = SERVO_TARGET_SPEED_RAD * Math.max(0, Math.min(dt, 1 / 30))
+        const steppedTarget = previousCommand + THREE.MathUtils.clamp(
+          target - previousCommand,
+          -maxStep,
+          maxStep,
+        )
+        const commandedTarget = THREE.MathUtils.clamp(
+          steppedTarget,
+          Math.max(0, currentAngle - SERVO_MAX_TRACK_ERROR_RAD),
+          Math.min(SERVO_MAX_ANGLE_RAD, currentAngle + SERVO_MAX_TRACK_ERROR_RAD),
+        )
+        c.servoCommandAngle = commandedTarget
         const error = target - currentAngle
         c.speed = Math.max(-3.2, Math.min(3.2, error * 4.2))
         c.unpoweredTime = 0
-        c.joint.configureMotorPosition(target, 18, 3)
+        c.joint.configureMotorPosition(commandedTarget, 18, 3)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
         c.speed = power * 1.05 * direction
@@ -2876,7 +2900,7 @@ export class Mechanics {
         // Do not wrap a tiny negative servo angle to almost 360 degrees. Near
         // the zero stop, floating-point noise should stay at 0°, not command
         // a full sweep to the opposite limit.
-        c.angle = THREE.MathUtils.clamp(signedAngle, 0, Math.PI)
+        c.angle = THREE.MathUtils.clamp(signedAngle, 0, SERVO_MAX_ANGLE_RAD)
       } else {
         c.angle = signedAngle
         if (c.angle < 0) c.angle += Math.PI * 2
