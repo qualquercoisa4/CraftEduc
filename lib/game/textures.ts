@@ -396,6 +396,21 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(10, 12, 1, 3, [216, 178, 74]); rect(13, 12, 1, 3, [216, 178, 74])
       break
     }
+    case 'servo': {
+      // Blue SG90-style case, white horn, and the three recognizable lead colors.
+      rect(2, 4, 12, 8, [18, 93, 184])
+      rect(3, 5, 10, 6, [27, 118, 207])
+      rect(4, 3, 8, 1, [30, 76, 133])
+      rect(6, 1, 4, 2, [215, 221, 230])
+      rect(2, 7, 4, 2, [18, 93, 184])
+      rect(10, 7, 4, 2, [18, 93, 184])
+      rect(4, 2, 8, 1, [245, 245, 240])
+      rect(7, 1, 2, 3, [245, 245, 240])
+      for (const [x, color] of [[4, [86, 56, 45]], [7, [201, 54, 53]], [10, [244, 206, 49]]] as [number, number[]][]) {
+        rect(x, 12, 1, 3, color)
+      }
+      break
+    }
     case 'paintbrush': {
       rect(3, 10, 9, 3, [109, 72, 42])
       rect(8, 4, 4, 8, [170, 120, 68])
