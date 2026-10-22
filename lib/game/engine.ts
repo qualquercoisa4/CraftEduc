@@ -51,7 +51,7 @@ export interface Hit {
 let current: Engine | null = null
 export const getEngine = () => current
 
-const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.ROBOTICS, B.WHEEL, B.SWITCH])
+const METAL = new Set<number>([B.IRON, B.ALUMINUM, B.GEAR, B.MOTOR, B.SERVO, B.ROBOTICS, B.WHEEL, B.SWITCH])
 
 interface MultiplayerBridge {
   isHost: boolean
@@ -712,6 +712,7 @@ export class Engine {
     if (e.code === 'Escape') {
       if (s.screen === 'brush_color') gameStore.set({ screen: s.returnScreen === 'brush_color' ? 'playing' : s.returnScreen })
       else if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
+      else if (s.screen === 'servo_config') gameStore.set({ servoConfigKey: null, screen: 'playing' })
       else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
       else if (s.screen === 'paused') gameStore.set({ screen: 'playing' })
@@ -837,6 +838,11 @@ export class Engine {
       gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
       return
     }
+    if (hit?.id === B.SERVO && item === 'programming_tablet') {
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
+      gameStore.set({ servoConfigKey: key, screen: 'servo_config' })
+      return
+    }
 
     // Articulated bodies are authoritative on the host. Guests send an intent
     // rather than disassembling their local visual replica independently.
@@ -876,7 +882,7 @@ export class Engine {
 
     if (isWireItem(item)) {
       if (!hit) return
-      const key = posKey(hit.x, hit.y, hit.z)
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
       const terminal = this.mech.resolveTerminal(key, hit.point, hit.face)
       if (!terminal) {
         showToast('Mire em um terminal exposto; madeira não conduz energia')
@@ -909,6 +915,19 @@ export class Engine {
 
     // Match the motor's ergonomics: the empty hand or sensor item rotates it.
     // Holding a wire reaches the wiring handler above; the tablet opens its panel earlier.
+    if (hit.id === B.SERVO && (item === null || item === 'servo') && !this.player.sneaking) {
+      if (hit.moving) {
+        showToast('Desligue o servo antes de mudar sua orientação')
+        return
+      }
+      const facing = this.mech.rotateServo(hit.x, hit.y, hit.z)
+      if (facing !== null) {
+        sfx.rotate()
+        showToast(`Servo virado para: ${DIR_NAMES[facing]}`)
+      }
+      return
+    }
+
     if (hit.id === B.PROXIMITY_SENSOR && (item === null || item === 'proximity_sensor') && !this.player.sneaking) {
       const key = posKey(hit.x, hit.y, hit.z)
       const facing = this.mech.rotateProximitySensor(key)
@@ -992,7 +1011,7 @@ export class Engine {
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
-    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
