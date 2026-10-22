@@ -462,8 +462,35 @@ export class Mechanics {
     if (!Number.isFinite(offAngle) || !Number.isFinite(onAngle)) return false
     const state = this.getServoState(key)
     if (!state) return false
+
     state.servoOffAngle = Math.max(0, Math.min(180, Math.round(offAngle)))
     state.servoOnAngle = Math.max(0, Math.min(180, Math.round(onAngle)))
+
+    // Commit settings to the world's canonical block state. Mutating the
+    // object returned by ensureState() alone may not mark its chunk as changed.
+    const [x, y, z] = parseKey(key)
+    if (this.world.getBlock(x, y, z) === B.SERVO) {
+      this.world.setBlock(x, y, z, B.SERVO, { ...state })
+    } else {
+      // During articulated simulation, the servo is temporarily absent from the
+      // voxel grid. Store changes directly on the active assembly/block state.
+      const machine = this.contraptions.get(key)
+      if (machine?.actuatorId === B.SERVO) machine.motorState = { ...state }
+      else {
+        const moving = this.findMovingBlock(key)
+        if (moving?.id === B.SERVO) moving.state = { ...state }
+        else {
+          for (const body of this.fallingBodies) {
+            const block = body.blocks.find((candidate) => candidate.originKey === key && candidate.id === B.SERVO)
+            if (block) {
+              block.state = { ...state }
+              break
+            }
+          }
+        }
+      }
+    }
+
     this.powerDirty = true
     this.powerCooldown = 0
     this.mechDirty = true
@@ -979,8 +1006,13 @@ export class Mechanics {
       const voltageRoot = find(servo.vcc)
       const signalRoot = find(servo.signal)
       const source = activeBoxes.reduce((max, box) => Math.max(max, box.batteries), 0)
-      if (source > 0 && groundRoot !== voltageRoot && groundRoot !== signalRoot
-        && negativeRoots.has(groundRoot) && positiveRoots.has(voltageRoot) && positiveRoots.has(signalRoot)) {
+      // VCC and signal may share the same positive net/source. GND must remain
+      // connected to a negative source and separate from both positive inputs.
+      const vccHasPositiveSupply = positiveRoots.has(voltageRoot)
+      const signalIsHigh = signalRoot === voltageRoot || positiveRoots.has(signalRoot)
+      const groundIsNegative = negativeRoots.has(groundRoot)
+      const groundIsNotShorted = groundRoot !== voltageRoot && groundRoot !== signalRoot
+      if (source > 0 && groundIsNegative && groundIsNotShorted && vccHasPositiveSupply && signalIsHigh) {
         this.servoPowered.add(servo.key)
       }
     }
@@ -2278,20 +2310,14 @@ export class Mechanics {
           ? c.motorState?.servoOnAngle ?? 90
           : c.motorState?.servoOffAngle ?? 0
         const target = Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180
-        const currentAngle = Math.max(0, Math.min(Math.PI, c.angle))
+        // Use the hinge position motor as the only servo controller. Applying
+        // a second world-space torque double-drives the servo and can inject
+        // torque around an incorrect axis, causing uncommanded spins.
+        const currentAngle = THREE.MathUtils.clamp(c.joint.angle(), 0, Math.PI)
         const error = target - currentAngle
-        const targetSpeed = Math.max(-3.2, Math.min(3.2, error * 4.2))
-        c.speed = targetSpeed
+        c.speed = Math.max(-3.2, Math.min(3.2, error * 4.2))
         c.unpoweredTime = 0
         c.joint.configureMotorPosition(target, 18, 3)
-        const angular = c.rotorBody.angvel()
-        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
-        const torque = Math.max(-24, Math.min(24, (targetSpeed - axialSpeed) * 18))
-        c.rotorBody.addTorque({
-          x: c.axis.x * torque,
-          y: c.axis.y * torque,
-          z: c.axis.z * torque,
-        }, true)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
         c.speed = power * 1.05 * direction
@@ -2836,9 +2862,15 @@ export class Mechanics {
       const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
       const rotorQ = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
       const relativeRotorQ = chassisQ.clone().invert().multiply(rotorQ)
-      const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
-      c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
-      if (c.angle < 0) c.angle += Math.PI * 2
+      if (c.actuatorId === B.SERVO) {
+        // joint.angle() is the hinge-local angle. The quaternion is relative to
+        // the chassis, so projecting it on a world-space axis can mix frames.
+        c.angle = THREE.MathUtils.clamp(c.joint.angle(), 0, Math.PI)
+      } else {
+        const projected = relativeRotorQ.x * c.axis.x + relativeRotorQ.y * c.axis.y + relativeRotorQ.z * c.axis.z
+        c.angle = 2 * Math.atan2(projected, relativeRotorQ.w)
+        if (c.angle < 0) c.angle += Math.PI * 2
+      }
       const motor = this.models.get(c.motorKey)
       if (motor?.type === 'motor' || motor?.type === 'servo') motor.model.shaft.rotation.z = c.angle
       for (const extra of c.extraRotors ?? []) {
