@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { type CategoryId, DEFAULT_HOTBAR, type ItemId } from './constants'
 
-export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls'
+export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config'
 
 export interface Settings {
   renderDistance: number
@@ -27,6 +27,7 @@ export interface GameState {
   settings: Settings
   inventoryTab: CategoryId
   breakProgress: number
+  sensorConfigKey: string | null
 }
 
 type Listener = () => void
@@ -72,6 +73,7 @@ export const gameStore = createStore({
   settings: { renderDistance: 8, sensitivity: 1, fov: 70 },
   inventoryTab: 'all',
   breakProgress: 0,
+  sensorConfigKey: null,
 })
 
 let toastId = 0

@@ -26,6 +26,8 @@ function createMaterials() {
     switchHousing: new THREE.MeshLambertMaterial({ color: 0x202125 }),
     switchRock: new THREE.MeshLambertMaterial({ color: 0x383a40 }),
     switchMark: new THREE.MeshLambertMaterial({ color: 0xf0f1f3 }),
+    sensorOn: new THREE.MeshLambertMaterial({ color: 0x46df63, emissive: 0x154c20 }),
+    sensorOff: new THREE.MeshLambertMaterial({ color: 0xd3483d, emissive: 0x40100d }),
   }
 }
 
@@ -130,6 +132,65 @@ export function createArduinoWheelModel(facing = 0): WheelModel {
   const d = DIRS[facing] ?? DIRS[0]
   group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(d[0], d[1], d[2]))
   return { group, rim }
+}
+
+
+export interface ProximitySensorModel {
+  group: THREE.Group
+  indicator: THREE.Mesh
+}
+
+/** HC-SR04-inspired board with two ultrasonic cans and four accessible terminals. */
+export function createProximitySensorModel(facing = 5, active = false): ProximitySensorModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  group.add(new THREE.Mesh(new THREE.BoxGeometry(0.86, 0.48, 0.08), m.switchBoard))
+
+  for (const x of [-0.22, 0.22]) {
+    const can = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.27, 24), m.steel)
+    can.rotation.x = Math.PI / 2
+    can.position.set(x, 0.035, 0.14)
+    group.add(can)
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.153, 0.018, 8, 24), m.solder)
+    rim.position.set(x, 0.035, 0.286)
+    group.add(rim)
+    const face = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 0.018, 24), m.batteryBlack)
+    face.rotation.x = Math.PI / 2
+    face.position.set(x, 0.035, 0.285)
+    group.add(face)
+    const center = new THREE.Mesh(new THREE.CircleGeometry(0.045, 12), m.steel)
+    center.position.set(x, 0.035, 0.296)
+    group.add(center)
+    for (let i = -2; i <= 2; i++) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.20, 0.005), m.solder)
+      bar.position.set(x + i * 0.035, 0.035, 0.299)
+      group.add(bar)
+    }
+  }
+
+  for (const x of [-0.24, -0.08, 0.08, 0.24]) {
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.025, 0.07), m.solder)
+    pad.position.set(x, -0.235, -0.005)
+    group.add(pad)
+    const pin = new THREE.Mesh(new THREE.BoxGeometry(0.027, 0.18, 0.027), m.brass)
+    pin.position.set(x, -0.32, -0.005)
+    group.add(pin)
+  }
+  const indicator = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), m.sensorOff)
+  indicator.position.set(0.34, -0.17, 0.055)
+  group.add(indicator)
+  group.quaternion.copy(facingQuaternion(facing))
+  const model = { group, indicator }
+  setProximitySensorActive(model, active)
+  return model
+}
+
+export function setProximitySensorFacing(model: ProximitySensorModel, facing: number) {
+  model.group.quaternion.copy(facingQuaternion(facing))
+}
+
+export function setProximitySensorActive(model: ProximitySensorModel, active: boolean) {
+  model.indicator.material = active ? getMaterials().sensorOn : getMaterials().sensorOff
 }
 
 export interface BatteryBoxModel {

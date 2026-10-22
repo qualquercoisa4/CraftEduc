@@ -36,6 +36,10 @@ jobs:
         run: |
           pnpm exec tsc tests/physics-mass.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck
           node .test-dist/tests/physics-mass.test.js
+      - name: Proximity sensor condition regression
+        run: |
+          pnpm exec tsc tests/proximity-sensor.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck
+          node .test-dist/tests/proximity-sensor.test.js
       - name: Multi-motor physics regression
         run: |
           pnpm exec tsc tests/multi-motor.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck

@@ -9,6 +9,10 @@ import {
   type LedTerminalModel,
   type WheelModel,
   type SwitchModel,
+  type ProximitySensorModel,
+  createProximitySensorModel,
+  setProximitySensorActive,
+  setProximitySensorFacing,
   createBatteryBoxModel,
   createSwitchModel,
   createGlowSprite,
@@ -28,6 +32,25 @@ import type { Player } from './player'
 
 const HALF_PI = Math.PI / 2
 const MAX_CONTRAPTION = 400
+export const PROXIMITY_SENSOR_RANGE = 32
+export type ProximityComparison = 'greater' | 'less'
+
+export function measureProximityDistance(
+  world: Pick<World, 'getBlock'>,
+  x: number, y: number, z: number, facing: number,
+  maxRange = PROXIMITY_SENSOR_RANGE,
+) {
+  const direction = DIRS[facing] ?? DIRS[5]
+  for (let distance = 1; distance <= maxRange; distance++) {
+    if (world.getBlock(x + direction[0] * distance, y + direction[1] * distance, z + direction[2] * distance) !== B.AIR)
+      return distance
+  }
+  return maxRange + 1
+}
+
+export function proximityConditionMatches(distance: number, comparison: ProximityComparison, threshold: number) {
+  return comparison === 'greater' ? distance > threshold : distance < threshold
+}
 
 type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
@@ -35,6 +58,7 @@ type ModelEntry =
   | { type: 'led'; model: LedTerminalModel }
   | { type: 'wheel'; model: WheelModel; spin: number }
   | { type: 'switch'; model: SwitchModel }
+  | { type: 'sensor'; model: ProximitySensorModel }
 
 export interface Wire {
   id: number
@@ -148,6 +172,7 @@ export class Mechanics {
   private readonly gravity = 18
   private physicsScanCooldown = 0
   private powerCooldown = 0
+  private proximityScanCooldown = 0
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
   private networkAuthority = true
@@ -189,7 +214,7 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH) {
+    if (oldId === B.MOTOR || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -238,6 +263,16 @@ export class Mechanics {
       model.group.position.set(x, y, z)
       this.scene.add(model.group)
       this.models.set(key, { type: 'switch', model })
+    } else if (newId === B.PROXIMITY_SENSOR) {
+      const state = this.world.ensureState(x, y, z)
+      state.facing ??= 5
+      state.proximityOperator ??= 'less'
+      state.proximityDistance ??= 3
+      state.proximityActive ??= false
+      const model = createProximitySensorModel(state.facing, state.proximityActive)
+      model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'sensor', model })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
@@ -255,6 +290,10 @@ export class Mechanics {
     if (id === B.MOTOR && model?.type === 'motor' && next?.facing !== undefined) setMotorFacing(model.model, next.facing)
     if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
     if (id === B.SWITCH && model?.type === 'switch') setSwitchState(model.model, Boolean(next?.switchOn))
+    if (id === B.PROXIMITY_SENSOR && model?.type === 'sensor') {
+      if (next?.facing !== undefined) setProximitySensorFacing(model.model, next.facing)
+      setProximitySensorActive(model.model, Boolean(next?.proximityActive))
+    }
     if (id === B.WHEEL && model?.type === 'wheel' && next?.facing !== undefined) {
       const replacement = createArduinoWheelModel(next.facing)
       replacement.group.position.copy(model.model.group.position)
@@ -271,7 +310,7 @@ export class Mechanics {
       disposeObject(mounted.model.group)
       this.mountedWheels.delete(key)
     }
-    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
+    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
       this.powerDirty = true
       this.mechDirty = true
     }
@@ -280,7 +319,7 @@ export class Mechanics {
   }
 
   private isElectricalBlock(id: number) {
-    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON
+    return id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON
       || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
   }
 
@@ -360,6 +399,93 @@ export class Mechanics {
     return null
   }
 
+
+  private findMovingBlock(key: string): CBlock | undefined {
+    for (const machine of this.contraptions.values()) {
+      const block = machine.byKey.get(key) ?? machine.chassisByKey.get(key)
+        ?? (machine.extraRotors ?? []).map((rotor) => rotor.byKey.get(key)).find(Boolean)
+      if (block) return block
+    }
+    return undefined
+  }
+
+  getProximitySensorConfig(key: string) {
+    const block = this.lookup(key)
+    if (block.id !== B.PROXIMITY_SENSOR) return null
+    const state = block.state ?? {}
+    const [x, y, z] = parseKey(key)
+    return {
+      operator: (state.proximityOperator ?? 'less') as ProximityComparison,
+      threshold: Math.max(1, Math.min(PROXIMITY_SENSOR_RANGE, Math.floor(state.proximityDistance ?? 3))),
+      distance: measureProximityDistance(this.world, x, y, z, state.facing ?? 5),
+      active: Boolean(state.proximityActive),
+      facing: state.facing ?? 5,
+    }
+  }
+
+  configureProximitySensor(key: string, operator: ProximityComparison, threshold: number) {
+    if (operator !== 'greater' && operator !== 'less') return false
+    if (!Number.isFinite(threshold)) return false
+    const [x, y, z] = parseKey(key)
+    let state: BlockState | undefined
+    if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR) state = this.world.ensureState(x, y, z)
+    else {
+      const moving = this.findMovingBlock(key)
+      if (moving?.id !== B.PROXIMITY_SENSOR) return false
+      moving.state ??= {}
+      state = moving.state
+    }
+    state.proximityOperator = operator
+    state.proximityDistance = Math.max(1, Math.min(PROXIMITY_SENSOR_RANGE, Math.floor(threshold)))
+    this.powerDirty = true
+    this.powerCooldown = 0
+    if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR && this.networkAuthority)
+      this.networkBlockPublisher?.(x, y, z, B.PROXIMITY_SENSOR, { ...state }, this.networkBlockOwner?.(x, y, z))
+    return true
+  }
+
+  rotateProximitySensor(key: string) {
+    const [x, y, z] = parseKey(key)
+    let state: BlockState | undefined
+    if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR) state = this.world.ensureState(x, y, z)
+    else {
+      const moving = this.findMovingBlock(key)
+      if (moving?.id !== B.PROXIMITY_SENSOR) return null
+      moving.state ??= {}
+      state = moving.state
+    }
+    state.facing = (((state.facing ?? 5) + 1) % 6)
+    const model = this.models.get(key)
+    if (model?.type === 'sensor') setProximitySensorFacing(model.model, state.facing)
+    this.powerDirty = true
+    this.powerCooldown = 0
+    if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR && this.networkAuthority)
+      this.networkBlockPublisher?.(x, y, z, B.PROXIMITY_SENSOR, { ...state }, this.networkBlockOwner?.(x, y, z))
+    return state.facing
+  }
+
+  private refreshProximitySensors() {
+    for (const [key, entry] of this.models) {
+      if (entry.type !== 'sensor') continue
+      const [x, y, z] = parseKey(key)
+      let state: BlockState | undefined
+      if (this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR) state = this.world.ensureState(x, y, z)
+      else state = this.findMovingBlock(key)?.state
+      if (!state) continue
+      const threshold = Math.max(1, Math.min(PROXIMITY_SENSOR_RANGE, Math.floor(state.proximityDistance ?? 3)))
+      const comparison = state.proximityOperator ?? 'less'
+      const distance = measureProximityDistance(this.world, x, y, z, state.facing ?? 5)
+      const active = proximityConditionMatches(distance, comparison, threshold)
+      if (Boolean(state.proximityActive) === active) continue
+      state.proximityActive = active
+      setProximitySensorActive(entry.model, active)
+      this.powerDirty = true
+      this.powerCooldown = 0
+      if (this.networkAuthority && this.world.getBlock(x, y, z) === B.PROXIMITY_SENSOR)
+        this.networkBlockPublisher?.(x, y, z, B.PROXIMITY_SENSOR, { ...state }, this.networkBlockOwner?.(x, y, z))
+    }
+  }
+
   /** Resolve an exposed electrical terminal, never an arbitrary point inside a block. */
   resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
     const [x, y, z] = parseKey(key)
@@ -382,6 +508,19 @@ export class Mechanics {
       }))
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
+    }
+    if (id === B.PROXIMITY_SENSOR) {
+      const facing = this.world.getState(x, y, z)?.facing ?? 5
+      const q = facingQuaternion(facing)
+      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
+      const terminals = [
+        { terminal: 'in+', local: new THREE.Vector3(-0.24, -0.42, -0.005) },
+        { terminal: 'in-', local: new THREE.Vector3(-0.08, -0.42, -0.005) },
+        { terminal: 'out+', local: new THREE.Vector3(0.08, -0.42, -0.005) },
+        { terminal: 'out-', local: new THREE.Vector3(0.24, -0.42, -0.005) },
+      ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.85 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [
@@ -542,6 +681,14 @@ export class Mechanics {
     // Conductive blocks connect their six face terminals internally. This
     // includes aluminum/iron/component blocks inside moving chassis or rotors.
     for (const [key, block] of electricalBlocks) {
+      if (block.id === B.PROXIMITY_SENSOR) {
+        for (const terminal of ['in+', 'in-', 'out+', 'out-']) allNodes.add(node(key, terminal))
+        if (block.state?.proximityActive) {
+          // Each pole only connects input to its matching output when the range condition is true.
+          union(node(key, 'in+'), node(key, 'out+'))
+          union(node(key, 'in-'), node(key, 'out-'))
+        }
+      }
       if (block.id === B.SWITCH) {
         for (const terminal of ['in1', 'out1', 'in2', 'out2']) allNodes.add(node(key, terminal))
         if (block.state?.switchOn) {
@@ -1800,6 +1947,11 @@ export class Mechanics {
       this.physicsSynced = true
       this.physicsDirty = true
       this.mechDirty = true
+    }
+    this.proximityScanCooldown -= dt
+    if (this.proximityScanCooldown <= 0) {
+      this.proximityScanCooldown = 0.1
+      this.refreshProximitySensors()
     }
     this.powerCooldown -= dt
     if (this.powerDirty && this.powerCooldown <= 0) {

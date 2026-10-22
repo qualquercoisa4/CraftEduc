@@ -16,6 +16,7 @@ export const B = {
   GEAR: 9,
   WHEEL: 10,
   SWITCH: 11,
+  PROXIMITY_SENSOR: 12,
 } as const
 
 export type BlockId = number
@@ -37,6 +38,7 @@ export const BLOCK_CONDUCTIVITY: Readonly<Record<number, number>> = {
   [B.GEAR]: 0.90,
   [B.WHEEL]: 0,
   [B.SWITCH]: 0,
+  [B.PROXIMITY_SENSOR]: 0,
 }
 
 export function blockConductivity(id: number) {
@@ -56,21 +58,23 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH
+  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR
 }
 
 export function isModelBlock(id: number) {
-  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH
+  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
 const FULL: Bounds = [0, 0, 0, 1, 1, 1]
 const BOX_BOUNDS: Bounds = [0.04, 0, 0.08, 0.96, 0.36, 0.92]
 const SWITCH_BOUNDS: Bounds = [0.01, 0.04, 0.03, 0.99, 0.38, 0.97]
+const SENSOR_BOUNDS: Bounds = [0.04, 0.08, 0.04, 0.96, 0.92, 0.96]
 
 export function blockBounds(id: number): Bounds {
   if (id === B.BATTERY_BOX) return BOX_BOUNDS
   if (id === B.SWITCH) return SWITCH_BOUNDS
+  if (id === B.PROXIMITY_SENSOR) return SENSOR_BOUNDS
   return FULL
 }
 
@@ -89,6 +93,7 @@ export type ItemId =
   | 'battery'
   | 'wheel'
   | 'switch'
+  | 'proximity_sensor'
 
 export type CategoryId = 'all' | 'blocks' | 'components' | 'motors' | 'wiring' | 'tools' | 'power'
 
@@ -144,6 +149,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'components',
     block: B.SWITCH,
   },
+  proximity_sensor: {
+    name: 'Sensor de proximidade',
+    description: 'Detecta blocos à frente e só conduz energia quando a distância atende à condição programada. Shift + botão direito para girar.',
+    category: 'components',
+    block: B.PROXIMITY_SENSOR,
+  },
   motor: {
     name: 'Motor CC Pequeno',
     description: 'Motor CC polarizado: os dois terminais definem o sentido. Só move peças coladas e pode travar ao colidir.',
@@ -182,6 +193,7 @@ export const ITEM_ORDER: ItemId[] = [
   'gear',
   'led',
   'switch',
+  'proximity_sensor',
   'motor',
   'wire',
   'glue',
@@ -199,6 +211,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.GEAR]: 'gear',
   [B.LED]: 'led',
   [B.SWITCH]: 'switch',
+  [B.PROXIMITY_SENSOR]: 'proximity_sensor',
   [B.MOTOR]: 'motor',
   [B.BATTERY_BOX]: 'battery_box',
   [B.WHEEL]: 'wheel',

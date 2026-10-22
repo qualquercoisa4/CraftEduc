@@ -8,6 +8,9 @@ export interface BlockState {
   glue?: number
   mountedWheel?: boolean
   switchOn?: boolean
+  proximityOperator?: 'greater' | 'less'
+  proximityDistance?: number
+  proximityActive?: boolean
 }
 
 const CS = CHUNK_SIZE
@@ -120,7 +123,7 @@ export class World {
   isSolid(x: number, y: number, z: number) {
     const id = this.getBlock(x, y, z)
     // The switch uses a model instead of an opaque cube, but remains solid for player collision.
-    return id === B.SWITCH || isOpaque(id)
+    return id === B.SWITCH || id === B.PROXIMITY_SENSOR || isOpaque(id)
   }
 
   buildChunkMesh(c: Chunk) {

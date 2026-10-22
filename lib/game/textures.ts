@@ -330,6 +330,20 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(9, 9, 2, 1, [235, 237, 240])
       break
     }
+    case 'proximity_sensor': {
+      rect(2, 4, 12, 8, [10, 104, 153])
+      rect(3, 5, 10, 6, [16, 128, 180])
+      for (const cx of [5, 11]) {
+        for (let y = 1; y < 5; y++) for (let x = 0; x < 5; x++) {
+          const dx = x - 2, dy = y - 2
+          if (dx * dx + dy * dy <= 4) px(cx + dx - 2, 4 + dy, [190, 198, 205])
+        }
+        px(cx - 1, 4, [35, 39, 44]); px(cx, 4, [35, 39, 44]); px(cx + 1, 4, [35, 39, 44])
+      }
+      rect(4, 12, 1, 3, [216, 178, 74]); rect(7, 12, 1, 3, [216, 178, 74])
+      rect(10, 12, 1, 3, [216, 178, 74]); rect(13, 12, 1, 3, [216, 178, 74])
+      break
+    }
     case 'motor': {
       rect(2, 4, 9, 8, [185, 190, 196])
       rect(3, 3, 7, 1, [150, 155, 162])

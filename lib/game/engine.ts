@@ -20,7 +20,7 @@ import { Mechanics, type Wire } from './mechanics'
 import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, wireCurve } from './models'
+import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, createProximitySensorModel, wireCurve } from './models'
 import { Particles } from './particles'
 import { Player } from './player'
 import { HORIZON_COLOR, createSky } from './sky'
@@ -537,7 +537,7 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
-    const state = block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
+    const state: import('./world').BlockState | undefined = block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
@@ -708,7 +708,8 @@ export class Engine {
       return
     }
     if (e.code === 'Escape') {
-      if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
+      if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
+      else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
       else if (s.screen === 'paused') gameStore.set({ screen: 'playing' })
       return
@@ -821,6 +822,19 @@ export class Engine {
     this.swing = 0
     this.lastUseWasPlace = false
 
+    // Right-click opens the sensor programming panel; Shift + right-click rotates it.
+    if (hit?.id === B.PROXIMITY_SENSOR) {
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
+      if (this.player.sneaking) {
+        const facing = this.mech.rotateProximitySensor(key)
+        if (facing !== null) {
+          sfx.rotate()
+          showToast(`Sensor virado para: ${DIR_NAMES[facing]}`)
+        }
+      } else gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
+      return
+    }
+
     // Articulated bodies are authoritative on the host. Guests send an intent
     // rather than disassembling their local visual replica independently.
     if (hit?.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
@@ -890,6 +904,18 @@ export class Engine {
 
     if (!hit) return
 
+    if (hit.id === B.PROXIMITY_SENSOR) {
+      const key = posKey(hit.x, hit.y, hit.z)
+      if (this.player.sneaking) {
+        const facing = this.mech.rotateProximitySensor(key)
+        if (facing !== null) {
+          sfx.rotate()
+          showToast(`Sensor virado para: ${DIR_NAMES[facing]}`)
+        }
+      } else gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
+      return
+    }
+
     if (hit.id === B.SWITCH && (item === null || item === 'switch')) {
       const enabled = this.mech.toggleSwitchAtKey(posKey(hit.x, hit.y, hit.z))
       if (enabled !== null) {
@@ -950,7 +976,7 @@ export class Engine {
     if (py < 0 || py >= WORLD_HEIGHT) return
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
-    const state = block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : undefined
+    const state: import('./world').BlockState | undefined = block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
@@ -1125,6 +1151,15 @@ export class Engine {
       g.scale.setScalar(0.5)
       g.position.set(0.48, -0.42, -0.75)
       g.rotation.set(0.1, 0.5, 0)
+      return g
+    }
+    if (item === 'proximity_sensor') {
+      const m = createProximitySensorModel(4, false).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.62)
+      g.position.set(0.48, -0.45, -0.78)
+      g.rotation.set(0.2, 0.5, 0)
       return g
     }
     if (item === 'wheel') {
