@@ -163,6 +163,10 @@ async function main() {
   mechanicsPhysics.removeRigidBody(movingArm)
   for (const body of dynamicBodies) mechanicsPhysics.removeRigidBody(body.body)
   mechanics.contraptions.clear()
+  // The test manually frees these bodies rather than letting landBody remove
+  // them; clear their registry too so a later frame never queries a freed WASM handle.
+  ;(mechanics as unknown as { fallingBodies: unknown[]; fallingKeys: Set<string> }).fallingBodies.length = 0
+  ;(mechanics as unknown as { fallingBodies: unknown[]; fallingKeys: Set<string> }).fallingKeys.clear()
 
   // Wheel-only motor regression: the mount must follow all six shaft facings,
   // and the motor must drive a grounded chassis with no glued output voxel.
