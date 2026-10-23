@@ -12,7 +12,7 @@ type BlockLike = {
   inputList?: Array<{ name: string }>
 }
 
-type PinMode = 'OUTPUT' | 'SERVO' | 'ULTRASONIC'
+type PinMode = 'OUTPUT' | 'SERVO'
 
 let customBlocksRegistered = false
 
@@ -32,7 +32,7 @@ const blockDefinitions = [
     nextStatement: null,
     hat: 'cap',
     colour: 45,
-    tooltip: 'Executa os blocos abaixo quando você pressionar Executar.',
+    tooltip: 'Executa os blocos abaixo quando a placa receber energia.',
   },
   {
     type: 'arduino_forever',
@@ -54,7 +54,6 @@ const blockDefinitions = [
         options: [
           ['saída digital', 'OUTPUT'],
           ['servo', 'SERVO'],
-          ['sensor ultrassônico', 'ULTRASONIC'],
         ],
       },
     ],
@@ -113,11 +112,14 @@ const blockDefinitions = [
   },
   {
     type: 'arduino_distance',
-    message0: 'distância até objeto no sensor do pino %1',
-    args0: [{ type: 'field_dropdown', name: 'PIN', options: pins }],
+    message0: 'distância até objeto · TRIG %1 ECHO %2',
+    args0: [
+      { type: 'field_dropdown', name: 'TRIG_PIN', options: pins },
+      { type: 'field_dropdown', name: 'ECHO_PIN', options: pins },
+    ],
     output: 'Number',
     colour: 195,
-    tooltip: 'Retorna a distância em blocos do sensor de proximidade conectado ao pino configurado como sensor ultrassônico.',
+    tooltip: 'Use TRIG e ECHO conectados aos pinos digitais escolhidos; VCC vai ao 5V e GND ao GND.',
   },
   {
     type: 'arduino_if',
@@ -333,7 +335,7 @@ export function ArduinoProgramming() {
       // Blockly's SVG scrollbars can outlive a detached React screen on mobile.
       // Explicitly clear the host after disposing the workspace.
       workspaceHost.current?.replaceChildren()
-      document.querySelectorAll('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv').forEach((element) => element.remove())
+      document.querySelectorAll('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground').forEach((element) => element.remove())
       workspaceRef.current = null
       resizeWorkspaceRef.current = null
       setReady(false)
@@ -343,7 +345,7 @@ export function ArduinoProgramming() {
 
   useEffect(() => {
     const visible = screen === 'arduino_programming' && Boolean(key)
-    document.querySelectorAll<HTMLElement>('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv').forEach((element) => {
+    document.querySelectorAll<HTMLElement>('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground').forEach((element) => {
       if (visible) element.style.removeProperty('display')
       else element.style.display = 'none'
     })
@@ -369,9 +371,9 @@ export function ArduinoProgramming() {
 
   stopProgramRef.current = stopProgram
 
-  const readDistance = (pin: string) => {
-    if (!key || pinModesRef.current.get(pin) !== 'ULTRASONIC') return null
-    return getEngine()?.mech.readArduinoDistance(key, pin) ?? null
+  const readDistance = (trigPin: string, echoPin: string) => {
+    if (!key) return null
+    return getEngine()?.mech.readArduinoDistance(key, trigPin, echoPin) ?? null
   }
 
   const readExpression = (block: BlockLike | null): number | boolean => {
@@ -415,10 +417,11 @@ export function ArduinoProgramming() {
         }
       }
       case 'arduino_distance': {
-        const pin = block.getFieldValue('PIN')
-        const distance = readDistance(pin)
+        const trigPin = block.getFieldValue('TRIG_PIN')
+        const echoPin = block.getFieldValue('ECHO_PIN')
+        const distance = readDistance(trigPin, echoPin)
         if (distance === null) {
-          setStatus(`Configure o pino ${pin} como sensor ultrassônico e conecte o terminal de sinal do sensor.`)
+          setStatus(`Sensor não detectado: ligue VCC ao 5V, GND ao GND, TRIG ao ${trigPin} e ECHO ao ${echoPin}.`)
           return 0
         }
         return distance
@@ -480,10 +483,6 @@ export function ArduinoProgramming() {
           if (mode === 'SERVO') {
             const count = getEngine()?.mech.countArduinoServoConnections(key, pin) ?? 0
             if (!count) setStatus(`Aviso: nenhum servo está conectado ao pino ${pin}.`)
-          } else if (mode === 'ULTRASONIC') {
-            const distance = getEngine()?.mech.readArduinoDistance(key, pin)
-            if (distance === null || distance === undefined)
-              setStatus(`Aviso: nenhum sensor de proximidade está conectado ao pino ${pin}.`)
           }
           break
         }
