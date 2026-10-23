@@ -41,6 +41,7 @@ export interface SavedWorldData {
   blocks: SavedBlock[]
   wires: SavedWire[]
   player: SavedPlayer
+  arduinoPrograms?: Record<string, string>
 }
 
 export interface SavedWorldRecord extends WorldConfig {
@@ -97,6 +98,56 @@ export function getSavedWorlds(): SavedWorldRecord[] {
   } catch {
     return []
   }
+}
+
+export function getActiveWorldConfig(): WorldConfig {
+  if (typeof window === 'undefined') return DEFAULT_CONFIG
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(ACTIVE_KEY) ?? 'null')
+    if (validConfig(parsed)) return parsed
+  } catch {}
+  return DEFAULT_CONFIG
+}
+
+function arduinoProgramPrefix(worldId: string) {
+  return `crafteduc:arduino-program:${worldId}:`
+}
+
+export function getArduinoProgramStorageKey(componentKey: string | null | undefined) {
+  return `${arduinoProgramPrefix(getActiveWorldConfig().id)}${componentKey ?? 'unknown'}`
+}
+
+export function getArduinoProgramsForWorld(worldId: string): Record<string, string> {
+  const programs: Record<string, string> = {}
+  if (typeof window === 'undefined') return programs
+  const prefix = arduinoProgramPrefix(worldId)
+  try {
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (!key?.startsWith(prefix)) continue
+      const value = window.localStorage.getItem(key)
+      if (value !== null) programs[key.slice(prefix.length)] = value
+    }
+  } catch {}
+  return programs
+}
+
+export function restoreArduinoProgramsForWorld(worldId: string, programs?: Record<string, string>) {
+  if (typeof window === 'undefined' || !programs) return
+  const prefix = arduinoProgramPrefix(worldId)
+  try {
+    const keys: string[] = []
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const key = window.localStorage.key(index)
+      if (key?.startsWith(prefix)) keys.push(key)
+    }
+    for (const key of keys) window.localStorage.removeItem(key)
+    for (const [componentKey, value] of Object.entries(programs)) {
+      if (typeof value === 'string' && componentKey.length > 0 && !componentKey.includes(':')) {
+        window.localStorage.setItem(`${prefix}${componentKey}`, value)
+      }
+    }
+  } catch {}
 }
 
 export function saveWorldRecord(config: WorldConfig, data: SavedWorldData): SavedWorldRecord | null {
