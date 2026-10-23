@@ -232,14 +232,35 @@ export function createProximitySensorModel(facing = 5, active = false): Proximit
     }
   }
 
-  for (const x of [-0.24, -0.08, 0.08, 0.24]) {
+  const terminalPins = [
+    { id: 'VCC', x: -0.24, material: m.servoVoltage },
+    { id: 'TRIG', x: -0.08, material: m.yellow },
+    { id: 'ECHO', x: 0.08, material: m.sensorOn },
+    { id: 'GND', x: 0.24, material: m.batteryBlack },
+  ]
+  for (const terminal of terminalPins) {
     const pad = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.025, 0.07), m.solder)
-    pad.position.set(x, -0.235, -0.005)
+    pad.position.set(terminal.x, -0.235, -0.005)
     group.add(pad)
-    const pin = new THREE.Mesh(new THREE.BoxGeometry(0.027, 0.18, 0.027), m.brass)
-    pin.position.set(x, -0.32, -0.005)
+    const pin = new THREE.Mesh(new THREE.BoxGeometry(0.027, 0.18, 0.027), terminal.material)
+    pin.position.set(terminal.x, -0.32, -0.005)
     group.add(pin)
   }
+  const labelCanvas = document.createElement('canvas')
+  labelCanvas.width = 512
+  labelCanvas.height = 128
+  const labelContext = labelCanvas.getContext('2d')!
+  labelContext.clearRect(0, 0, labelCanvas.width, labelCanvas.height)
+  labelContext.fillStyle = '#ffffff'
+  labelContext.font = 'bold 48px Arial'
+  labelContext.textAlign = 'center'
+  labelContext.textBaseline = 'middle'
+  terminalPins.forEach((terminal, index) => labelContext.fillText(terminal.id, 64 + index * 128, 64))
+  const labelTexture = new THREE.CanvasTexture(labelCanvas)
+  labelTexture.colorSpace = THREE.SRGBColorSpace
+  const labels = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.18), new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true, side: THREE.DoubleSide }))
+  labels.position.set(0, -0.15, 0.046)
+  group.add(labels)
   const indicator = new THREE.Mesh(new THREE.SphereGeometry(0.028, 8, 6), m.sensorOff)
   indicator.position.set(0.34, -0.17, 0.055)
   group.add(indicator)
