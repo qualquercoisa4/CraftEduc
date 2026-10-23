@@ -54,6 +54,10 @@ export class World {
   chunks = new Map<string, Chunk>()
   states = new Map<string, BlockState>()
   poweredLeds = new Set<string>()
+  private waterMeshes: THREE.Mesh[] = []
+  private waterMaterial: THREE.MeshBasicMaterial | null = null
+  readonly waterSurfaceY = GROUND_LEVEL
+  readonly waterBottomY = 1
   onBlockChange: (x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue: boolean, newHasGlue: boolean) => void = () => {}
 
   constructor(
@@ -61,14 +65,70 @@ export class World {
     private material: THREE.Material,
     public readonly type: WorldType = 'flat',
     public readonly seed = 20261023,
-  ) {}
+  ) {
+    if (type === 'beach') this.createBeachWater()
+  }
+
+  private createBeachWater() {
+    this.waterMaterial = new THREE.MeshBasicMaterial({
+      color: 0x2dadd1,
+      transparent: true,
+      opacity: 0.7,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+    const seaY = this.waterSurfaceY - 0.015
+    const regions = [
+      { x: 0, z: -37, width: 128, depth: 54 },
+      { x: 0, z: 37, width: 128, depth: 54 },
+      { x: -37, z: 0, width: 54, depth: 20 },
+      { x: 37, z: 0, width: 54, depth: 20 },
+    ]
+    for (const region of regions) {
+      const mesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(region.width, region.depth),
+        this.waterMaterial,
+      )
+      mesh.rotation.x = -Math.PI / 2
+      mesh.position.set(region.x, seaY, region.z)
+      mesh.renderOrder = 3
+      mesh.frustumCulled = false
+      this.scene.add(mesh)
+      this.waterMeshes.push(mesh)
+    }
+  }
+
+  isWaterColumnAt(x: number, z: number) {
+    if (this.type !== 'beach') return false
+    const inSea = x >= -64 && x < 64 && z >= -64 && z < 64
+    const onIsland = x >= -10 && x < 10 && z >= -10 && z < 10
+    return inSea && !onIsland
+  }
+
+  /** Fraction of a one-block cube submerged in the beach's water volume. */
+  waterSubmersionAt(x: number, y: number, z: number) {
+    if (!this.isWaterColumnAt(x, z)) return 0
+    const submergedTop = Math.min(y + 0.5, this.waterSurfaceY)
+    const submergedBottom = Math.max(y - 0.5, this.waterBottomY)
+    return Math.max(0, Math.min(1, submergedTop - submergedBottom))
+  }
+
+  dispose() {
+    for (const mesh of this.waterMeshes) {
+      this.scene.remove(mesh)
+      mesh.geometry.dispose()
+    }
+    this.waterMeshes = []
+    this.waterMaterial?.dispose()
+    this.waterMaterial = null
+  }
 
   terrainBlockAt(x: number, y: number, z: number) {
     return getTerrainBlock(this.type, this.seed, x, y, z)
   }
 
-  terrainColorAt(y: number) {
-    return getTerrainColor(this.type, y)
+  terrainColorAt(y: number, x: number, z: number) {
+    return getTerrainColor(this.type, this.seed, x, y, z)
   }
 
   getChunk(cx: number, cz: number) {
@@ -185,7 +245,7 @@ export class World {
             if (ny >= WORLD_HEIGHT) return false
             if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
-          }, this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y))
+          }, this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y, wx, wz))
         }
     if (c.mesh) {
       c.mesh.geometry.dispose()

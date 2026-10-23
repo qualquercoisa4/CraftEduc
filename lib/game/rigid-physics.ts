@@ -248,6 +248,16 @@ export class RigidPhysics {
     return connectedJoint
   }
 
+  getBodyCollider(body: RAPIER.RigidBody, index: number) {
+    if (index < 0 || index >= body.numColliders()) return null
+    return body.collider(index)
+  }
+
+  removeBodyCollider(collider: RAPIER.Collider | null | undefined) {
+    if (!collider || !this.rapierWorld) return
+    this.rapierWorld.removeCollider(collider, true)
+  }
+
   removeRigidBody(body: RAPIER.RigidBody | null | undefined) {
     if (!body || !this.rapierWorld) return
     this.rapierWorld.removeRigidBody(body)

@@ -826,6 +826,7 @@ export class Engine {
     this.setMultiplayerBridge(null)
     for (const avatar of this.remoteAvatars.values()) this.scene.remove(avatar.group)
     this.remoteAvatars.clear()
+    this.world.dispose()
     this.renderer.dispose()
     if (current === this) current = null
   }

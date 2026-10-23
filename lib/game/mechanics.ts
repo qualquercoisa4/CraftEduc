@@ -2747,6 +2747,7 @@ export class Mechanics {
       if (this.networkAuthority) {
         this.wakeBlocksBeingPushed()
         this.rigidPhysics.step(dt, (fixedDt) => {
+          this.applyBeachWaterPhysics(fixedDt)
           for (const contraption of this.contraptions.values()) this.applyMountedWheelTraction(contraption, fixedDt)
         })
       } else this.updateNetworkPoseInterpolation(dt)

@@ -135,8 +135,16 @@ export class Player {
       this.vel.y += (ty - this.vel.y) * (1 - Math.exp(-12 * dt))
     } else {
       this.vel.y -= 32 * dt
-      if (this.vel.y < -78) this.vel.y = -78
-      if (input.jump && this.onGround) this.vel.y = 9
+      if (inWater) {
+        // Approximate buoyancy keeps the avatar near the surface; water drag
+        // limits sudden movement, while jump can be used to swim upward.
+        this.vel.y += 42 * immersion * dt
+        this.vel.y *= Math.exp(-2.2 * dt)
+        if (input.jump) this.vel.y = Math.max(this.vel.y, 4.2)
+      } else {
+        if (this.vel.y < -78) this.vel.y = -78
+        if (input.jump && this.onGround) this.vel.y = 9
+      }
     }
 
     let dx = this.vel.x * dt
