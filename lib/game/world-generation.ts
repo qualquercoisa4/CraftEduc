@@ -20,13 +20,15 @@ function hasPitFloor(x: number, z: number) {
   if (onStartingPlatform) return true
   if (x < -10 || x >= 10 || z < 10) return false
 
+  // Leave the starting platform into a 2-block trench first. Each
+  // subsequent trench is 2 blocks wider, with 20-block landing strips between.
   let cursor = 10
   for (let stage = 0; stage < 2000; stage++) {
-    if (z >= cursor && z < cursor + 20) return true
-    cursor += 20
     const gap = 2 * (stage + 1)
     if (z >= cursor && z < cursor + gap) return false
     cursor += gap
+    if (z >= cursor && z < cursor + 20) return true
+    cursor += 20
     if (z < cursor) return false
   }
   return false
