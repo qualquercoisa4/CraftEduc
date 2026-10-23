@@ -40,6 +40,8 @@ import { getWorldSpawn } from './world-generation'
 import {
   resolveWorldStartup,
   saveWorldRecord,
+  getArduinoProgramsForWorld,
+  restoreArduinoProgramsForWorld,
   type SavedBlock,
   type SavedWorldRecord,
   type SavedWorldData,
@@ -730,6 +732,7 @@ export class Engine {
         wire.b, new THREE.Vector3(...wire.pb), wire.tb, wire.color,
       )
     }
+    restoreArduinoProgramsForWorld(this.worldConfig.id, save.data.arduinoPrograms)
   }
 
   saveCurrentWorld(): SavedWorldRecord | null {
@@ -788,6 +791,7 @@ export class Engine {
         yaw: this.player.yaw, pitch: this.player.pitch,
         flying: this.player.flying, sneaking: this.player.sneaking,
       },
+      arduinoPrograms: getArduinoProgramsForWorld(this.worldConfig.id),
     }
     return saveWorldRecord(this.worldConfig, data)
   }
