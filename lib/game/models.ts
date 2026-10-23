@@ -411,28 +411,24 @@ function getArduinoSilkscreenMaterial() {
   const pxY = (z: number) => ((boardDepth / 2 - z) / boardDepth) * canvas.height
 
   const fillPinLabel = (text: string, x: number, z: number) => {
-    ctx.save()
-    ctx.translate(pxX(x), pxY(z))
-    ctx.rotate(Math.PI)
-    ctx.fillText(text, 0, 0)
-    ctx.restore()
+    ctx.fillText(text, pxX(x), pxY(z))
   }
 
   ctx.font = 'bold 17px Arial, sans-serif'
   const digitalStart = -0.35
   const digitalStep = 0.70 / 13
-  for (let i = 0; i <= 13; i++) fillPinLabel(String(i), digitalStart + digitalStep * i, -0.205)
+  for (let i = 0; i <= 13; i++) fillPinLabel(String(i), digitalStart + digitalStep * i, 0.205)
   ctx.font = 'bold 16px Arial, sans-serif'
-  fillPinLabel('DIGITAL (PWM~)', 0.08, -0.145)
+  fillPinLabel('DIGITAL (PWM~)', 0.08, 0.145)
   ctx.font = 'bold 18px Arial, sans-serif'
-  fillPinLabel('5V', -0.23, 0.205)
+  fillPinLabel('5V', -0.23, -0.205)
   ctx.font = 'bold 15px Arial, sans-serif'
-  fillPinLabel('GND', -0.11, 0.205)
-  fillPinLabel('GND', 0.01, 0.205)
+  fillPinLabel('GND', -0.11, -0.205)
+  fillPinLabel('GND', 0.01, -0.205)
   ctx.font = 'bold 16px Arial, sans-serif'
-  fillPinLabel('POWER', -0.12, 0.14)
+  fillPinLabel('POWER', -0.12, -0.14)
   ctx.font = 'bold 13px Arial, sans-serif'
-  fillPinLabel('VIN', -0.34, 0.12)
+  fillPinLabel('VIN', -0.34, -0.12)
   ctx.font = 'bold 20px Arial, sans-serif'
   ctx.fillText('ARDUINO', pxX(0.30), pxY(0.13))
   ctx.font = 'bold 24px Arial, sans-serif'
