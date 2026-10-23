@@ -135,6 +135,7 @@ export class Engine {
   private multiplayerRules: MultiplayerRules | null = null
   private remoteAvatars = new Map<string, RemoteAvatar>()
   private worldConfig: WorldConfig
+  private singlePlayerWorldPlayed = false
 
   touch = { moveX: 0, moveY: 0, jump: false, sneak: false, flyUp: false, flyDown: false, sprint: false }
 
@@ -307,7 +308,7 @@ export class Engine {
     // Save a final snapshot when a single-player session leaves the page.
     // The pause-menu button remains the explicit, visible save action.
     on('pagehide', () => {
-      if (!this.multiplayerBridge && gameStore.get().screen !== 'title') {
+      if (!this.multiplayerBridge && this.singlePlayerWorldPlayed) {
         this.saveCurrentWorld()
       }
     })
@@ -366,7 +367,10 @@ export class Engine {
     const unsub = gameStore.subscribe(() => {
       const s = gameStore.get()
       if (s.screen !== prevScreen) {
-        if (s.screen === 'playing') this.requestLock()
+        if (s.screen === 'playing') {
+          this.requestLock()
+          if (!this.multiplayerBridge) this.singlePlayerWorldPlayed = true
+        }
         else this.releaseLock()
         if (s.screen !== 'playing') {
           this.breakHeld = false
