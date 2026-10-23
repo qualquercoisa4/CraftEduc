@@ -1140,7 +1140,7 @@ export class Engine {
             const bz = iz + dz
             if (this.world.getBlock(bx, iy, bz) !== B.ARDUINO_UNO) continue
             const boardHit = this.rayBox(origin, dir, bx, iy, bz, B.ARDUINO_UNO, limit)
-            if (boardHit && (!moving || boardHit.dist <= moving.dist)) return boardHit
+            if (boardHit && boardHit.dist >= t - 1e-6 && boardHit.dist <= Math.min(tmx, tmy, tmz) + 1e-6 && (!moving || boardHit.dist <= moving.dist)) return boardHit
           }
         }
       }
