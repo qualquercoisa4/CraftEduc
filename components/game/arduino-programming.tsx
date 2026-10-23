@@ -284,13 +284,7 @@ export function ArduinoProgramming() {
         const storageKey = getArduinoProgramStorageKey(key)
         let loaded = false
         try {
-          let saved = window.localStorage.getItem(storageKey)
-          // One-time migration for programs created before worlds had independent saves.
-          if (!saved) {
-            const legacyKey = getArduinoProgramStorageKey(key)
-            saved = window.localStorage.getItem(legacyKey)
-            if (saved) window.localStorage.setItem(storageKey, saved)
-          }
+          const saved = window.localStorage.getItem(storageKey)
           if (saved) {
             Blockly.serialization.workspaces.load(JSON.parse(saved), workspace)
             loaded = true
