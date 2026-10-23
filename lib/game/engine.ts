@@ -719,6 +719,7 @@ export class Engine {
       if (s.screen === 'brush_color') gameStore.set({ screen: s.returnScreen === 'brush_color' ? 'playing' : s.returnScreen })
       else if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
       else if (s.screen === 'servo_config') gameStore.set({ servoConfigKey: null, screen: 'playing' })
+      else if (s.screen === 'arduino_programming') gameStore.set({ arduinoProgramKey: null, screen: 'playing' })
       else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
       else if (s.screen === 'paused') gameStore.set({ screen: 'playing' })
@@ -842,8 +843,13 @@ export class Engine {
     const targetBlockId = hit
       ? (this.world.getBlock(hit.x, hit.y, hit.z) || hit.id)
       : B.AIR
-    // Open a programmable component only when the programming tablet is held.
+    // The tablet opens the appropriate editor for each programmable component.
     // Other items, especially wire, continue through their normal interaction paths.
+    if (hit && targetBlockId === B.ARDUINO_UNO && item === 'programming_tablet') {
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
+      gameStore.set({ arduinoProgramKey: key, screen: 'arduino_programming' })
+      return
+    }
     if (hit && targetBlockId === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
       gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
@@ -1538,6 +1544,8 @@ export class Engine {
       hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.BATTERY_BOX && item === null) {
       hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
+    } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
+      hint = `${use} para abrir a programação do Arduino UNO`
     } else if (hit?.id === B.SERVO && item === 'programming_tablet') {
       hint = `${use} para programar o servo motor`
     } else if (hit?.id === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
