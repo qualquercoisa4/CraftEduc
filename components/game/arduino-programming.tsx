@@ -16,6 +16,13 @@ type PinMode = 'OUTPUT' | 'SERVO' | 'ULTRASONIC'
 
 let customBlocksRegistered = false
 
+type ActiveArduinoProgram = {
+  active: boolean
+  stop: () => void
+}
+
+const activeArduinoPrograms = new Map<string, ActiveArduinoProgram>()
+
 const pins: Array<[string, string]> = Array.from({ length: 14 }, (_, index) => [`D${index}`, `D${index}`])
 
 const blockDefinitions = [
@@ -314,8 +321,8 @@ export function ArduinoProgramming() {
     return () => {
       disposed = true
       window.removeEventListener('resize', onResize)
-      runIdRef.current += 1
-      if (key) getEngine()?.mech.clearArduinoProgram(key)
+      // Closing the tablet must not stop the sketch: Arduino programs keep
+      // running in the simulated world until the user presses Stop.
       if (changeListener && localWorkspace) localWorkspace.removeChangeListener(changeListener)
       localWorkspace?.dispose()
       workspaceRef.current = null
@@ -327,8 +334,15 @@ export function ArduinoProgramming() {
 
   const stopProgram = (announce = true) => {
     runIdRef.current += 1
+    if (key) {
+      const activeProgram = activeArduinoPrograms.get(key)
+      if (activeProgram) {
+        activeProgram.active = false
+        activeArduinoPrograms.delete(key)
+      }
+      getEngine()?.mech.clearArduinoProgram(key)
+    }
     pinModesRef.current.clear()
-    if (key) getEngine()?.mech.clearArduinoProgram(key)
     setRunning(false)
     if (announce) setStatus('Programa parado. As saídas controladas pelo programa foram desligadas.')
   }
@@ -402,7 +416,16 @@ export function ArduinoProgramming() {
     setRunning(true)
     setStatus('Programa em execução…')
 
-    const active = () => runIdRef.current === runId
+    const run: ActiveArduinoProgram = {
+      active: true,
+      stop: () => {
+        run.active = false
+        if (activeArduinoPrograms.get(key) === run) activeArduinoPrograms.delete(key)
+        getEngine()?.mech.clearArduinoProgram(key)
+      },
+    }
+    activeArduinoPrograms.set(key, run)
+    const active = () => run.active && activeArduinoPrograms.get(key) === run && runIdRef.current === runId
     const wait = async (ms: number) => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, Math.max(0, Math.min(60000, ms))))
     }
@@ -520,6 +543,8 @@ export function ArduinoProgramming() {
     try {
       await Promise.all(starts.map((block) => sequence(asBlock(block.getNextBlock()))))
       if (active()) {
+        activeArduinoPrograms.delete(key)
+        run.active = false
         setRunning(false)
         setStatus('Programa concluído. As saídas permanecem no último estado até Parar ou executar novamente.')
       }
@@ -533,7 +558,7 @@ export function ArduinoProgramming() {
   }
 
   const close = () => {
-    stopProgram(false)
+    // Like a physical Arduino, the program keeps running after closing the IDE.
     gameStore.set({ arduinoProgramKey: null, screen: 'playing' })
   }
 
