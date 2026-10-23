@@ -304,6 +304,13 @@ export class Engine {
     }
     on('keydown', this.onKeyDown)
     on('keyup', (e) => this.keys.delete(e.code))
+    // Save a final snapshot when a single-player session leaves the page.
+    // The pause-menu button remains the explicit, visible save action.
+    on('pagehide', () => {
+      if (!this.multiplayerBridge && gameStore.get().screen !== 'title') {
+        this.saveCurrentWorld()
+      }
+    })
     on('blur', () => {
       this.keys.clear()
       this.breakHeld = false
