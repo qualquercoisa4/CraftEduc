@@ -16,7 +16,7 @@ type PinMode = 'OUTPUT' | 'SERVO' | 'ULTRASONIC'
 
 let customBlocksRegistered = false
 
-const pins = Array.from({ length: 14 }, (_, index) => [`D${index}`, `D${index}`])
+const pins: Array<[string, string]> = Array.from({ length: 14 }, (_, index) => [`D${index}`, `D${index}`])
 
 const blockDefinitions = [
   {
@@ -180,7 +180,7 @@ export function ArduinoProgramming() {
 
         Blockly.setLocale(ptBr)
         if (!customBlocksRegistered) {
-          Blockly.common.defineBlocksWithJsonArray(blockDefinitions)
+          Blockly.common.defineBlocksWithJsonArray(blockDefinitions as Parameters<typeof Blockly.common.defineBlocksWithJsonArray>[0])
           customBlocksRegistered = true
         }
 
@@ -238,11 +238,10 @@ export function ArduinoProgramming() {
         }
 
         const workspace = Blockly.inject(workspaceHost.current, {
-          toolbox,
+          toolbox: toolbox as never,
           renderer: 'geras',
           trashcan: true,
           sounds: false,
-          oneBasedIndex: true,
           zoom: {
             controls: true,
             wheel: true,
