@@ -48,6 +48,10 @@ const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
 const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
+const WATER_SENSITIVE_BLOCKS = new Set<number>([
+  B.COMPONENT, B.LED, B.MOTOR, B.BATTERY_BOX, B.SWITCH,
+  B.PROXIMITY_SENSOR, B.SERVO, B.ARDUINO_UNO,
+])
 export const PROXIMITY_SENSOR_RANGE = 32
 export type ProximityComparison = 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
 
@@ -186,6 +190,7 @@ interface FallingBlock {
   z: number
   originKey: string
   localOrigin: THREE.Vector3
+  collider: RAPIER.Collider | null
   mesh: THREE.Mesh
 }
 
@@ -2165,6 +2170,120 @@ export class Mechanics {
     }
   }
 
+  private bodyHasWaterContact(body: FallingBody) {
+    if (this.world.type !== 'beach') return false
+    const t = body.body.translation()
+    const r = body.body.rotation()
+    const pivot = new THREE.Vector3(t.x, t.y, t.z)
+    const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+    return body.blocks.some((block) => {
+      const center = block.localOrigin.clone().applyQuaternion(rotation).add(pivot)
+      return this.world.waterSubmersionAt(center.x, center.y, center.z) > 0.001
+    })
+  }
+
+  private burnWaterSensitiveBlocks() {
+    if (this.world.type !== 'beach') return
+    let changed = false
+
+    for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
+      const body = this.fallingBodies[i]
+      const t = body.body.translation()
+      const r = body.body.rotation()
+      const pivot = new THREE.Vector3(t.x, t.y, t.z)
+      const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+
+      for (let j = body.blocks.length - 1; j >= 0; j--) {
+        const block = body.blocks[j]
+        if (!WATER_SENSITIVE_BLOCKS.has(block.id)) continue
+        const center = block.localOrigin.clone().applyQuaternion(rotation).add(pivot)
+        if (this.world.waterSubmersionAt(center.x, center.y, center.z) <= 0.001) continue
+
+        const key = block.originKey
+        this.removeWiresAt(key)
+        body.wireEnds = body.wireEnds.filter((wireEnd) => wireEnd.wire.a !== key && wireEnd.wire.b !== key)
+
+        const mounted = this.mountedWheels.get(key)
+        if (mounted) {
+          mounted.model.group.parent?.remove(mounted.model.group)
+          disposeObject(mounted.model.group)
+          this.mountedWheels.delete(key)
+        }
+        const model = this.models.get(key)
+        if (model) {
+          model.model.group.parent?.remove(model.model.group)
+          disposeObject(model.model.group)
+          this.models.delete(key)
+        }
+        const glow = this.glows.get(key)
+        if (glow) {
+          glow.parent?.remove(glow)
+          disposeObject(glow)
+          this.glows.delete(key)
+        }
+
+        this.fallingKeys.delete(key)
+        this.rigidPhysics.removeBodyCollider(block.collider)
+        block.mesh.parent?.remove(block.mesh)
+        block.mesh.geometry.dispose()
+        body.blocks.splice(j, 1)
+        changed = true
+      }
+
+      if (body.blocks.length === 0) {
+        body.group.removeFromParent()
+        this.rigidPhysics.removeRigidBody(body.body)
+        disposeObject(body.group)
+        this.fallingBodies.splice(i, 1)
+      }
+    }
+
+    if (changed) {
+      this.powerDirty = true
+      this.mechDirty = true
+      this.physicsDirty = true
+      this.rebuildGlue()
+    }
+  }
+
+  private applyBeachWaterPhysics(dt: number) {
+    if (this.world.type !== 'beach') return
+
+    for (const body of this.fallingBodies) {
+      if (body.body.isSleeping() || body.blocks.length === 0) continue
+      const t = body.body.translation()
+      const r = body.body.rotation()
+      const pivot = new THREE.Vector3(t.x, t.y, t.z)
+      const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
+      let displacedVolume = 0
+      for (const block of body.blocks) {
+        const center = block.localOrigin.clone().applyQuaternion(rotation).add(pivot)
+        displacedVolume += this.world.waterSubmersionAt(center.x, center.y, center.z)
+      }
+      if (displacedVolume <= 0) continue
+
+      // A voxel displaces one unit of water. Light materials tend to float,
+      // while denser materials sink; drag dampens motion and spin underwater.
+      body.body.addForce({ x: 0, y: 9.81 * displacedVolume, z: 0 }, true)
+      const immersion = Math.min(1, displacedVolume / body.blocks.length)
+      const velocity = body.body.linvel()
+      const horizontalDrag = Math.exp(-1.9 * immersion * dt)
+      const verticalDrag = Math.exp(-0.65 * immersion * dt)
+      body.body.setLinvel({
+        x: velocity.x * horizontalDrag,
+        y: velocity.y * verticalDrag,
+        z: velocity.z * horizontalDrag,
+      }, true)
+      const spin = body.body.angvel()
+      const angularDrag = Math.exp(-2.4 * immersion * dt)
+      body.body.setAngvel({
+        x: spin.x * angularDrag,
+        y: spin.y * angularDrag,
+        z: spin.z * angularDrag,
+      }, true)
+    }
+  }
+
   private updateGravity(dt: number) {
     if (!this.rigidPhysics.ready) return
     this.physicsScanCooldown -= dt
@@ -2174,13 +2293,16 @@ export class Mechanics {
       this.detectUnsupportedBodies()
     }
 
-    // Rapier resolves motion and contacts. A body is written back to the voxel
-    // grid only after the solver has allowed it to sleep on a stable surface.
+    // Electronics without the future water-protection upgrade burn on contact.
+    this.burnWaterSensitiveBlocks()
+
+    // Objects resting in the sea stay physical instead of snapping back to voxels.
     for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
       const body = this.fallingBodies[i]
       if (body.body.isSleeping()) body.settledTime += dt
       else body.settledTime = 0
       if (body.settledTime >= 0.35) {
+        if (this.bodyHasWaterContact(body)) continue
         if (this.landBody(body)) this.fallingBodies.splice(i, 1)
         else body.settledTime = 0
       }
@@ -2259,6 +2381,7 @@ export class Mechanics {
           id: b.id, state: b.state ? { ...b.state } : undefined,
           x: b.x, y: b.y, z: b.z, originKey: b.key,
           localOrigin: new THREE.Vector3(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z),
+          collider: this.rigidPhysics.getBodyCollider(physicsBody, falling.length),
           mesh,
         })
         const model = this.models.get(b.key)

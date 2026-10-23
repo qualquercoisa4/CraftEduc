@@ -99,15 +99,32 @@ export class RigidPhysics {
       physics.timestep = this.fixedStep
       this.rapierWorld = physics
       this.fixedBody = physics.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-      // The voxel ground extends below GROUND_LEVEL. A single wide collider
-      // gives every dynamic body a continuous floor instead of per-feature tests.
-      physics.createCollider(
-        RAPIER.ColliderDesc.cuboid(2048, 0.5, 2048)
-          .setTranslation(0, GROUND_LEVEL - 0.5, 0)
-          .setFriction(0.88)
-          .setRestitution(0.005),
-        this.fixedBody,
-      )
+      if (this.voxelWorld.type === 'beach') {
+        // The island remains at y=4 but objects can descend to the sea floor at y=1.
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(10, 0.5, 10)
+            .setTranslation(0, GROUND_LEVEL - 0.5, 0)
+            .setFriction(0.88)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(64, 0.5, 64)
+            .setTranslation(0, 0.5, 0)
+            .setFriction(0.82)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+      } else {
+        // Standard worlds retain their continuous floor.
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(2048, 0.5, 2048)
+            .setTranslation(0, GROUND_LEVEL - 0.5, 0)
+            .setFriction(0.88)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+      }
       this.initialized = true
       this.rebuildStaticColliders()
     })
