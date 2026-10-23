@@ -482,6 +482,20 @@ function drawItemPixels(item: ItemId, px: Px) {
       px(11, 3, [242, 194, 48])
       break
     }
+    case 'resin_applicator': {
+      // Pixel-art resin applicator: compact gun body with a warm-yellow resin bead.
+      rect(1, 4, 9, 5, [49, 58, 68])
+      rect(2, 3, 7, 2, [91, 103, 114])
+      rect(2, 5, 7, 3, [220, 176, 54])
+      rect(3, 5, 5, 1, [255, 222, 112])
+      rect(9, 5, 4, 2, [164, 133, 70])
+      rect(12, 5, 3, 1, [205, 177, 107])
+      px(15, 6, [255, 224, 112])
+      rect(4, 9, 3, 3, [56, 64, 75])
+      rect(3, 11, 5, 2, [40, 46, 54])
+      rect(1, 13, 4, 1, [164, 174, 183])
+      break
+    }
     case 'glue': {
       rect(0, 5, 3, 2, [232, 238, 245])
       rect(0, 6, 3, 1, [200, 210, 220])
