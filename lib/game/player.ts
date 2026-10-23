@@ -103,6 +103,14 @@ export class Player {
     this.sneaking = input.sneak && !this.flying
     this.sprinting = input.sprint && input.forward > 0 && !this.sneaking
 
+    const inWater = !this.flying &&
+      this.world.isWaterColumnAt(this.pos.x, this.pos.z) &&
+      this.pos.y < this.world.waterSurfaceY &&
+      this.pos.y + this.height > this.world.waterBottomY
+    const immersion = inWater
+      ? THREE.MathUtils.clamp((this.world.waterSurfaceY - this.pos.y) / this.height, 0, 1)
+      : 0
+
     const speed = this.flying
       ? this.sprinting
         ? 21.6
