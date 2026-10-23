@@ -208,6 +208,9 @@ export class Mechanics {
   motorPower = new Map<string, number>()
   motorDirection = new Map<string, number>()
   servoPowered = new Set<string>()
+  // Program output state is kept separate from battery-box power calculations.
+  private arduinoPinLevels = new Map<string, boolean>()
+  private programmedServoAngles = new Map<string, { boardKey: string; degrees: number }>()
   private glueMesh: THREE.Mesh | null = null
   private suppress = false
   private powerDirty = true
@@ -263,6 +266,8 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
+    if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
+    if (oldId === B.SERVO) this.programmedServoAngles.delete(key)
     if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO) {
       const e = this.models.get(key)
       if (e) {
@@ -844,6 +849,77 @@ export class Mechanics {
       })
   }
 
+  countArduinoServoConnections(boardKey: string, pin: string) {
+    if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return 0
+    return this.getTerminalConnections(boardKey, pin).filter((connection) =>
+      connection.componentTerminal === 'signal' && this.lookup(connection.componentKey).id === B.SERVO,
+    ).length
+  }
+
+  setArduinoServoAngle(boardKey: string, pin: string, degrees: number) {
+    if (!Number.isFinite(degrees) || this.lookup(boardKey).id !== B.ARDUINO_UNO) return 0
+    const angle = Math.max(1, Math.min(180, Math.round(degrees)))
+    const servos = this.getTerminalConnections(boardKey, pin).filter((connection) =>
+      connection.componentTerminal === 'signal' && this.lookup(connection.componentKey).id === B.SERVO,
+    )
+    for (const connection of servos) {
+      this.programmedServoAngles.set(connection.componentKey, { boardKey, degrees: angle })
+    }
+    return servos.length
+  }
+
+  setArduinoPinLevel(boardKey: string, pin: string, high: boolean) {
+    if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return false
+    this.arduinoPinLevels.set(`${boardKey}|${pin}`, Boolean(high))
+    this.powerDirty = true
+    this.powerCooldown = 0
+    return true
+  }
+
+  readArduinoDistance(boardKey: string, pin: string) {
+    if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return null
+    for (const connection of this.getTerminalConnections(boardKey, pin)) {
+      if (this.lookup(connection.componentKey).id !== B.PROXIMITY_SENSOR) continue
+      return this.getProximitySensorConfig(connection.componentKey)?.distance ?? 33
+    }
+    return null
+  }
+
+  clearArduinoProgram(boardKey: string) {
+    const prefix = `${boardKey}|`
+    for (const pin of this.arduinoPinLevels.keys()) {
+      if (pin.startsWith(prefix)) this.arduinoPinLevels.delete(pin)
+    }
+    for (const [servoKey, command] of this.programmedServoAngles) {
+      if (command.boardKey === boardKey) this.programmedServoAngles.delete(servoKey)
+    }
+    this.powerDirty = true
+    this.powerCooldown = 0
+  }
+
+  private getArduinoDrivenLevel(componentKey: string, terminal: string): boolean | undefined {
+    for (const [boardKey, entry] of this.models) {
+      if (entry.type !== 'arduino_uno') continue
+      for (let index = 0; index < 14; index++) {
+        const pin = `D${index}`
+        const level = this.arduinoPinLevels.get(`${boardKey}|${pin}`)
+        if (level === undefined) continue
+        if (this.getTerminalConnections(boardKey, pin).some((connection) =>
+          connection.componentKey === componentKey && connection.componentTerminal === terminal,
+        )) return level
+      }
+      for (const ground of ['GND', 'GND_2']) {
+        if (this.getTerminalConnections(boardKey, ground).some((connection) =>
+          connection.componentKey === componentKey && connection.componentTerminal === terminal,
+        )) return false
+      }
+      if (this.getTerminalConnections(boardKey, '5V').some((connection) =>
+        connection.componentKey === componentKey && connection.componentTerminal === terminal,
+      )) return true
+    }
+    return undefined
+  }
+
   removeWiresAt(key: string) {
     const removed = this.wires.filter((w) => w.a === key || w.b === key)
     if (removed.length === 0) return 0
@@ -1063,6 +1139,28 @@ export class Mechanics {
       const groundIsNotShorted = groundRoot !== voltageRoot && groundRoot !== signalRoot
       if (source > 0 && groundIsNegative && groundIsNotShorted && vccHasPositiveSupply && signalIsHigh) {
         this.servoPowered.add(servo.key)
+      }
+    }
+
+    // Digital Arduino outputs may drive two-terminal LEDs and DC motors directly
+    // in the educational simulation. HIGH/LOW states only apply to explicit pin wires.
+    for (const device of devices) {
+      const terminalA = device.id === B.LED ? 'anode' : 'A'
+      const terminalB = device.id === B.LED ? 'cathode' : 'B'
+      const levelA = this.getArduinoDrivenLevel(device.key, terminalA)
+      const levelB = this.getArduinoDrivenLevel(device.key, terminalB)
+      if (levelA === undefined && levelB === undefined) continue
+      if (device.id === B.LED) {
+        if (levelA === true && levelB === false) leds.add(device.key)
+        else if (levelA !== undefined && levelB !== undefined) leds.delete(device.key)
+      } else if (device.id === B.MOTOR && levelA !== undefined && levelB !== undefined) {
+        if (levelA === levelB) {
+          this.motorPower.delete(device.key)
+          this.motorDirection.delete(device.key)
+        } else {
+          this.motorPower.set(device.key, 1)
+          this.motorDirection.set(device.key, levelA ? 1 : -1)
+        }
       }
     }
 
@@ -2311,7 +2409,8 @@ export class Mechanics {
       if (e.type === 'servo') {
         if (!this.contraptions.has(key)) {
           const state = this.getServoState(key)
-          const degrees = this.servoPowered.has(key) ? state?.servoOnAngle ?? 90 : state?.servoOffAngle ?? 0
+          const programmed = this.programmedServoAngles.get(key)?.degrees
+          const degrees = programmed ?? (this.servoPowered.has(key) ? state?.servoOnAngle ?? 90 : state?.servoOffAngle ?? 0)
           const target = Math.min(SERVO_MAX_ANGLE_RAD, Math.max(0, Math.min(180, degrees)) * Math.PI / 180)
           const current = e.model.shaft.rotation.z
           const step = Math.max(-4 * dt, Math.min(4 * dt, target - current))
@@ -2355,9 +2454,10 @@ export class Mechanics {
       const direction = this.motorDirection.get(c.motorKey) ?? 1
       this.applyMountedWheelTraction(c, power, direction)
       if (c.actuatorId === B.SERVO) {
-        const targetDegrees = this.servoPowered.has(c.motorKey)
+        const programmed = this.programmedServoAngles.get(c.motorKey)?.degrees
+        const targetDegrees = programmed ?? (this.servoPowered.has(c.motorKey)
           ? c.motorState?.servoOnAngle ?? 90
-          : c.motorState?.servoOffAngle ?? 0
+          : c.motorState?.servoOffAngle ?? 0)
         const requestedTarget = Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180
         const target = Math.min(requestedTarget, SERVO_MAX_ANGLE_RAD)
         // Do not command exactly PI: Rapier 0.12 has an unstable revolute-motor
