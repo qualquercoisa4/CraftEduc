@@ -2165,6 +2165,49 @@ export class Mechanics {
     }
   }
 
+  private fallingBodyWaterSubmersion(body: FallingBody) {
+    if (this.world.type !== 'beach' || body.blocks.length === 0) return 0
+    const translation = body.body.translation()
+    const rotation = body.body.rotation()
+    const quaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+    const position = new THREE.Vector3(translation.x, translation.y, translation.z)
+    let submerged = 0
+    for (const block of body.blocks) {
+      const center = block.localOrigin.clone().applyQuaternion(quaternion).add(position)
+      submerged += this.world.waterSubmersionAt(center.x, center.y, center.z)
+    }
+    return submerged / body.blocks.length
+  }
+
+  /** Apply approximate buoyancy and fluid drag to falling voxel assemblies. */
+  private applyBeachWaterPhysics(dt: number) {
+    if (this.world.type !== 'beach') return
+    for (const falling of this.fallingBodies) {
+      const immersion = this.fallingBodyWaterSubmersion(falling)
+      if (immersion <= 0) continue
+
+      const body = falling.body
+      body.wakeUp()
+      const mass = Math.max(body.mass(), 0.001)
+      const velocity = body.linvel()
+      // The buoyant impulse is proportional to displaced volume; opposing
+      // horizontal impulses approximate water drag without a fluid solver.
+      const drag = Math.min(1, dt * 1.8)
+      body.applyImpulse({
+        x: -velocity.x * mass * drag,
+        y: mass * 9.81 * immersion * dt,
+        z: -velocity.z * mass * drag,
+      }, true)
+      const angular = body.angvel()
+      const angularDamping = Math.exp(-1.4 * dt)
+      body.setAngvel({
+        x: angular.x * angularDamping,
+        y: angular.y * angularDamping,
+        z: angular.z * angularDamping,
+      }, true)
+    }
+  }
+
   private updateGravity(dt: number) {
     if (!this.rigidPhysics.ready) return
     this.physicsScanCooldown -= dt
@@ -2178,6 +2221,13 @@ export class Mechanics {
     // grid only after the solver has allowed it to sleep on a stable surface.
     for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
       const body = this.fallingBodies[i]
+      // Bodies that are in the beach water must remain Rapier bodies while
+      // floating instead of being snapped back into the voxel grid.
+      if (this.fallingBodyWaterSubmersion(body) > 0.01) {
+        body.settledTime = 0
+        if (body.body.isSleeping()) body.body.wakeUp()
+        continue
+      }
       if (body.body.isSleeping()) body.settledTime += dt
       else body.settledTime = 0
       if (body.settledTime >= 0.35) {
