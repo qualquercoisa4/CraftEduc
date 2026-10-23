@@ -100,7 +100,7 @@ const FULL: Bounds = [0, 0, 0, 1, 1, 1]
 const BOX_BOUNDS: Bounds = [0.04, 0, 0.08, 0.96, 0.36, 0.92]
 const SWITCH_BOUNDS: Bounds = [0.01, 0.04, 0.03, 0.99, 0.38, 0.97]
 const SENSOR_BOUNDS: Bounds = [0.04, 0.08, 0.04, 0.96, 0.92, 0.96]
-const ARDUINO_UNO_BOUNDS: Bounds = [-0.42, 0.1, -0.42, 1.42, 0.3, 1.42]
+const ARDUINO_UNO_BOUNDS: Bounds = [0.08, 0.1, 0.08, 1.92, 0.3, 1.92]
 
 export function blockBounds(id: number): Bounds {
   if (id === B.BATTERY_BOX) return BOX_BOUNDS
