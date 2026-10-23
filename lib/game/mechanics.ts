@@ -2322,9 +2322,54 @@ export class Mechanics {
     }, true)
   }
 
+  /**
+   * A standalone electronic part that falls into unprotected seawater burns
+   * away. For multi-block rigid assemblies, the whole body is kept intact so
+   * the remaining colliders are never left inconsistent with the visuals.
+   */
+  private burnSubmergedStandaloneComponents() {
+    if (this.world.type !== 'beach') return
+    for (let i = this.fallingBodies.length - 1; i >= 0; i--) {
+      const falling = this.fallingBodies[i]
+      if (falling.blocks.length !== 1) continue
+      const block = falling.blocks[0]
+      if (!this.isWaterSensitiveComponent(block.id) || block.state?.resinCoated) continue
+      const translation = falling.body.translation()
+      const rotation = falling.body.rotation()
+      const center = block.localOrigin.clone()
+        .applyQuaternion(new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w))
+        .add(new THREE.Vector3(translation.x, translation.y, translation.z))
+      if (this.world.waterSubmersionAt(center.x, center.y, center.z) <= 0.01) continue
+
+      this.rigidPhysics.removeRigidBody(falling.body)
+      for (const child of [...falling.group.children]) {
+        if (child instanceof THREE.Mesh) child.geometry.dispose()
+      }
+      this.scene.remove(falling.group)
+      const key = block.originKey
+      const model = this.models.get(key)
+      if (model) {
+        disposeObject(model.model.group)
+        this.models.delete(key)
+      }
+      this.removeWiresAt(key)
+      const glow = this.glows.get(key)
+      if (glow) {
+        glow.parent?.remove(glow)
+        this.glows.delete(key)
+      }
+      this.fallingKeys.delete(key)
+      this.fallingBodies.splice(i, 1)
+      this.powerDirty = true
+      this.mechDirty = true
+      this.physicsDirty = true
+    }
+  }
+
   /** Apply liquid forces to falling voxels and the moving parts of machines. */
   private applyBeachWaterPhysics(dt: number) {
     if (this.world.type !== 'beach') return
+    this.burnSubmergedStandaloneComponents()
 
     for (const falling of this.fallingBodies) {
       this.applyWaterForcesToBody(
