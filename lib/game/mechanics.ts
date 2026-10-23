@@ -849,18 +849,27 @@ export class Mechanics {
       })
   }
 
+  private isArduinoServoConnection(connection: { componentKey: string; componentTerminal: string }) {
+    // Prefer the dedicated signal terminal. The fallback accepts a wire that
+    // touches the servo model when its tiny terminals are difficult to target
+    // on touch screens; the selected Arduino pin still has to match exactly.
+    const model = this.models.get(connection.componentKey)
+    const isServo = model?.type === 'servo' || this.lookup(connection.componentKey).id === B.SERVO
+    return isServo && (connection.componentTerminal === 'signal' || connection.componentTerminal === 'vcc' || connection.componentTerminal === 'gnd')
+  }
+
   countArduinoServoConnections(boardKey: string, pin: string) {
     if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return 0
     return this.getTerminalConnections(boardKey, pin).filter((connection) =>
-      connection.componentTerminal === 'signal' && this.lookup(connection.componentKey).id === B.SERVO,
+      this.isArduinoServoConnection(connection),
     ).length
   }
 
   setArduinoServoAngle(boardKey: string, pin: string, degrees: number) {
-    if (!Number.isFinite(degrees) || this.lookup(boardKey).id !== B.ARDUINO_UNO) return 0
+    if (!Number.isFinite(degrees) || this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return 0
     const angle = Math.max(1, Math.min(180, Math.round(degrees)))
     const servos = this.getTerminalConnections(boardKey, pin).filter((connection) =>
-      connection.componentTerminal === 'signal' && this.lookup(connection.componentKey).id === B.SERVO,
+      this.isArduinoServoConnection(connection),
     )
     for (const connection of servos) {
       this.programmedServoAngles.set(connection.componentKey, { boardKey, degrees: angle })

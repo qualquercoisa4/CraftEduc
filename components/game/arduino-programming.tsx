@@ -326,6 +326,9 @@ export function ArduinoProgramming() {
       // running in the simulated world until the user presses Stop.
       if (changeListener && localWorkspace) localWorkspace.removeChangeListener(changeListener)
       localWorkspace?.dispose()
+      // Blockly's SVG scrollbars can outlive a detached React screen on mobile.
+      // Explicitly clear the host after disposing the workspace.
+      workspaceHost.current?.replaceChildren()
       workspaceRef.current = null
       resizeWorkspaceRef.current = null
       setReady(false)
