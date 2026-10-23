@@ -10,7 +10,7 @@ import { MultiplayerPanel } from '@/components/game/multiplayer-panel'
 import { ProximitySensorConfig } from '@/components/game/proximity-sensor-config'
 import { BrushColorPicker } from '@/components/game/brush-color-picker'
 import { ServoConfig } from '@/components/game/servo-config'
-import { ArduinoProgramming } from '@/components/game/arduino-programming'
+import { ArduinoProgramming } from '@/components/game/arduino-programming-loader'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 
 export default function Page() {

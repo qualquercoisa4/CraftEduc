@@ -108,7 +108,7 @@ const blockDefinitions = [
     ],
     previousStatement: null,
     nextStatement: null,
-    colour: 15,
+    colour: 340,
     tooltip: 'Move o servo ligado ao pino selecionado para um ângulo de 1° a 180°.',
   },
   {
@@ -185,7 +185,7 @@ export function ArduinoProgramming() {
         const ptBr = await import('blockly/msg/pt-br')
         if (disposed || !workspaceHost.current) return
 
-        Blockly.setLocale(ptBr)
+        Blockly.setLocale(ptBr.default)
         if (!customBlocksRegistered) {
           Blockly.common.defineBlocksWithJsonArray(blockDefinitions as Parameters<typeof Blockly.common.defineBlocksWithJsonArray>[0])
           customBlocksRegistered = true
@@ -195,11 +195,11 @@ export function ArduinoProgramming() {
           kind: 'categoryToolbox',
           contents: [
             {
-              kind: 'category', name: 'Eventos', colour: '#f0b429',
+              kind: 'category', name: 'Eventos', colour: '#FFC400',
               contents: [{ kind: 'block', type: 'arduino_when_start' }],
             },
             {
-              kind: 'category', name: 'Controle', colour: '#55a630',
+              kind: 'category', name: 'Controle', colour: '#A2C735',
               contents: [
                 { kind: 'block', type: 'arduino_forever' },
                 { kind: 'block', type: 'arduino_if' },
@@ -211,22 +211,22 @@ export function ArduinoProgramming() {
               ],
             },
             {
-              kind: 'category', name: 'Pinos digitais', colour: '#3282d8',
+              kind: 'category', name: 'Pinos digitais', colour: '#4396D2',
               contents: [
                 { kind: 'block', type: 'arduino_set_pin_mode' },
                 { kind: 'block', type: 'arduino_digital_write' },
               ],
             },
             {
-              kind: 'category', name: 'Servo motor', colour: '#e58b29',
+              kind: 'category', name: 'Servo motor', colour: '#E62B60',
               contents: [{ kind: 'block', type: 'arduino_servo_write' }],
             },
             {
-              kind: 'category', name: 'Sensores', colour: '#269ca8',
+              kind: 'category', name: 'Sensores', colour: '#4A6871',
               contents: [{ kind: 'block', type: 'arduino_distance' }],
             },
             {
-              kind: 'category', name: 'Lógica', colour: '#5b80a5',
+              kind: 'category', name: 'Lógica', colour: '#4396D2',
               contents: [
                 { kind: 'block', type: 'logic_compare' },
                 { kind: 'block', type: 'logic_operation' },
@@ -235,7 +235,7 @@ export function ArduinoProgramming() {
               ],
             },
             {
-              kind: 'category', name: 'Matemática', colour: '#5c68a6',
+              kind: 'category', name: 'Matemática', colour: '#A2C735',
               contents: [
                 { kind: 'block', type: 'math_number' },
                 { kind: 'block', type: 'math_arithmetic' },
@@ -571,7 +571,13 @@ export function ArduinoProgramming() {
 
   return (
     <section className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36]" aria-label="Programação do Arduino UNO">
-      <header className="flex min-h-14 items-center justify-between gap-2 border-b-2 border-black/15 bg-[#1464ad] px-3 py-2 text-white sm:px-5">
+      <div className="flex h-1 shrink-0" aria-hidden="true">
+        <span className="w-1/4 bg-[#E62B60]" />
+        <span className="w-1/4 bg-[#4396D2]" />
+        <span className="w-1/4 bg-[#FFC400]" />
+        <span className="w-1/4 bg-[#A2C735]" />
+      </div>
+      <header className="flex min-h-14 items-center justify-between gap-2 border-b-2 border-black/15 bg-[#4396D2] px-3 py-2 text-white sm:px-5">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-bold sm:text-base">Programação · Arduino UNO</h2>
           <p className="text-[11px] text-white/80 sm:text-xs">{status}</p>
@@ -586,7 +592,7 @@ export function ArduinoProgramming() {
         )}
         <div ref={workspaceHost} className="h-full w-full touch-none" />
       </div>
-      <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-black/15 bg-[#e7eaf0] px-3 py-2 sm:px-5">
+      <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-black/15 bg-[#e5eef3] px-3 py-2 sm:px-5">
         <p className="hidden text-xs text-[#4a5360] sm:block">Os programas são salvos neste navegador para este Arduino.</p>
         <div className="ml-auto flex gap-2">
           <button
@@ -607,7 +613,7 @@ export function ArduinoProgramming() {
             type="button"
             onClick={() => { void executeProgram() }}
             disabled={!ready || running}
-            className="border-2 border-black bg-[#42a85a] px-4 py-2 text-xs font-bold text-white shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
+            className="border-2 border-black bg-[#A2C735] px-4 py-2 text-xs font-bold text-[#20313a] shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
           >
             Executar
           </button>
@@ -615,7 +621,7 @@ export function ArduinoProgramming() {
             type="button"
             onClick={() => stopProgram()}
             disabled={!running}
-            className="border-2 border-black bg-[#d94b4b] px-3 py-2 text-xs font-bold text-white shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
+            className="border-2 border-black bg-[#E62B60] px-3 py-2 text-xs font-bold text-white shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
           >
             Parar
           </button>
