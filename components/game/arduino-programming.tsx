@@ -185,7 +185,8 @@ export function ArduinoProgramming() {
         const ptBr = await import('blockly/msg/pt-br')
         if (disposed || !workspaceHost.current) return
 
-        Blockly.setLocale(ptBr.default)
+        const { default: _localeModule, ...localeMessages } = ptBr
+        Blockly.setLocale(localeMessages)
         if (!customBlocksRegistered) {
           Blockly.common.defineBlocksWithJsonArray(blockDefinitions as Parameters<typeof Blockly.common.defineBlocksWithJsonArray>[0])
           customBlocksRegistered = true
