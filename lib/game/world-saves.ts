@@ -100,6 +100,31 @@ export function getSavedWorlds(): SavedWorldRecord[] {
   }
 }
 
+function migrateLegacyArduinoProgramsToDefaultWorld() {
+  if (typeof window === 'undefined') return
+  const keyPrefix = 'crafteduc:arduino-program:'
+  const targetPrefix = `${keyPrefix}${DEFAULT_CONFIG.id}:`
+  try {
+    const migrations: { legacy: string; target: string; value: string }[] = []
+    for (let index = 0; index < window.localStorage.length; index++) {
+      const legacy = window.localStorage.key(index)
+      if (!legacy?.startsWith(keyPrefix)) continue
+      const componentKey = legacy.slice(keyPrefix.length)
+      // World-scoped keys contain the separator after a world ID; only move
+      // the older, unscoped position keys into the original flat world.
+      if (!componentKey || componentKey.includes(':')) continue
+      const value = window.localStorage.getItem(legacy)
+      if (value !== null) migrations.push({ legacy, target: `${targetPrefix}${componentKey}`, value })
+    }
+    for (const item of migrations) {
+      if (window.localStorage.getItem(item.target) === null) {
+        window.localStorage.setItem(item.target, item.value)
+      }
+      window.localStorage.removeItem(item.legacy)
+    }
+  } catch {}
+}
+
 export function getActiveWorldConfig(): WorldConfig {
   if (typeof window === 'undefined') return DEFAULT_CONFIG
   try {
@@ -203,6 +228,7 @@ export function requestLoadWorld(saveId: string) {
 export function resolveWorldStartup(): WorldStartup {
   if (typeof window === 'undefined') return { config: DEFAULT_CONFIG, save: null, autoStart: false }
 
+  migrateLegacyArduinoProgramsToDefaultWorld()
   let pending: PendingWorldAction | null = null
   try {
     const raw = window.localStorage.getItem(PENDING_KEY)
