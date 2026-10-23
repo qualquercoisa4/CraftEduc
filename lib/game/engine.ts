@@ -1197,7 +1197,15 @@ export class Engine {
       hit = { ...hit, ...cell, moving: undefined }
       this.target = hit
     }
-    if (hit.y < GROUND_LEVEL) return
+    if (hit.y < GROUND_LEVEL) {
+      // Keep generated land and the seabed protected, but let builders edit
+      // their own blocks after they have sunk below the beach water surface.
+      const editableUnderwaterBlock = this.world.type === 'beach' &&
+        hit.y >= Math.ceil(this.world.waterBottomY) &&
+        this.world.isWaterColumnAt(hit.x + 0.5, hit.z + 0.5) &&
+        hit.id !== this.world.terrainBlockAt(hit.x, hit.y, hit.z)
+      if (!editableUnderwaterBlock) return
+    }
     if (this.multiplayerBridge && !this.multiplayerBridge.canBreakBlock(hit.x, hit.y, hit.z)) {
       showToast('Você só pode quebrar blocos que colocou neste servidor')
       return
