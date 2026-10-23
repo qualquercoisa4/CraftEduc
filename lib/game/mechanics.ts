@@ -3555,7 +3555,7 @@ export class Mechanics {
     // The player is upright and axis-aligned; each moving voxel remains an
     // oriented box. SAT avoids the oversized fake corners from a world AABB.
     const supportSkin = 0.025
-    let support: { normalY: number; velocity: THREE.Vector3 } | null = null
+    const support = { normalY: -1, velocity: new THREE.Vector3() }
 
     const collideBlock = (
       center: THREE.Vector3,
@@ -3639,8 +3639,9 @@ export class Mechanics {
       if (normal.y > 0.55) {
         player.onGround = true
         if (player.vel.y < surfaceVelocity.y) player.vel.y = surfaceVelocity.y
-        if (!support || normal.y > support.normalY) {
-          support = { normalY: normal.y, velocity: surfaceVelocity }
+        if (normal.y > support.normalY) {
+          support.normalY = normal.y
+          support.velocity.copy(surfaceVelocity)
         }
       }
     }
@@ -3695,7 +3696,7 @@ export class Mechanics {
       }
     }
 
-    if (support && dt > 0) {
+    if (support.normalY >= 0 && dt > 0) {
       p.x += support.velocity.x * dt
       p.z += support.velocity.z * dt
     }
