@@ -2165,46 +2165,114 @@ export class Mechanics {
     }
   }
 
-  private fallingBodyWaterSubmersion(body: FallingBody) {
-    if (this.world.type !== 'beach' || body.blocks.length === 0) return 0
-    const translation = body.body.translation()
-    const rotation = body.body.rotation()
+  private bodyWaterSubmergedVolume(body: RAPIER.RigidBody, localCenters: readonly THREE.Vector3[]) {
+    if (this.world.type !== 'beach' || localCenters.length === 0) return 0
+    const translation = body.translation()
+    const rotation = body.rotation()
     const quaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
     const position = new THREE.Vector3(translation.x, translation.y, translation.z)
-    let submerged = 0
-    for (const block of body.blocks) {
-      const center = block.localOrigin.clone().applyQuaternion(quaternion).add(position)
-      submerged += this.world.waterSubmersionAt(center.x, center.y, center.z)
+    let submergedVolume = 0
+    for (const localCenter of localCenters) {
+      const center = localCenter.clone().applyQuaternion(quaternion).add(position)
+      submergedVolume += this.world.waterSubmersionAt(center.x, center.y, center.z)
     }
-    return submerged / body.blocks.length
+    return submergedVolume
   }
 
-  /** Apply approximate buoyancy and fluid drag to falling voxel assemblies. */
+  private fallingBodyWaterSubmersion(body: FallingBody) {
+    return this.bodyWaterSubmergedVolume(body.body, body.blocks.map((block) => block.localOrigin))
+  }
+
+  /**
+   * Approximate Archimedes' principle per voxel: each submerged block displaces
+   * its submerged volume of water, while the mass of the block decides whether
+   * it floats, stays near neutral buoyancy, or sinks. Impulses are applied at
+   * each submerged voxel centre so partially immersed assemblies can also tip.
+   */
+  private applyWaterForcesToBody(
+    body: RAPIER.RigidBody,
+    localCenters: readonly THREE.Vector3[],
+    dt: number,
+  ) {
+    if (this.world.type !== 'beach' || localCenters.length === 0 || body.isSleeping()) return
+
+    const translation = body.translation()
+    const rotation = body.rotation()
+    const quaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+    const position = new THREE.Vector3(translation.x, translation.y, translation.z)
+    const waterDensity = 1.35
+    let submergedVolume = 0
+
+    for (const localCenter of localCenters) {
+      const center = localCenter.clone().applyQuaternion(quaternion).add(position)
+      const fraction = this.world.waterSubmersionAt(center.x, center.y, center.z)
+      if (fraction <= 0.001) continue
+      submergedVolume += fraction
+      const buoyancyImpulse = waterDensity * 9.81 * fraction * dt
+      body.applyImpulseAtPoint(
+        { x: 0, y: buoyancyImpulse, z: 0 },
+        { x: center.x, y: center.y, z: center.z },
+        true,
+      )
+    }
+
+    if (submergedVolume <= 0) return
+    const immersion = THREE.MathUtils.clamp(submergedVolume / localCenters.length, 0, 1)
+    const mass = Math.max(body.mass(), 0.001)
+    const velocity = body.linvel()
+    // Stronger drag with deeper immersion damps sideways drift and vertical
+    // bobbing without imposing a fake collision at the water surface.
+    const drag = Math.min(0.95, dt * 4.5 * immersion)
+    body.applyImpulse({
+      x: -velocity.x * mass * drag,
+      y: -velocity.y * mass * drag,
+      z: -velocity.z * mass * drag,
+    }, true)
+
+    const angular = body.angvel()
+    const angularDamping = Math.exp(-2.8 * immersion * dt)
+    body.setAngvel({
+      x: angular.x * angularDamping,
+      y: angular.y * angularDamping,
+      z: angular.z * angularDamping,
+    }, true)
+  }
+
+  /** Apply liquid forces to falling voxels and the moving parts of machines. */
   private applyBeachWaterPhysics(dt: number) {
     if (this.world.type !== 'beach') return
-    for (const falling of this.fallingBodies) {
-      const immersion = this.fallingBodyWaterSubmersion(falling)
-      if (immersion <= 0) continue
 
-      const body = falling.body
-      body.wakeUp()
-      const mass = Math.max(body.mass(), 0.001)
-      const velocity = body.linvel()
-      // The buoyant impulse is proportional to displaced volume; opposing
-      // horizontal impulses approximate water drag without a fluid solver.
-      const drag = Math.min(1, dt * 1.8)
-      body.applyImpulse({
-        x: -velocity.x * mass * drag,
-        y: mass * 9.81 * immersion * dt,
-        z: -velocity.z * mass * drag,
-      }, true)
-      const angular = body.angvel()
-      const angularDamping = Math.exp(-1.4 * dt)
-      body.setAngvel({
-        x: angular.x * angularDamping,
-        y: angular.y * angularDamping,
-        z: angular.z * angularDamping,
-      }, true)
+    for (const falling of this.fallingBodies) {
+      this.applyWaterForcesToBody(
+        falling.body,
+        falling.blocks.map((block) => block.localOrigin),
+        dt,
+      )
+    }
+
+    // Motors, servos, and their attached builds are also rigid bodies. Treat
+    // each voxel as displaced volume so a robot can float unevenly or tip.
+    for (const machine of this.contraptions.values()) {
+      const rotorCenters = machine.blocks.map((block) => new THREE.Vector3(...block.rel))
+      this.applyWaterForcesToBody(
+        machine.rotorBody,
+        rotorCenters.length ? rotorCenters : [new THREE.Vector3()],
+        dt,
+      )
+      const chassisCenters = [
+        new THREE.Vector3(),
+        ...machine.chassisBlocks.map((block) => new THREE.Vector3(...block.rel)),
+      ]
+      this.applyWaterForcesToBody(machine.chassisBody, chassisCenters, dt)
+
+      for (const extra of machine.extraRotors ?? []) {
+        const extraCenters = extra.blocks.map((block) => new THREE.Vector3(...block.rel))
+        this.applyWaterForcesToBody(
+          extra.rotorBody,
+          extraCenters.length ? extraCenters : [new THREE.Vector3()],
+          dt,
+        )
+      }
     }
   }
 
@@ -2224,8 +2292,10 @@ export class Mechanics {
       // Bodies that are in the beach water must remain Rapier bodies while
       // floating instead of being snapped back into the voxel grid.
       if (this.fallingBodyWaterSubmersion(body) > 0.01) {
+        // Keep submerged/floating bodies in Rapier instead of voxel-snapping
+        // them onto the old ground plane. Sleeping bodies stay editable via
+        // raycastMoving and are re-gridded only when an interaction needs it.
         body.settledTime = 0
-        if (body.body.isSleeping()) body.body.wakeUp()
         continue
       }
       if (body.body.isSleeping()) body.settledTime += dt
@@ -2241,10 +2311,17 @@ export class Mechanics {
     if (!this.rigidPhysics.ready) { this.physicsDirty = true; return }
     const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
     const occupied = new Set<string>()
+    const firstY = this.world.type === 'beach'
+      ? Math.floor(this.world.waterBottomY)
+      : GROUND_LEVEL
     for (const chunk of this.world.chunks.values()) {
       const minX = chunk.cx * 16, minZ = chunk.cz * 16
-      for (let y = GROUND_LEVEL; y <= Math.min(63, chunk.maxY); y++) {
+      for (let y = firstY; y <= Math.min(63, chunk.maxY); y++) {
         for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+          // The island's lower sand layers are fixed terrain, not candidate
+          // falling voxels. Scan below GROUND_LEVEL only in the actual sea.
+          if (y < GROUND_LEVEL && this.world.type === 'beach' &&
+            !this.world.isWaterColumnAt(x + 0.5, z + 0.5)) continue
           const id = this.world.getBlock(x, y, z)
           if (id === B.AIR) continue
           const key = posKey(x, y, z)
@@ -2273,10 +2350,15 @@ export class Mechanics {
         }
       }
       const keys = new Set(group.map((item) => item.key))
-      const supported = group.some((item) => item.y <= GROUND_LEVEL || (() => {
+      const supported = group.some((item) => {
+        const floorY = this.world.type === 'beach' &&
+          this.world.isWaterColumnAt(item.x + 0.5, item.z + 0.5)
+          ? Math.ceil(this.world.waterBottomY)
+          : GROUND_LEVEL
+        if (item.y <= floorY) return true
         const below = posKey(item.x, item.y - 1, item.z)
         return occupied.has(below) && !keys.has(below)
-      })())
+      })
       // A connected glue component is one rigid body. Unconnected blocks are
       // independent bodies and still collide with each other in Rapier.
       if (!supported || group.some((item) => forceKeys?.has(item.key))) fallingGroups.push(group)
@@ -2375,9 +2457,18 @@ export class Mechanics {
 
     const keys = new Set(placements.map((p) => posKey(p.x, p.y, p.z)))
     if (keys.size !== placements.length) return null
-    let shiftY = Math.max(0, GROUND_LEVEL - Math.min(...placements.map((p) => p.y)))
+    const minimumYAt = (x: number, z: number) => {
+      if (this.world.type !== 'beach') return GROUND_LEVEL
+      const centerX = x + 0.5
+      const centerZ = z + 0.5
+      if (this.world.isWaterColumnAt(centerX, centerZ)) return Math.ceil(this.world.waterBottomY)
+      const insideOceanBounds = centerX >= -64 && centerX < 64 && centerZ >= -64 && centerZ < 64
+      return insideOceanBounds ? GROUND_LEVEL : 0
+    }
+    let shiftY = Math.max(0, ...placements.map((p) => minimumYAt(p.x, p.z) - p.y))
     const fits = (offset: number) => placements.every((p) =>
-      p.y + offset < WORLD_HEIGHT && this.world.getBlock(p.x, p.y + offset, p.z) === B.AIR)
+      p.y + offset >= 0 && p.y + offset < WORLD_HEIGHT &&
+      this.world.getBlock(p.x, p.y + offset, p.z) === B.AIR)
     let attempts = 0
     while (!fits(shiftY) && attempts < 24) { shiftY++; attempts++ }
     if (!fits(shiftY)) return null
