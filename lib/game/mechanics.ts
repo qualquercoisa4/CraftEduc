@@ -2655,7 +2655,6 @@ export class Mechanics {
       const power = this.motorPower.get(c.motorKey) ?? 0
       const motor = this.models.get(c.motorKey)
       const direction = this.motorDirection.get(c.motorKey) ?? 1
-      this.applyMountedWheelTraction(c)
       if (c.actuatorId === B.SERVO) {
         const programmed = this.programmedServoAngles.get(c.motorKey)?.degrees
         const targetDegrees = programmed ?? (this.servoPowered.has(c.motorKey)
