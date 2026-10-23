@@ -397,7 +397,8 @@ function getArduinoSilkscreenMaterial() {
   if (arduinoSilkscreenMaterial) return arduinoSilkscreenMaterial
   const canvas = document.createElement('canvas')
   canvas.width = 512
-  canvas.height = 512
+  // Match the texture aspect ratio to the board surface so lettering stays undistorted.
+  canvas.height = 378
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   ctx.fillStyle = '#f5f6f7'
