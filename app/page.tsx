@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Engine } from '@/lib/game/engine'
+import { Engine, getEngine } from '@/lib/game/engine'
 import { gameStore, useGame } from '@/lib/game/store'
 import { Hud } from '@/components/game/hud'
 import { Inventory } from '@/components/game/inventory'
@@ -12,6 +12,7 @@ import { BrushColorPicker } from '@/components/game/brush-color-picker'
 import { ServoConfig } from '@/components/game/servo-config'
 import { ArduinoProgramming } from '@/components/game/arduino-programming-loader'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
+import { WorldManager } from '@/components/game/world-manager'
 
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -22,6 +23,8 @@ export default function Page() {
   const [bootError, setBootError] = useState<string | null>(null)
   const [multiplayerOpen, setMultiplayerOpen] = useState(false)
   const [multiplayerSession, setMultiplayerSession] = useState<MultiplayerClient | null>(null)
+  const [worldManagerMode, setWorldManagerMode] = useState<'create' | 'load' | null>(null)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -84,6 +87,8 @@ export default function Page() {
           </div>
           <div className="robo-menu-buttons mt-2 flex w-full max-w-xs flex-col gap-2">
             <button className="mc-btn" onClick={startGame}>Jogar</button>
+            <button className="mc-btn" onClick={() => setWorldManagerMode('create')}>Criar mundo</button>
+            <button className="mc-btn" onClick={() => setWorldManagerMode('load')}>Mundos salvos</button>
             <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multijogador</button>
             <button className="mc-btn" onClick={() => openSubscreen('controls')}>Controles</button>
             <button className="mc-btn" onClick={() => openSubscreen('options')}>Configurações</button>
@@ -134,6 +139,17 @@ export default function Page() {
           <h1 className="font-display mc-shadow text-2xl sm:text-3xl">JOGO PAUSADO</h1>
           <div className="mt-3 flex w-full max-w-xs flex-col gap-3">
             <button className="mc-btn" onClick={startGame}>Continuar</button>
+            <button
+              className="mc-btn"
+              onClick={() => {
+                const saved = getEngine()?.saveCurrentWorld()
+                setSaveMessage(saved ? `Mundo “${saved.name}” salvo com sucesso.` : 'Não foi possível salvar. O armazenamento pode estar cheio.')
+              }}
+            >
+              Salvar mundo
+            </button>
+            {saveMessage && <p role="status" className="text-xs leading-5 text-white">{saveMessage}</p>}
+            <button className="mc-btn" onClick={() => setWorldManagerMode('load')}>Mundos salvos</button>
             <button className="mc-btn" onClick={() => setMultiplayerOpen(true)}>Multiplayer</button>
             <button className="mc-btn" onClick={() => openSubscreen('controls')}>Controles</button>
             <button className="mc-btn" onClick={() => openSubscreen('options')}>Opções</button>
@@ -201,6 +217,13 @@ export default function Page() {
             <button className="mc-btn" onClick={returnFromSubscreen}>Voltar</button>
           </div>
         </section>
+      )}
+
+      {worldManagerMode && (
+        <WorldManager
+          mode={worldManagerMode}
+          onClose={() => setWorldManagerMode(null)}
+        />
       )}
 
       <MultiplayerPanel
