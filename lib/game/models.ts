@@ -405,25 +405,33 @@ function getArduinoSilkscreenMaterial() {
   ctx.textBaseline = 'middle'
 
   const boardWidth = 0.84
-  const boardDepth = 0.76
+  const boardDepth = 0.62
   const pxX = (x: number) => ((x + boardWidth / 2) / boardWidth) * canvas.width
   const pxY = (z: number) => ((boardDepth / 2 - z) / boardDepth) * canvas.height
+
+  const fillPinLabel = (text: string, x: number, z: number) => {
+    ctx.save()
+    ctx.translate(pxX(x), pxY(z))
+    ctx.rotate(Math.PI)
+    ctx.fillText(text, 0, 0)
+    ctx.restore()
+  }
 
   ctx.font = 'bold 17px Arial, sans-serif'
   const digitalStart = -0.35
   const digitalStep = 0.70 / 13
-  for (let i = 0; i <= 13; i++) ctx.fillText(String(i), pxX(digitalStart + digitalStep * i), pxY(-0.205))
+  for (let i = 0; i <= 13; i++) fillPinLabel(String(i), digitalStart + digitalStep * i, -0.205)
   ctx.font = 'bold 16px Arial, sans-serif'
-  ctx.fillText('DIGITAL (PWM~)', pxX(0.08), pxY(-0.145))
+  fillPinLabel('DIGITAL (PWM~)', 0.08, -0.145)
   ctx.font = 'bold 18px Arial, sans-serif'
-  ctx.fillText('5V', pxX(-0.23), pxY(0.205))
+  fillPinLabel('5V', -0.23, 0.205)
   ctx.font = 'bold 15px Arial, sans-serif'
-  ctx.fillText('GND', pxX(-0.11), pxY(0.205))
-  ctx.fillText('GND', pxX(0.01), pxY(0.205))
+  fillPinLabel('GND', -0.11, 0.205)
+  fillPinLabel('GND', 0.01, 0.205)
   ctx.font = 'bold 16px Arial, sans-serif'
-  ctx.fillText('POWER', pxX(-0.12), pxY(0.14))
+  fillPinLabel('POWER', -0.12, 0.14)
   ctx.font = 'bold 13px Arial, sans-serif'
-  ctx.fillText('VIN', pxX(-0.34), pxY(0.12))
+  fillPinLabel('VIN', -0.34, 0.12)
   ctx.font = 'bold 20px Arial, sans-serif'
   ctx.fillText('ARDUINO', pxX(0.30), pxY(0.13))
   ctx.font = 'bold 24px Arial, sans-serif'
@@ -456,13 +464,13 @@ export function createArduinoUnoModel(): ArduinoUnoModel {
   }
 
   // Main blue PCB and mounting holes.
-  box(0.92, 0.06, 0.84, 0, 0, 0, m.arduinoBlue)
-  const silkscreen = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.76), getArduinoSilkscreenMaterial())
+  box(0.92, 0.06, 0.68, 0, 0, 0, m.arduinoBlue)
+  const silkscreen = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.62), getArduinoSilkscreenMaterial())
   silkscreen.rotation.x = -Math.PI / 2
   silkscreen.position.set(0, 0.0315, 0)
   group.add(silkscreen)
   for (const x of [-0.4, 0.4]) {
-    for (const z of [-0.34, 0.34]) {
+    for (const z of [-0.29, 0.29]) {
       const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.014, 16), m.solder)
       ring.position.set(x, 0.036, z)
       group.add(ring)
