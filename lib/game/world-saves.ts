@@ -72,7 +72,7 @@ const DEFAULT_CONFIG: WorldConfig = {
 }
 
 function validWorldType(value: unknown): value is WorldType {
-  return value === 'flat' || value === 'prototypes' || value === 'deep_pits' || value === 'mega_maze'
+  return value === 'flat' || value === 'prototypes' || value === 'deep_pits' || value === 'mega_maze' || value === 'line_following' || value === 'mars_colony' || value === 'beach'
 }
 
 function validConfig(value: unknown): value is WorldConfig {

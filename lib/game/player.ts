@@ -102,25 +102,16 @@ export class Player {
   update(dt: number, input: MoveInput) {
     this.sneaking = input.sneak && !this.flying
     this.sprinting = input.sprint && input.forward > 0 && !this.sneaking
-    const inWater = !this.flying &&
-      this.world.isWaterColumnAt(this.pos.x, this.pos.z) &&
-      this.pos.y < this.world.waterSurfaceY &&
-      this.pos.y + this.height > this.world.waterBottomY
-    const immersion = inWater
-      ? THREE.MathUtils.clamp((this.world.waterSurfaceY - this.pos.y) / this.height, 0, 1)
-      : 0
 
     const speed = this.flying
       ? this.sprinting
         ? 21.6
         : 10.9
-      : inWater
-        ? this.sprinting ? 3.2 : 2.4
-        : this.sneaking
-          ? 1.31
-          : this.sprinting
-            ? 5.61
-            : 4.317
+      : this.sneaking
+        ? 1.31
+        : this.sprinting
+          ? 5.61
+          : 4.317
 
     let f = input.forward
     let s = input.strafe
@@ -134,7 +125,7 @@ export class Player {
     const tx = (-sin * f + cos * s) * speed
     const tz = (-cos * f - sin * s) * speed
 
-    const k = this.flying ? 7 : inWater ? 2.8 : this.onGround ? 16 : 3.2
+    const k = this.flying ? 7 : this.onGround ? 16 : 3.2
     const blend = 1 - Math.exp(-k * dt)
     this.vel.x += (tx - this.vel.x) * blend
     this.vel.z += (tz - this.vel.z) * blend
