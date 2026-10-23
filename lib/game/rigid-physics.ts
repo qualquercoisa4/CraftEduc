@@ -187,8 +187,10 @@ export class RigidPhysics {
     else if (options.lockRotation) desc = desc.lockRotations()
     const body = this.rapierWorld.createRigidBody(desc)
     for (const voxel of voxels) {
+      // Reduce mounted motor housing size so the tyre reaches the ground first.
+      const motorHousingHalfExtent = voxel.id === B.MOTOR && voxel.state?.mountedWheel ? 0.28 : 0.5
       this.rapierWorld.createCollider(
-        RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+        RAPIER.ColliderDesc.cuboid(motorHousingHalfExtent, motorHousingHalfExtent, motorHousingHalfExtent)
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
           // Rapier derives total mass, centre of mass and inertia from every
           // collider's density and position; offset/heavy parts can tip the build.
@@ -213,7 +215,7 @@ export class RigidPhysics {
         .setCanSleep(false)
         .setCcdEnabled(true)
         .setLinearDamping(0.025)
-        .setAngularDamping(0.06),
+        .setAngularDamping(0.015),
     )
     const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axle)
     this.rapierWorld.createCollider(
@@ -240,7 +242,10 @@ export class RigidPhysics {
       { x: childAnchor.x, y: childAnchor.y, z: childAnchor.z },
       { x: axis.x, y: axis.y, z: axis.z },
     )
-    return this.rapierWorld.createImpulseJoint(joint, parent, child, true) as RAPIER.RevoluteImpulseJoint
+    const connectedJoint = this.rapierWorld.createImpulseJoint(joint, parent, child, true) as RAPIER.RevoluteImpulseJoint
+    // Avoid self-contact jamming at the hinge; the joint governs rotor/chassis coupling.
+    connectedJoint.setContactsEnabled(false)
+    return connectedJoint
   }
 
   removeRigidBody(body: RAPIER.RigidBody | null | undefined) {
@@ -248,7 +253,7 @@ export class RigidPhysics {
     this.rapierWorld.removeRigidBody(body)
   }
 
-  step(dt: number) {
+  step(dt: number, beforeFixedStep?: (fixedDt: number) => void) {
     if (!this.ready || !this.rapierWorld) return
 
     // Fixed 60 Hz integration with bounded catch-up prevents the same build
@@ -257,6 +262,7 @@ export class RigidPhysics {
     let steps = 0
     while (this.accumulator >= this.fixedStep && steps < this.maxSubsteps) {
       this.rapierWorld.timestep = this.fixedStep
+      beforeFixedStep?.(this.fixedStep)
       this.rapierWorld.step()
       this.accumulator -= this.fixedStep
       steps++
