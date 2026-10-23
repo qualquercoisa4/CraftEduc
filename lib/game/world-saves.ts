@@ -168,7 +168,8 @@ export function resolveWorldStartup(): WorldStartup {
 
   const saves = getSavedWorlds()
   if (pending?.mode === 'load') {
-    const save = saves.find((item) => item.id === pending?.saveId) ?? null
+    const requestedSaveId = pending.saveId
+    const save = saves.find((item) => item.id === requestedSaveId) ?? null
     if (save) {
       const config: WorldConfig = { id: save.id, name: save.name, type: save.type, seed: save.seed }
       try { window.localStorage.setItem(ACTIVE_KEY, JSON.stringify(config)) } catch {}
