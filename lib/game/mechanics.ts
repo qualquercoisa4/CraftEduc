@@ -787,13 +787,14 @@ export class Mechanics {
       const q = facingQuaternion(facing)
       const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
       const terminals = [
-        { terminal: 'VCC', local: new THREE.Vector3(-0.24, -0.32, -0.005) },
-        { terminal: 'TRIG', local: new THREE.Vector3(-0.08, -0.32, -0.005) },
-        { terminal: 'ECHO', local: new THREE.Vector3(0.08, -0.32, -0.005) },
-        { terminal: 'GND', local: new THREE.Vector3(0.24, -0.32, -0.005) },
+        { terminal: 'VCC', local: new THREE.Vector3(-0.24, -0.405, -0.005) },
+        { terminal: 'TRIG', local: new THREE.Vector3(-0.08, -0.405, -0.005) },
+        { terminal: 'ECHO', local: new THREE.Vector3(0.08, -0.405, -0.005) },
+        { terminal: 'GND', local: new THREE.Vector3(0.24, -0.405, -0.005) },
       ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
       terminals.sort((a, b) => a.point.distanceToSquared(b.point) - b.point.distanceToSquared(a.point))
-      return terminals[0].point.distanceTo(hitPoint) <= 0.28 ? terminals[0] : null
+      // Mobile taps are imprecise; enlarge the terminal hit area around each visible pin.
+      return terminals[0].point.distanceTo(hitPoint) <= 0.62 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [
