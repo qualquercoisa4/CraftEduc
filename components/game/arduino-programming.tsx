@@ -16,7 +16,7 @@ type PinMode = 'OUTPUT' | 'SERVO' | 'ULTRASONIC'
 
 let customBlocksRegistered = false
 
-const pins = Array.from({ length: 14 }, (_, index) => [\`D\${index}\`, \`D\${index}\`])
+const pins = Array.from({ length: 14 }, (_, index) => [`D${index}`, `D${index}`])
 
 const blockDefinitions = [
   {
@@ -267,7 +267,7 @@ export function ArduinoProgramming() {
         workspaceRef.current = localWorkspace
         resizeWorkspaceRef.current = () => Blockly.svgResize(workspace)
 
-        const storageKey = \`crafteduc:arduino-program:\${key ?? 'unknown'}\`
+        const storageKey = `crafteduc:arduino-program:${key ?? 'unknown'}`
         let loaded = false
         try {
           const saved = window.localStorage.getItem(storageKey)
@@ -427,35 +427,35 @@ export function ArduinoProgramming() {
           pinModesRef.current.set(pin, mode)
           if (mode === 'SERVO') {
             const count = getEngine()?.mech.countArduinoServoConnections(key, pin) ?? 0
-            if (!count) setStatus(\`Aviso: nenhum servo está conectado ao pino \${pin}.\`)
+            if (!count) setStatus(`Aviso: nenhum servo está conectado ao pino ${pin}.`)
           } else if (mode === 'ULTRASONIC') {
             const distance = getEngine()?.mech.readArduinoDistance(key, pin)
             if (distance === null || distance === undefined)
-              setStatus(\`Aviso: nenhum sensor de proximidade está conectado ao pino \${pin}.\`)
+              setStatus(`Aviso: nenhum sensor de proximidade está conectado ao pino ${pin}.`)
           }
           break
         }
         case 'arduino_digital_write': {
           const pin = block.getFieldValue('PIN')
           if (pinModesRef.current.get(pin) !== 'OUTPUT') {
-            setStatus(\`Configure o pino \${pin} como saída digital antes de usar HIGH/LOW.\`)
+            setStatus(`Configure o pino ${pin} como saída digital antes de usar HIGH/LOW.`)
             break
           }
           const high = block.getFieldValue('LEVEL') === 'HIGH'
           if (!getEngine()?.mech.setArduinoPinLevel(key, pin, high))
-            setStatus(\`Não foi possível escrever no pino \${pin}.\`)
+            setStatus(`Não foi possível escrever no pino ${pin}.`)
           break
         }
         case 'arduino_servo_write': {
           const pin = block.getFieldValue('PIN')
           if (pinModesRef.current.get(pin) !== 'SERVO') {
-            setStatus(\`Configure o pino \${pin} como servo antes de comandar o ângulo.\`)
+            setStatus(`Configure o pino ${pin} como servo antes de comandar o ângulo.`)
             break
           }
           const angle = Math.max(1, Math.min(180, Math.round(finiteNumber(block.getFieldValue('ANGLE'), 90))))
           const count = getEngine()?.mech.setArduinoServoAngle(key, pin, angle) ?? 0
-          if (!count) setStatus(\`Nenhum servo conectado ao pino \${pin} (o fio deve chegar ao terminal de sinal).\`)
-          else setStatus(\`Servo no pino \${pin}: \${angle}°.\`)
+          if (!count) setStatus(`Nenhum servo conectado ao pino ${pin} (o fio deve chegar ao terminal de sinal).`)
+          else setStatus(`Servo no pino ${pin}: ${angle}°.`)
           break
         }
         case 'arduino_delay': {
@@ -482,7 +482,7 @@ export function ArduinoProgramming() {
           for (const name of names.sort()) {
             const suffix = name.slice(2)
             if (Boolean(readExpression(input(name)))) {
-              await sequence(input(\`DO\${suffix}\`))
+              await sequence(input(`DO${suffix}`))
               matched = true
               break
             }
@@ -512,7 +512,7 @@ export function ArduinoProgramming() {
           stopProgram()
           break
         default:
-          setStatus(\`Bloco ainda não executável: \${block.type}\`)
+          setStatus(`Bloco ainda não executável: ${block.type}`)
           break
       }
     }
