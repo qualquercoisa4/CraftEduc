@@ -787,13 +787,13 @@ export class Mechanics {
       const q = facingQuaternion(facing)
       const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
       const terminals = [
-        { terminal: 'in+', local: new THREE.Vector3(-0.24, -0.42, -0.005) },
-        { terminal: 'in-', local: new THREE.Vector3(-0.08, -0.42, -0.005) },
-        { terminal: 'out+', local: new THREE.Vector3(0.08, -0.42, -0.005) },
-        { terminal: 'out-', local: new THREE.Vector3(0.24, -0.42, -0.005) },
+        { terminal: 'VCC', local: new THREE.Vector3(-0.24, -0.32, -0.005) },
+        { terminal: 'TRIG', local: new THREE.Vector3(-0.08, -0.32, -0.005) },
+        { terminal: 'ECHO', local: new THREE.Vector3(0.08, -0.32, -0.005) },
+        { terminal: 'GND', local: new THREE.Vector3(0.24, -0.32, -0.005) },
       ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
-      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
-      return terminals[0].point.distanceTo(hitPoint) <= 0.85 ? terminals[0] : null
+      terminals.sort((a, b) => a.point.distanceToSquared(b.point) - b.point.distanceToSquared(a.point))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.28 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [
@@ -890,15 +890,26 @@ export class Mechanics {
     return true
   }
 
-  readArduinoDistance(boardKey: string, pin: string) {
-    if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return null
-    for (const connection of this.getTerminalConnections(boardKey, pin)) {
-      // out+ is the sensor's distance-signal terminal; out- is its return.
-      if (connection.componentTerminal !== 'out+') continue
-      if (this.lookup(connection.componentKey).id !== B.PROXIMITY_SENSOR) continue
-      return this.getProximitySensorConfig(connection.componentKey)?.distance ?? null
-    }
-    return null
+  readArduinoDistance(boardKey: string, trigPin: string, echoPin: string) {
+    if (this.lookup(boardKey).id !== B.ARDUINO_UNO
+      || !/^D(?:[0-9]|1[0-3])$/.test(trigPin)
+      || !/^D(?:[0-9]|1[0-3])$/.test(echoPin)
+      || trigPin === echoPin) return null
+    const trigConnection = this.getTerminalConnections(boardKey, trigPin).find((connection) =>
+      connection.componentTerminal === 'TRIG' && this.lookup(connection.componentKey).id === B.PROXIMITY_SENSOR)
+    if (!trigConnection) return null
+    const sensorKey = trigConnection.componentKey
+    const echoConnection = this.getTerminalConnections(boardKey, echoPin).find((connection) =>
+      connection.componentKey === sensorKey && connection.componentTerminal === 'ECHO')
+    if (!echoConnection) return null
+    const vcc = this.wires.some((wire) =>
+      (wire.a === sensorKey && wire.ta === 'VCC' && wire.b === boardKey && wire.tb === '5V')
+      || (wire.b === sensorKey && wire.tb === 'VCC' && wire.a === boardKey && wire.ta === '5V'))
+    const gnd = this.wires.some((wire) =>
+      (wire.a === sensorKey && wire.ta === 'GND' && wire.b === boardKey && ['GND', 'GND_2'].includes(wire.tb))
+      || (wire.b === sensorKey && wire.tb === 'GND' && wire.a === boardKey && ['GND', 'GND_2'].includes(wire.ta)))
+    if (!vcc || !gnd) return null
+    return this.getProximitySensorConfig(sensorKey)?.distance ?? null
   }
 
   clearArduinoProgram(boardKey: string) {
@@ -1065,12 +1076,7 @@ export class Mechanics {
         for (const terminal of ['gnd', 'vcc', 'signal']) allNodes.add(node(key, terminal))
       }
       if (block.id === B.PROXIMITY_SENSOR) {
-        for (const terminal of ['in+', 'in-', 'out+', 'out-']) allNodes.add(node(key, terminal))
-        if (block.state?.proximityActive) {
-          // Each pole only connects input to its matching output when the range condition is true.
-          union(node(key, 'in+'), node(key, 'out+'))
-          union(node(key, 'in-'), node(key, 'out-'))
-        }
+        for (const terminal of ['VCC', 'TRIG', 'ECHO', 'GND']) allNodes.add(node(key, terminal))
       }
       if (block.id === B.SWITCH) {
         for (const terminal of ['in1', 'out1', 'in2', 'out2']) allNodes.add(node(key, terminal))
