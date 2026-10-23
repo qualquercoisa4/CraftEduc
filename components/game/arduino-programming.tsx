@@ -348,8 +348,8 @@ export function ArduinoProgramming() {
   }
 
   const readDistance = (pin: string) => {
-    if (!key || pinModesRef.current.get(pin) !== 'ULTRASONIC') return 33
-    return getEngine()?.mech.readArduinoDistance(key, pin) ?? 33
+    if (!key || pinModesRef.current.get(pin) !== 'ULTRASONIC') return null
+    return getEngine()?.mech.readArduinoDistance(key, pin) ?? null
   }
 
   const readExpression = (block: BlockLike | null): number | boolean => {
@@ -392,8 +392,15 @@ export function ArduinoProgramming() {
           default: return 0
         }
       }
-      case 'arduino_distance':
-        return readDistance(block.getFieldValue('PIN'))
+      case 'arduino_distance': {
+        const pin = block.getFieldValue('PIN')
+        const distance = readDistance(pin)
+        if (distance === null) {
+          setStatus(`Configure o pino ${pin} como sensor ultrassônico e conecte o terminal de sinal do sensor.`)
+          return 0
+        }
+        return distance
+      }
       default:
         return 0
     }
