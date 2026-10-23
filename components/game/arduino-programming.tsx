@@ -283,6 +283,11 @@ export function ArduinoProgramming() {
           start.initSvg()
           start.render()
           start.moveBy(24, 24)
+          try {
+            window.localStorage.setItem(storageKey, JSON.stringify(Blockly.serialization.workspaces.save(workspace)))
+          } catch {
+            // The workspace still works if browser storage is unavailable.
+          }
         }
 
         changeListener = (event) => {
@@ -330,7 +335,7 @@ export function ArduinoProgramming() {
   }
 
   const readDistance = (pin: string) => {
-    if (!key) return 33
+    if (!key || pinModesRef.current.get(pin) !== 'ULTRASONIC') return 33
     return getEngine()?.mech.readArduinoDistance(key, pin) ?? 33
   }
 
