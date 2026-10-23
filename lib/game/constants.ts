@@ -121,6 +121,7 @@ export type ItemId =
   | 'motor'
   | 'wire'
   | 'glue'
+  | 'resin_applicator'
   | 'battery_box'
   | 'battery'
   | 'wheel'
@@ -228,6 +229,11 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     description: 'Botão direito numa face para colar blocos vizinhos.',
     category: 'tools',
   },
+  resin_applicator: {
+    name: 'Aplicador de Resina',
+    description: 'Clique uma vez em um bloco para revesti-lo com resina amarelada e proteger componentes contra água.',
+    category: 'tools',
+  },
   paintbrush: {
     name: 'Pincel',
     description: 'Pinte blocos com a cor escolhida. Shift + botão direito abre a paleta; botão direito pinta.',
@@ -276,6 +282,7 @@ export const ITEM_ORDER: ItemId[] = [
   'motor',
   'wire',
   'glue',
+  'resin_applicator',
   'programming_tablet',
   'battery_box',
   'battery',
