@@ -879,8 +879,10 @@ export class Mechanics {
   readArduinoDistance(boardKey: string, pin: string) {
     if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return null
     for (const connection of this.getTerminalConnections(boardKey, pin)) {
+      // out+ is the sensor's distance-signal terminal; out- is its return.
+      if (connection.componentTerminal !== 'out+') continue
       if (this.lookup(connection.componentKey).id !== B.PROXIMITY_SENSOR) continue
-      return this.getProximitySensorConfig(connection.componentKey)?.distance ?? 33
+      return this.getProximitySensorConfig(connection.componentKey)?.distance ?? null
     }
     return null
   }
