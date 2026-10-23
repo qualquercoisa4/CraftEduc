@@ -99,15 +99,35 @@ export class RigidPhysics {
       physics.timestep = this.fixedStep
       this.rapierWorld = physics
       this.fixedBody = physics.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-      // The voxel ground extends below GROUND_LEVEL. A single wide collider
-      // gives every dynamic body a continuous floor instead of per-feature tests.
-      physics.createCollider(
-        RAPIER.ColliderDesc.cuboid(2048, 0.5, 2048)
-          .setTranslation(0, GROUND_LEVEL - 0.5, 0)
-          .setFriction(0.88)
-          .setRestitution(0.005),
-        this.fixedBody,
-      )
+      if (this.voxelWorld.type === 'beach') {
+        // The beach has two different physical surfaces: a 20x20 island at
+        // GROUND_LEVEL and a seabed at waterBottomY. Never put a global floor
+        // at the water surface, or every object will behave as if it landed
+        // on an invisible platform and will be unable to sink.
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(10, 0.5, 10)
+            .setTranslation(0, GROUND_LEVEL - 0.5, 0)
+            .setFriction(0.88)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(64, 0.5, 64)
+            .setTranslation(0, this.voxelWorld.waterBottomY - 0.5, 0)
+            .setFriction(0.72)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+      } else {
+        // Other worlds preserve their existing continuous ground.
+        physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(2048, 0.5, 2048)
+            .setTranslation(0, GROUND_LEVEL - 0.5, 0)
+            .setFriction(0.88)
+            .setRestitution(0.005),
+          this.fixedBody,
+        )
+      }
       this.initialized = true
       this.rebuildStaticColliders()
     })
@@ -125,6 +145,16 @@ export class RigidPhysics {
     await this.initializing
   }
 
+  private minimumColliderY(x: number, z: number) {
+    if (
+      this.voxelWorld.type === 'beach' &&
+      this.voxelWorld.isWaterColumnAt(x + 0.5, z + 0.5)
+    ) {
+      return Math.ceil(this.voxelWorld.waterBottomY)
+    }
+    return GROUND_LEVEL
+  }
+
   /** Called after a voxel has already changed in World.data. */
   syncStaticBlock(x: number, y: number, z: number) {
     if (!this.ready || !this.rapierWorld || !this.fixedBody) return
@@ -134,7 +164,7 @@ export class RigidPhysics {
       this.rapierWorld.removeCollider(previous, true)
       this.staticColliders.delete(key)
     }
-    if (y < GROUND_LEVEL || y >= WORLD_HEIGHT) return
+    if (y < this.minimumColliderY(x, z) || y >= WORLD_HEIGHT) return
     const id = this.voxelWorld.getBlock(x, y, z)
     if (id === B.AIR) return
     const collider = this.rapierWorld.createCollider(
@@ -162,7 +192,10 @@ export class RigidPhysics {
       const minX = chunk.cx * 16
       const minZ = chunk.cz * 16
       const maxY = Math.min(WORLD_HEIGHT - 1, chunk.maxY)
-      for (let y = GROUND_LEVEL; y <= maxY; y++) {
+      const firstY = this.voxelWorld.type === 'beach'
+        ? Math.floor(this.voxelWorld.waterBottomY)
+        : GROUND_LEVEL
+      for (let y = firstY; y <= maxY; y++) {
         for (let z = minZ; z < minZ + 16; z++) {
           for (let x = minX; x < minX + 16; x++) {
             // Model blocks also receive full-sized colliders even when their
