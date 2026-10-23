@@ -36,6 +36,15 @@ import {
   tileFor,
 } from './textures'
 import { World } from './world'
+import { getWorldSpawn } from './world-generation'
+import {
+  resolveWorldStartup,
+  saveWorldRecord,
+  type SavedBlock,
+  type SavedWorldRecord,
+  type SavedWorldData,
+  type WorldConfig,
+} from './world-saves'
 
 export interface Hit {
   x: number
@@ -123,10 +132,13 @@ export class Engine {
   private multiplayerCanFly = true
   private multiplayerRules: MultiplayerRules | null = null
   private remoteAvatars = new Map<string, RemoteAvatar>()
+  private worldConfig: WorldConfig
 
   touch = { moveX: 0, moveY: 0, jump: false, sneak: false, flyUp: false, flyDown: false, sprint: false }
 
   constructor(private canvas: HTMLCanvasElement) {
+    const startup = resolveWorldStartup()
+    this.worldConfig = startup.config
     current = this
     const isTouch = gameStore.get().isTouch
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' })
@@ -188,7 +200,7 @@ export class Engine {
       polygonOffsetUnits: -2,
     })
 
-    this.world = new World(this.scene, this.blockMaterial)
+    this.world = new World(this.scene, this.blockMaterial, this.worldConfig.type, this.worldConfig.seed)
     this.mech = new Mechanics(this.world, this.scene, this.blockMaterial, glueMat)
     this.world.onBlockChange = (x, y, z, o, n, oldHadGlue, newHasGlue) => this.mech.onBlockChange(x, y, z, o, n, oldHadGlue, newHasGlue)
     this.player = new Player(this.world)
@@ -227,12 +239,34 @@ export class Engine {
     this.wirePreview.visible = false
     this.scene.add(this.wirePreview)
 
-    this.buildDemo()
-    this.player.pos.set(4.5, GROUND_LEVEL, 5.5)
+    if (startup.save) {
+      this.restoreSavedWorld(startup.save)
+    } else if (this.worldConfig.type === 'flat') {
+      this.buildDemo()
+    }
+
+    const spawn = getWorldSpawn(this.worldConfig.type)
+    this.player.pos.set(spawn[0], spawn[1], spawn[2])
     this.player.yaw = 0
     this.player.pitch = -0.15
 
+    const savedPlayer = startup.save?.data.player
+    if (savedPlayer) {
+      const finite = (value: unknown, fallback: number) => Number.isFinite(Number(value)) ? Number(value) : fallback
+      this.player.pos.set(
+        finite(savedPlayer.x, spawn[0]),
+        finite(savedPlayer.y, spawn[1]),
+        finite(savedPlayer.z, spawn[2]),
+      )
+      this.player.yaw = finite(savedPlayer.yaw, 0)
+      this.player.pitch = Math.max(-Math.PI / 2 + 0.001, Math.min(Math.PI / 2 - 0.001, finite(savedPlayer.pitch, 0)))
+      this.player.flying = Boolean(savedPlayer.flying)
+      this.player.sneaking = Boolean(savedPlayer.sneaking)
+      gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
+    }
+
     this.bindEvents()
+    if (startup.autoStart) gameStore.set({ screen: 'playing' })
     this.resize()
     this.last = performance.now()
     this.raf = requestAnimationFrame(this.frame)
@@ -678,6 +712,84 @@ export class Engine {
       const delta = Math.atan2(Math.sin(avatar.targetYaw - avatar.group.rotation.y), Math.cos(avatar.targetYaw - avatar.group.rotation.y))
       avatar.group.rotation.y += delta * blend
     }
+  }
+
+  private restoreSavedWorld(save: SavedWorldRecord) {
+    for (const block of save.data.blocks ?? []) {
+      if (!block || ![block.x, block.y, block.z, block.id].every(Number.isInteger)) continue
+      if (block.y < 0 || block.y >= WORLD_HEIGHT || block.id < B.AIR || block.id > B.ARDUINO_UNO) continue
+      this.world.setBlock(block.x, block.y, block.z, block.id, block.state)
+    }
+
+    for (const wire of save.data.wires ?? []) {
+      if (!wire || typeof wire.a !== 'string' || typeof wire.b !== 'string') continue
+      if (!Array.isArray(wire.pa) || !Array.isArray(wire.pb) || wire.pa.length !== 3 || wire.pb.length !== 3) continue
+      if (![...wire.pa, ...wire.pb].every(Number.isFinite)) continue
+      this.mech.addWire(
+        wire.a, new THREE.Vector3(...wire.pa), wire.ta,
+        wire.b, new THREE.Vector3(...wire.pb), wire.tb, wire.color,
+      )
+    }
+  }
+
+  saveCurrentWorld(): SavedWorldRecord | null {
+    const blocks = new Map<string, SavedBlock>()
+    for (const chunk of this.world.chunks.values()) {
+      if (!chunk.modified) continue
+      const baseX = chunk.cx * CHUNK_SIZE
+      const baseZ = chunk.cz * CHUNK_SIZE
+      for (let y = 0; y < WORLD_HEIGHT; y++) {
+        const row = y * CHUNK_SIZE * CHUNK_SIZE
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const rowZ = row + z * CHUNK_SIZE
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            const wx = baseX + x
+            const wz = baseZ + z
+            const id = chunk.data[rowZ + x]
+            const state = this.world.getState(wx, y, wz)
+            if (id === this.world.terrainBlockAt(wx, y, wz) && !state) continue
+            blocks.set(posKey(wx, y, wz), {
+              x: wx, y, z: wz, id,
+              ...(state ? { state: { ...state } } : {}),
+            })
+          }
+        }
+      }
+    }
+
+    for (const [key, state] of this.world.states) {
+      const [x, y, z] = parseKey(key)
+      const id = this.world.getBlock(x, y, z)
+      const existing = blocks.get(key)
+      blocks.set(key, { x, y, z, id, state: { ...(existing?.state ?? {}), ...state } })
+    }
+
+    // Include blocks currently participating in articulated or falling machines,
+    // which may temporarily be absent from their stationary voxel positions.
+    for (const moving of this.mech.exportNetworkBlocks()) {
+      const key = posKey(moving.x, moving.y, moving.z)
+      blocks.set(key, {
+        x: moving.x, y: moving.y, z: moving.z, id: moving.block,
+        ...(moving.state ? { state: { ...moving.state } } : {}),
+      })
+    }
+
+    const data: SavedWorldData = {
+      version: 1,
+      blocks: [...blocks.values()],
+      wires: this.mech.wires.map((wire) => ({
+        a: wire.a, b: wire.b, ta: wire.ta, tb: wire.tb,
+        pa: [wire.pa.x, wire.pa.y, wire.pa.z],
+        pb: [wire.pb.x, wire.pb.y, wire.pb.z],
+        color: wire.color,
+      })),
+      player: {
+        x: this.player.pos.x, y: this.player.pos.y, z: this.player.pos.z,
+        yaw: this.player.yaw, pitch: this.player.pitch,
+        flying: this.player.flying, sneaking: this.player.sneaking,
+      },
+    }
+    return saveWorldRecord(this.worldConfig, data)
   }
 
   resize() {
