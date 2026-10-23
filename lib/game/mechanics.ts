@@ -2510,7 +2510,7 @@ export class Mechanics {
       const keys = new Set(blocksInGroup.map((b) => b.key))
       for (const b of blocksInGroup) {
         const buffers = newBuffers()
-        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.color)
+        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.resinCoated ? '#e5c46a' : b.state?.color)
         const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
         mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
         mesh.castShadow = true
