@@ -639,6 +639,10 @@ export class Mechanics {
         entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
         setServoFacing(entry.model, state?.facing ?? 2)
         break
+      case 'arduino_uno':
+        entry.model.group.position.set(x + 0.5, y + 0.14, z + 0.5)
+        entry.model.group.quaternion.identity()
+        break
     }
   }
 
