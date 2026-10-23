@@ -3547,6 +3547,15 @@ export class Mechanics {
     const p = player.pos
     const halfW = 0.3
     const height = player.height
+    const worldAxes = [
+      new THREE.Vector3(1, 0, 0),
+      new THREE.Vector3(0, 1, 0),
+      new THREE.Vector3(0, 0, 1),
+    ]
+    // The player is upright and axis-aligned; each moving voxel remains an
+    // oriented box. SAT avoids the oversized fake corners from a world AABB.
+    const supportSkin = 0.025
+    let support: { normalY: number; velocity: THREE.Vector3 } | null = null
 
     const collideBlock = (
       center: THREE.Vector3,
@@ -3555,53 +3564,85 @@ export class Mechanics {
       linear: THREE.Vector3,
       angular: THREE.Vector3,
     ) => {
-      const ex = new THREE.Vector3(1, 0, 0).applyQuaternion(rotation)
-      const ey = new THREE.Vector3(0, 1, 0).applyQuaternion(rotation)
-      const ez = new THREE.Vector3(0, 0, 1).applyQuaternion(rotation)
-      const hx = 0.5 * (Math.abs(ex.x) + Math.abs(ey.x) + Math.abs(ez.x))
-      const hy = 0.5 * (Math.abs(ex.y) + Math.abs(ey.y) + Math.abs(ez.y))
-      const hz = 0.5 * (Math.abs(ex.z) + Math.abs(ey.z) + Math.abs(ez.z))
-      const minX = center.x - hx, maxX = center.x + hx
-      const minY = center.y - hy, maxY = center.y + hy
-      const minZ = center.z - hz, maxZ = center.z + hz
-      const px0 = p.x - halfW, px1 = p.x + halfW
-      const py0 = p.y, py1 = p.y + height
-      const pz0 = p.z - halfW, pz1 = p.z + halfW
-      if (!(px0 < maxX && px1 > minX && py0 < maxY && py1 > minY && pz0 < maxZ && pz1 > minZ)) return
-
-      const penetrations = [
-        { amount: px1 - minX, axis: 'x', sign: 1 },
-        { amount: maxX - px0, axis: 'x', sign: -1 },
-        { amount: py1 - minY, axis: 'y', sign: -1 },
-        { amount: maxY - py0, axis: 'y', sign: 1 },
-        { amount: pz1 - minZ, axis: 'z', sign: 1 },
-        { amount: maxZ - pz0, axis: 'z', sign: -1 },
+      const blockAxes = [
+        new THREE.Vector3(1, 0, 0).applyQuaternion(rotation).normalize(),
+        new THREE.Vector3(0, 1, 0).applyQuaternion(rotation).normalize(),
+        new THREE.Vector3(0, 0, 1).applyQuaternion(rotation).normalize(),
       ]
-      const penetration = penetrations.reduce((best, item) => item.amount < best.amount ? item : best)
-      const depth = Math.max(0, penetration.amount) + 0.003
-      if (penetration.axis === 'x') {
-        p.x += penetration.sign * depth
-        player.vel.x = penetration.sign > 0 ? Math.max(player.vel.x, linear.x) : Math.min(player.vel.x, linear.x)
-      } else if (penetration.axis === 'z') {
-        p.z += penetration.sign * depth
-        player.vel.z = penetration.sign > 0 ? Math.max(player.vel.z, linear.z) : Math.min(player.vel.z, linear.z)
-      } else if (penetration.sign > 0) {
-        p.y += depth
-        player.vel.y = Math.max(player.vel.y, linear.y)
-        player.onGround = true
-        // A standing player inherits a small part of the body's horizontal
-        // velocity, so moving platforms and rotating arms can carry the player.
-        player.vel.x += linear.x * 0.35
-        player.vel.z += linear.z * 0.35
-      } else {
-        p.y -= depth
-        player.vel.y = Math.min(player.vel.y, linear.y)
+      const playerCenter = new THREE.Vector3(p.x, p.y + height * 0.5, p.z)
+      const delta = playerCenter.clone().sub(center)
+      // The extra vertical skin catches a platform just beneath the player's
+      // feet without expanding the actual collision response.
+      const playerHalf = new THREE.Vector3(halfW, height * 0.5 + supportSkin, halfW)
+      const axes: THREE.Vector3[] = [...worldAxes, ...blockAxes]
+      for (const worldAxis of worldAxes) {
+        for (const blockAxis of blockAxes) {
+          axes.push(new THREE.Vector3().crossVectors(worldAxis, blockAxis))
+        }
       }
 
-      const tangential = angular.clone().cross(center.clone().sub(pivot)).add(linear)
-      player.vel.x += tangential.x * Math.min(1, dt * 2.5)
-      player.vel.y += tangential.y * Math.min(1, dt * 2.5)
-      player.vel.z += tangential.z * Math.min(1, dt * 2.5)
+      let minimumOverlap = Number.POSITIVE_INFINITY
+      let collisionNormal: THREE.Vector3 | null = null
+      for (const candidate of axes) {
+        const lengthSq = candidate.lengthSq()
+        if (lengthSq < 1e-8) continue
+        const axis = candidate.clone().multiplyScalar(1 / Math.sqrt(lengthSq))
+        const playerRadius =
+          playerHalf.x * Math.abs(axis.x) +
+          playerHalf.y * Math.abs(axis.y) +
+          playerHalf.z * Math.abs(axis.z)
+        const blockRadius = 0.5 * (
+          Math.abs(axis.dot(blockAxes[0])) +
+          Math.abs(axis.dot(blockAxes[1])) +
+          Math.abs(axis.dot(blockAxes[2]))
+        )
+        const signedDistance = delta.dot(axis)
+        const overlap = playerRadius + blockRadius - Math.abs(signedDistance)
+        if (overlap <= 0) return
+        if (overlap < minimumOverlap) {
+          minimumOverlap = overlap
+          collisionNormal = axis.multiplyScalar(signedDistance >= 0 ? 1 : -1)
+        }
+      }
+      if (!collisionNormal || !Number.isFinite(minimumOverlap)) return
+
+      // Do not push the avatar merely for entering the support skin. Resolve
+      // only real penetration; this prevents a small repeated upward impulse
+      // when standing across seams between adjacent moving voxels.
+      const normal = collisionNormal
+      const actualPlayerRadius =
+        halfW * Math.abs(normal.x) +
+        (height * 0.5) * Math.abs(normal.y) +
+        halfW * Math.abs(normal.z)
+      const blockRadius = 0.5 * (
+        Math.abs(normal.dot(blockAxes[0])) +
+        Math.abs(normal.dot(blockAxes[1])) +
+        Math.abs(normal.dot(blockAxes[2]))
+      )
+      const actualOverlap = actualPlayerRadius + blockRadius - Math.abs(delta.dot(normal))
+      if (actualOverlap > 0) p.addScaledVector(normal, actualOverlap + 0.002)
+
+      // Velocity at the actual contact point matters on a rotating arm. Using
+      // the voxel center makes the player inherit the wrong tangential speed.
+      const contactRadius = halfW * Math.abs(normal.x) +
+        (height * 0.5) * Math.abs(normal.y) +
+        halfW * Math.abs(normal.z)
+      const contactPoint = playerCenter.clone().addScaledVector(normal, -contactRadius)
+      const surfaceVelocity = angular.clone().cross(contactPoint.sub(pivot)).add(linear)
+      const relativeVelocity = player.vel.clone().sub(surfaceVelocity)
+      const inwardSpeed = relativeVelocity.dot(normal)
+      if (inwardSpeed < 0) player.vel.addScaledVector(normal, -inwardSpeed)
+
+      // Remember one best support contact and carry the player by positional
+      // displacement once per frame. Do not repeatedly add platform velocity
+      // to player.vel, which otherwise stacks with the walking controller.
+      if (normal.y > 0.55) {
+        player.onGround = true
+        if (player.vel.y < surfaceVelocity.y) player.vel.y = surfaceVelocity.y
+        if (!support || normal.y > support.normalY) {
+          support = { normalY: normal.y, velocity: surfaceVelocity }
+        }
+      }
     }
 
     for (const c of this.contraptions.values()) {
@@ -3652,6 +3693,11 @@ export class Mechanics {
         const center = block.localOrigin.clone().applyQuaternion(rotation).add(pivot)
         collideBlock(center, rotation, pivot, linear, angular)
       }
+    }
+
+    if (support && dt > 0) {
+      p.x += support.velocity.x * dt
+      p.z += support.velocity.z * dt
     }
   }
 
