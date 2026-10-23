@@ -334,7 +334,7 @@ export class Mechanics {
       this.models.set(key, { type: 'servo', model, status: 'idle' })
     } else if (newId === B.ARDUINO_UNO) {
       const model = createArduinoUnoModel()
-      model.group.position.set(x + 0.5, y + 0.14, z + 0.5)
+      model.group.position.set(x + 1, y + 0.14, z + 1)
       this.scene.add(model.group)
       this.models.set(key, { type: 'arduino_uno', model })
     }
@@ -640,7 +640,7 @@ export class Mechanics {
         setServoFacing(entry.model, state?.facing ?? 2)
         break
       case 'arduino_uno':
-        entry.model.group.position.set(x + 0.5, y + 0.14, z + 0.5)
+        entry.model.group.position.set(x + 1, y + 0.14, z + 1)
         entry.model.group.quaternion.identity()
         break
     }

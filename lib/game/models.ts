@@ -443,6 +443,8 @@ function getArduinoSilkscreenMaterial() {
 export function createArduinoUnoModel(): ArduinoUnoModel {
   const m = getMaterials()
   const group = new THREE.Group()
+  // The placed board occupies a 2x2-block footprint; terminals scale with the PCB.
+  group.scale.set(2, 1, 2)
   const box = (
     width: number, height: number, depth: number,
     x: number, y: number, z: number, material: THREE.Material,
