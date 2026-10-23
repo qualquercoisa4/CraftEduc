@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getEngine } from '@/lib/game/engine'
 import { gameStore, useGame } from '@/lib/game/store'
+import { getArduinoProgramStorageKey } from '@/lib/game/world-saves'
 
 type BlockLike = {
   type: string
@@ -280,10 +281,16 @@ export function ArduinoProgramming() {
         workspaceRef.current = localWorkspace
         resizeWorkspaceRef.current = () => Blockly.svgResize(workspace)
 
-        const storageKey = `crafteduc:arduino-program:${key ?? 'unknown'}`
+        const storageKey = getArduinoProgramStorageKey(key)
         let loaded = false
         try {
-          const saved = window.localStorage.getItem(storageKey)
+          let saved = window.localStorage.getItem(storageKey)
+          // One-time migration for programs created before worlds had independent saves.
+          if (!saved) {
+            const legacyKey = getArduinoProgramStorageKey(key)
+            saved = window.localStorage.getItem(legacyKey)
+            if (saved) window.localStorage.setItem(storageKey, saved)
+          }
           if (saved) {
             Blockly.serialization.workspaces.load(JSON.parse(saved), workspace)
             loaded = true
@@ -653,7 +660,7 @@ export function ArduinoProgramming() {
               stopProgram(false)
               workspace.clear()
               try {
-                window.localStorage.setItem(`crafteduc:arduino-program:${key ?? 'unknown'}`, JSON.stringify({ blocks: { languageVersion: 0, blocks: [] } }))
+                window.localStorage.setItem(getArduinoProgramStorageKey(key), JSON.stringify({ blocks: { languageVersion: 0, blocks: [] } }))
               } catch {
                 // The workspace remains usable even if storage is unavailable.
               }
