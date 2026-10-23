@@ -95,6 +95,36 @@ export function proximityConditionMatches(distance: number, comparison: Proximit
   return false
 }
 
+/** Effective inertia of a rigid body about a world-space axis through a point. */
+function inertiaAroundWorldAxis(body: RAPIER.RigidBody, worldAxis: THREE.Vector3, axisPoint: THREE.Vector3) {
+  const qBodyRaw = body.rotation()
+  const qBody = new THREE.Quaternion(qBodyRaw.x, qBodyRaw.y, qBodyRaw.z, qBodyRaw.w)
+  const frameRaw = body.principalInertiaLocalFrame()
+  const inertiaFrame = new THREE.Quaternion(frameRaw.x, frameRaw.y, frameRaw.z, frameRaw.w)
+  const axisInPrincipalFrame = worldAxis.clone()
+    .normalize()
+    .applyQuaternion(qBody.clone().invert())
+    .applyQuaternion(inertiaFrame.invert())
+    .normalize()
+  const principal = body.principalInertia()
+  const inertiaAtCom = principal.x * axisInPrincipalFrame.x * axisInPrincipalFrame.x
+    + principal.y * axisInPrincipalFrame.y * axisInPrincipalFrame.y
+    + principal.z * axisInPrincipalFrame.z * axisInPrincipalFrame.z
+  const comRaw = body.worldCom()
+  const com = new THREE.Vector3(comRaw.x, comRaw.y, comRaw.z)
+  const offset = com.sub(axisPoint)
+  const perpendicular = offset.addScaledVector(worldAxis, -offset.dot(worldAxis))
+  // Parallel-axis theorem: mass far from the shaft strongly resists angular acceleration.
+  return Math.max(0.0005, inertiaAtCom + body.mass() * perpendicular.lengthSq())
+}
+
+/** Reduced inertia for equal-and-opposite motor torque on a rotor/chassis pair. */
+function relativeAxisInertia(rotor: RAPIER.RigidBody, chassis: RAPIER.RigidBody, axis: THREE.Vector3, point: THREE.Vector3) {
+  const rotorInertia = inertiaAroundWorldAxis(rotor, axis, point)
+  const chassisInertia = inertiaAroundWorldAxis(chassis, axis, point)
+  return Math.max(0.0005, 1 / (1 / rotorInertia + 1 / chassisInertia))
+}
+
 type ModelEntry =
   | { type: 'motor'; model: MotorModel; spin: number; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'box'; model: BatteryBoxModel }
@@ -2664,20 +2694,22 @@ export class Mechanics {
         // Command the revolute joint and apply a bounded torque controller.
         // Rapier's velocity motor alone was reporting "driving" while leaving
         // this body at zero angular velocity in the live preview.
-        // The revolute motor is driven by an explicit torque couple below:
-        // equal and opposite torques preserve angular momentum between rotor and chassis.
-        c.joint.configureMotorVelocity(c.speed, 0)
+        // Drive with an internal torque couple, not a hidden kinematic motor:
+        // the rotor accelerates one way and the chassis receives the equal reaction.
         const chassisR = c.chassisBody.rotation()
-        const worldAxis = c.axis.clone().applyQuaternion(
-          new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
-        ).normalize()
+        const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
+        const worldAxis = c.axis.clone().applyQuaternion(chassisQ).normalize()
+        const chassisT = c.chassisBody.translation()
+        const axisPoint = new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z)
+          .addScaledVector(worldAxis, 0.36)
         const angular = c.rotorBody.angvel()
         const chassisAngular = c.chassisBody.angvel()
         const axialSpeed = (angular.x - chassisAngular.x) * worldAxis.x
           + (angular.y - chassisAngular.y) * worldAxis.y
           + (angular.z - chassisAngular.z) * worldAxis.z
-        const maxTorque = Math.max(12, power * 12)
-        const torque = THREE.MathUtils.clamp((c.speed - axialSpeed) * 20, -maxTorque, maxTorque)
+        const inertia = relativeAxisInertia(c.rotorBody, c.chassisBody, worldAxis, axisPoint)
+        const maxTorque = Math.max(0.02, Math.min(2.5, power * 0.8))
+        const torque = THREE.MathUtils.clamp((c.speed - axialSpeed) * inertia * 10, -maxTorque, maxTorque)
         c.rotorBody.addTorque({
           x: worldAxis.x * torque,
           y: worldAxis.y * torque,
@@ -2691,17 +2723,19 @@ export class Mechanics {
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
         c.unpoweredTime += dt
-        c.joint.configureMotorVelocity(0, 0)
         const chassisR = c.chassisBody.rotation()
-        const worldAxis = c.axis.clone().applyQuaternion(
-          new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
-        ).normalize()
+        const chassisQ = new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w)
+        const worldAxis = c.axis.clone().applyQuaternion(chassisQ).normalize()
+        const chassisT = c.chassisBody.translation()
+        const axisPoint = new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z)
+          .addScaledVector(worldAxis, 0.36)
         const angular = c.rotorBody.angvel()
         const chassisAngular = c.chassisBody.angvel()
         const axialSpeed = (angular.x - chassisAngular.x) * worldAxis.x
           + (angular.y - chassisAngular.y) * worldAxis.y
           + (angular.z - chassisAngular.z) * worldAxis.z
-        const brakingTorque = THREE.MathUtils.clamp(-axialSpeed * 12, -8, 8)
+        const inertia = relativeAxisInertia(c.rotorBody, c.chassisBody, worldAxis, axisPoint)
+        const brakingTorque = THREE.MathUtils.clamp(-axialSpeed * inertia * 5, -0.6, 0.6)
         c.rotorBody.addTorque({
           x: worldAxis.x * brakingTorque,
           y: worldAxis.y * brakingTorque,
@@ -2738,26 +2772,34 @@ export class Mechanics {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
           extra.speed = extraPower * 1.05 * extraDirection
           extra.unpoweredTime = 0
-          extra.joint.configureMotorVelocity(extra.speed, 0)
           const angular = extra.rotorBody.angvel()
           const chassisAngular = c.chassisBody.angvel()
+          const chassisT = c.chassisBody.translation()
+          const axisPoint = new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z)
+            .add(new THREE.Vector3(...extra.motorOffset).applyQuaternion(chassisQ))
+            .addScaledVector(worldAxis, 0.36)
           const axialSpeed = (angular.x - chassisAngular.x) * worldAxis.x
             + (angular.y - chassisAngular.y) * worldAxis.y
             + (angular.z - chassisAngular.z) * worldAxis.z
-          const maxTorque = Math.max(12, extraPower * 12)
-          const torque = THREE.MathUtils.clamp((extra.speed - axialSpeed) * 20, -maxTorque, maxTorque)
+          const inertia = relativeAxisInertia(extra.rotorBody, c.chassisBody, worldAxis, axisPoint)
+          const maxTorque = Math.max(0.02, Math.min(2.5, extraPower * 0.8))
+          const torque = THREE.MathUtils.clamp((extra.speed - axialSpeed) * inertia * 10, -maxTorque, maxTorque)
           extra.rotorBody.addTorque({ x: worldAxis.x * torque, y: worldAxis.y * torque, z: worldAxis.z * torque }, true)
           c.chassisBody.addTorque({ x: -worldAxis.x * torque, y: -worldAxis.y * torque, z: -worldAxis.z * torque }, true)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
           extra.unpoweredTime += dt
-          extra.joint.configureMotorVelocity(0, 0)
           const angular = extra.rotorBody.angvel()
           const chassisAngular = c.chassisBody.angvel()
+          const chassisT = c.chassisBody.translation()
+          const axisPoint = new THREE.Vector3(chassisT.x, chassisT.y, chassisT.z)
+            .add(new THREE.Vector3(...extra.motorOffset).applyQuaternion(chassisQ))
+            .addScaledVector(worldAxis, 0.36)
           const axialSpeed = (angular.x - chassisAngular.x) * worldAxis.x
             + (angular.y - chassisAngular.y) * worldAxis.y
             + (angular.z - chassisAngular.z) * worldAxis.z
-          const brake = THREE.MathUtils.clamp(-axialSpeed * 12, -8, 8)
+          const inertia = relativeAxisInertia(extra.rotorBody, c.chassisBody, worldAxis, axisPoint)
+          const brake = THREE.MathUtils.clamp(-axialSpeed * inertia * 5, -0.6, 0.6)
           extra.rotorBody.addTorque({ x: worldAxis.x * brake, y: worldAxis.y * brake, z: worldAxis.z * brake }, true)
           c.chassisBody.addTorque({ x: -worldAxis.x * brake, y: -worldAxis.y * brake, z: -worldAxis.z * brake }, true)
           if (extraMotor?.type === 'motor') extraMotor.status = 'idle'
