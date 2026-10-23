@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getEngine } from '@/lib/game/engine'
-import { B, parseKey, posKey } from '@/lib/game/constants'
 import { gameStore, showToast, useGame } from '@/lib/game/store'
 
 type BlockLike = {
@@ -159,6 +158,7 @@ export function ArduinoProgramming() {
   const key = useGame((state) => state.arduinoProgramKey)
   const workspaceHost = useRef<HTMLDivElement>(null)
   const workspaceRef = useRef<{ dispose(): void; getTopBlocks(ordered?: boolean): unknown[]; addChangeListener(listener: (event: { isUiEvent?: boolean }) => void): void; removeChangeListener(listener: (event: { isUiEvent?: boolean }) => void): void; } | null>(null)
+  const resizeWorkspaceRef = useRef<(() => void) | null>(null)
   const runIdRef = useRef(0)
   const pinModesRef = useRef(new Map<string, PinMode>())
   const [ready, setReady] = useState(false)
@@ -265,6 +265,7 @@ export function ArduinoProgramming() {
         })
         localWorkspace = workspace as unknown as typeof workspaceRef.current
         workspaceRef.current = localWorkspace
+        resizeWorkspaceRef.current = () => Blockly.svgResize(workspace)
 
         const storageKey = \`crafteduc:arduino-program:\${key ?? 'unknown'}\`
         let loaded = false
@@ -303,10 +304,7 @@ export function ArduinoProgramming() {
     }
 
     void initialize()
-    const onResize = () => {
-      const Blockly = (window as Window & { Blockly?: { svgResize?: (workspace: unknown) => void } }).Blockly
-      if (Blockly?.svgResize && workspaceRef.current) Blockly.svgResize(workspaceRef.current)
-    }
+    const onResize = () => resizeWorkspaceRef.current?.()
     window.addEventListener('resize', onResize)
 
     return () => {
@@ -317,6 +315,7 @@ export function ArduinoProgramming() {
       if (changeListener && localWorkspace) localWorkspace.removeChangeListener(changeListener)
       localWorkspace?.dispose()
       workspaceRef.current = null
+      resizeWorkspaceRef.current = null
       setReady(false)
       setRunning(false)
     }
