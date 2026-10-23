@@ -1129,6 +1129,20 @@ export class Engine {
           const hit = this.rayBox(origin, dir, ix, iy, iz, id, limit)
           if (hit && (!moving || hit.dist <= moving.dist)) return hit
         }
+
+        // The Arduino model is wider than its anchor voxel. Check nearby
+        // anchor cells while traversing the ray so the exposed pins remain
+        // targetable across the board's full 2x2 footprint.
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            if (dx === 0 && dz === 0) continue
+            const bx = ix + dx
+            const bz = iz + dz
+            if (this.world.getBlock(bx, iy, bz) !== B.ARDUINO_UNO) continue
+            const boardHit = this.rayBox(origin, dir, bx, iy, bz, B.ARDUINO_UNO, limit)
+            if (boardHit && (!moving || boardHit.dist <= moving.dist)) return boardHit
+          }
+        }
       }
       if (tmx < tmy && tmx < tmz) {
         ix += sx
