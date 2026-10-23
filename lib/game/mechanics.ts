@@ -741,7 +741,7 @@ export class Mechanics {
         point: entry.model.group.localToWorld(terminal.localPosition.clone()),
       }))
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
-      return terminals[0].point.distanceTo(hitPoint) <= 0.065 ? terminals[0] : null
+      return terminals[0].point.distanceTo(hitPoint) <= 0.15 ? terminals[0] : null
     }
     if (id === B.BATTERY_BOX) {
       const terminals = [

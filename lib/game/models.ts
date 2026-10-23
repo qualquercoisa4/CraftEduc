@@ -533,7 +533,7 @@ export function createArduinoUnoModel(): ArduinoUnoModel {
   ], 0.36)
 
   // VIN is a selectable positive input contact on the barrel jack, not a data pin.
-  terminals.push({ id: 'VIN', localPosition: new THREE.Vector3(-0.43, 0.105, 0.245) })
+  terminals.push({ id: 'VIN', localPosition: new THREE.Vector3(-0.47, 0.028, 0.245) })
   return { group, terminals }
 }
 
