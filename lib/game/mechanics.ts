@@ -794,7 +794,8 @@ export class Mechanics {
       ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
       terminals.sort((a, b) => a.point.distanceToSquared(b.point) - b.point.distanceToSquared(a.point))
       // Mobile taps are imprecise; enlarge the terminal hit area around each visible pin.
-      return terminals[0].point.distanceTo(hitPoint) <= 0.62 ? terminals[0] : null
+      // Raycasting hits the voxel face, not the small pin itself; include the front/top surfaces.
+      return terminals[0].point.distanceTo(hitPoint) <= 1.25 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [
