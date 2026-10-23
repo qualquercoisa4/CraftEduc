@@ -342,7 +342,12 @@ export function ArduinoProgramming() {
   }, [key])
 
   useEffect(() => {
-    if (screen !== 'arduino_programming' || !key) return
+    const visible = screen === 'arduino_programming' && Boolean(key)
+    document.querySelectorAll<HTMLElement>('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv').forEach((element) => {
+      if (visible) element.style.removeProperty('display')
+      else element.style.display = 'none'
+    })
+    if (!visible) return
     const frame = window.requestAnimationFrame(() => resizeWorkspaceRef.current?.())
     return () => window.cancelAnimationFrame(frame)
   }, [screen, key])
@@ -615,7 +620,7 @@ export function ArduinoProgramming() {
   }
 
   return (
-    <section className={`absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36] ${screen === 'arduino_programming' && key ? '' : 'hidden'}`} aria-label="Programação do Arduino UNO">
+    <section style={{ display: screen === 'arduino_programming' && key ? 'flex' : 'none' }} className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36]" aria-label="Programação do Arduino UNO">
       <div className="flex h-1 shrink-0" aria-hidden="true">
         <span className="w-1/4 bg-[#E62B60]" />
         <span className="w-1/4 bg-[#4396D2]" />
