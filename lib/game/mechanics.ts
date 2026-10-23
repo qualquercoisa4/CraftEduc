@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, RigidPhysics } from './rigid-physics'
-import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, isOpaque, parseKey, posKey } from './constants'
+import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
   type BatteryBoxModel,
@@ -267,6 +267,8 @@ export class Mechanics {
   private programmedServoAngles = new Map<string, { boardKey: string; degrees: number }>()
   private poweredArduinoBoards = new Set<string>()
   private glueMesh: THREE.Mesh | null = null
+  private resinVisuals = new Map<string, THREE.Mesh>()
+  private waterDamageCooldown = 0
   private suppress = false
   private powerDirty = true
   private mechDirty = true
@@ -319,8 +321,9 @@ export class Mechanics {
     // Keep Rapier's static collision world in lockstep with the voxel world,
     // including edits made internally while assembling or landing rigid bodies.
     this.rigidPhysics.syncStaticBlock(x, y, z)
-    if (this.suppress) return
     const key = posKey(x, y, z)
+    this.removeResinVisual(key)
+    if (this.suppress) return
     if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
     if (oldId === B.SERVO) this.programmedServoAngles.delete(key)
     if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO) {
@@ -403,13 +406,94 @@ export class Mechanics {
     const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
     if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
+    if (newId !== B.AIR && this.world.getState(x, y, z)?.resinCoated) this.syncResinVisual(x, y, z)
     this.physicsDirty = true
+  }
+
+  private removeResinVisual(key: string) {
+    const mesh = this.resinVisuals.get(key)
+    if (!mesh) return
+    this.scene.remove(mesh)
+    mesh.geometry.dispose()
+    const material = mesh.material
+    if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
+    else material.dispose()
+    this.resinVisuals.delete(key)
+  }
+
+  private syncResinVisual(x: number, y: number, z: number) {
+    const key = posKey(x, y, z)
+    this.removeResinVisual(key)
+    const id = this.world.getBlock(x, y, z)
+    if (id === B.AIR || !this.world.getState(x, y, z)?.resinCoated) return
+    const [minX, minY, minZ, maxX, maxY, maxZ] = blockBounds(id)
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(maxX - minX + 0.025, maxY - minY + 0.025, maxZ - minZ + 0.025),
+      new THREE.MeshBasicMaterial({
+        color: '#e5c46a',
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    )
+    mesh.position.set(x + (minX + maxX) / 2, y + (minY + maxY) / 2, z + (minZ + maxZ) / 2)
+    mesh.renderOrder = 2
+    this.scene.add(mesh)
+    this.resinVisuals.set(key, mesh)
+  }
+
+  /** Apply or remove a one-click resin coating on a complete block. */
+  applyResinCoating(x: number, y: number, z: number) {
+    const id = this.world.getBlock(x, y, z)
+    if (id === B.AIR) return false
+    const state = this.world.ensureState(x, y, z)
+    const coated = !state.resinCoated
+    if (coated) state.resinCoated = true
+    else delete state.resinCoated
+    this.world.markBlockDirty(x, y, z)
+    this.syncResinVisual(x, y, z)
+    return coated
+  }
+
+  private isWaterSensitiveComponent(id: number) {
+    return id === B.COMPONENT || id === B.LED || id === B.MOTOR ||
+      id === B.BATTERY_BOX || id === B.SWITCH || id === B.PROXIMITY_SENSOR ||
+      id === B.SERVO || id === B.ARDUINO_UNO
+  }
+
+  /** Uncoated electronic components short out when submerged in the beach sea. */
+  private burnSubmergedComponents() {
+    if (this.world.type !== 'beach') return
+    const firstY = Math.max(0, Math.floor(this.world.waterBottomY))
+    const lastY = Math.min(WORLD_HEIGHT - 1, Math.ceil(this.world.waterSurfaceY))
+    for (const chunk of this.world.chunks.values()) {
+      const baseX = chunk.cx * CHUNK_SIZE
+      const baseZ = chunk.cz * CHUNK_SIZE
+      for (let y = firstY; y <= lastY; y++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            const wx = baseX + x
+            const wz = baseZ + z
+            if (!this.world.isWaterColumnAt(wx + 0.5, wz + 0.5)) continue
+            const id = this.world.getBlock(wx, y, wz)
+            if (!this.isWaterSensitiveComponent(id)) continue
+            if (this.world.getState(wx, y, wz)?.resinCoated) continue
+            if (this.world.waterSubmersionAt(wx + 0.5, y + 0.5, wz + 0.5) <= 0.01) continue
+            // Removing the voxel also disposes its model and connected wires.
+            this.world.setBlock(wx, y, wz, B.AIR)
+          }
+        }
+      }
+    }
   }
 
   applyNetworkBlockState(x: number, y: number, z: number, previous?: BlockState, next?: BlockState) {
     const key = posKey(x, y, z)
     const id = this.world.getBlock(x, y, z)
     if (previous?.glue || next?.glue) this.rebuildGlue()
+    this.removeResinVisual(key)
+    if (next?.resinCoated) this.syncResinVisual(x, y, z)
     const model = this.models.get(key)
     if (id === B.MOTOR && model?.type === 'motor' && next?.facing !== undefined) setMotorFacing(model.model, next.facing)
     if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
@@ -2677,6 +2761,11 @@ export class Mechanics {
       this.physicsSynced = true
       this.physicsDirty = true
       this.mechDirty = true
+    }
+    this.waterDamageCooldown -= dt
+    if (this.waterDamageCooldown <= 0) {
+      this.waterDamageCooldown = 0.2
+      this.burnSubmergedComponents()
     }
     this.proximityScanCooldown -= dt
     const shouldRefreshProximitySensors = this.proximityScanCooldown <= 0
