@@ -257,7 +257,7 @@ export function ArduinoProgramming() {
           trashcan: true,
           sounds: false,
           zoom: {
-            controls: false,
+            controls: true,
             wheel: true,
             startScale: 0.78,
             maxScale: 1.45,
@@ -265,7 +265,7 @@ export function ArduinoProgramming() {
             scaleSpeed: 1.1,
           },
           move: {
-            scrollbars: false,
+            scrollbars: true,
             drag: true,
             wheel: true,
           },
@@ -619,7 +619,7 @@ export function ArduinoProgramming() {
   }
 
   return (
-    <section style={{ display: screen === 'arduino_programming' && key ? 'flex' : 'none' }} className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36]" aria-label="Programação do Arduino UNO">
+    <section style={{ visibility: screen === 'arduino_programming' && key ? 'visible' : 'hidden', pointerEvents: screen === 'arduino_programming' && key ? 'auto' : 'none' }} className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36]" aria-label="Programação do Arduino UNO">
       <div className="flex h-1 shrink-0" aria-hidden="true">
         <span className="w-1/4 bg-[#E62B60]" />
         <span className="w-1/4 bg-[#4396D2]" />
