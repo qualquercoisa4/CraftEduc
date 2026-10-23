@@ -163,6 +163,7 @@ function finiteNumber(value: unknown, fallback = 0) {
 
 export function ArduinoProgramming() {
   const key = useGame((state) => state.arduinoProgramKey)
+  const screen = useGame((state) => state.screen)
   const workspaceHost = useRef<HTMLDivElement>(null)
   const workspaceRef = useRef<{ dispose(): void; getTopBlocks(ordered?: boolean): unknown[]; addChangeListener(listener: (event: { isUiEvent?: boolean }) => void): void; removeChangeListener(listener: (event: { isUiEvent?: boolean }) => void): void; } | null>(null)
   const resizeWorkspaceRef = useRef<(() => void) | null>(null)
@@ -170,7 +171,10 @@ export function ArduinoProgramming() {
   const pinModesRef = useRef(new Map<string, PinMode>())
   const [ready, setReady] = useState(false)
   const [running, setRunning] = useState(false)
-  const [status, setStatus] = useState('Arraste os blocos para montar seu programa.')
+  const [status, setStatus] = useState('O programa será iniciado automaticamente quando o Arduino receber energia.')
+  const powerWasOnRef = useRef<boolean | null>(null)
+  const executeProgramRef = useRef<(() => Promise<void>) | null>(null)
+  const stopProgramRef = useRef<((announce?: boolean) => void) | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -178,7 +182,7 @@ export function ArduinoProgramming() {
     let changeListener: ((event: { isUiEvent?: boolean }) => void) | null = null
 
     const initialize = async () => {
-      if (!workspaceHost.current) return
+      if (!key || !workspaceHost.current) return
       try {
         const Blockly = await import('blockly/core')
         await import('blockly/blocks')
@@ -308,7 +312,7 @@ export function ArduinoProgramming() {
         workspace.addChangeListener(changeListener)
         Blockly.svgResize(workspace)
         setReady(true)
-        setStatus(loaded ? 'Programa carregado deste navegador.' : 'Monte os blocos e pressione Executar.')
+        setStatus(loaded ? 'Programa salvo carregado. A placa iniciará ao receber energia.' : 'Monte o programa; ele será salvo automaticamente e iniciará ao receber energia.')
       } catch (error) {
         console.error('Falha ao iniciar Blockly:', error)
         setStatus('Não foi possível carregar o editor de blocos. Recarregue a página e tente novamente.')
@@ -329,12 +333,19 @@ export function ArduinoProgramming() {
       // Blockly's SVG scrollbars can outlive a detached React screen on mobile.
       // Explicitly clear the host after disposing the workspace.
       workspaceHost.current?.replaceChildren()
+      document.querySelectorAll('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv').forEach((element) => element.remove())
       workspaceRef.current = null
       resizeWorkspaceRef.current = null
       setReady(false)
       setRunning(false)
     }
   }, [key])
+
+  useEffect(() => {
+    if (screen !== 'arduino_programming' || !key) return
+    const frame = window.requestAnimationFrame(() => resizeWorkspaceRef.current?.())
+    return () => window.cancelAnimationFrame(frame)
+  }, [screen, key])
 
   const stopProgram = (announce = true) => {
     runIdRef.current += 1
@@ -350,6 +361,8 @@ export function ArduinoProgramming() {
     setRunning(false)
     if (announce) setStatus('Programa parado. As saídas controladas pelo programa foram desligadas.')
   }
+
+  stopProgramRef.current = stopProgram
 
   const readDistance = (pin: string) => {
     if (!key || pinModesRef.current.get(pin) !== 'ULTRASONIC') return null
@@ -568,13 +581,41 @@ export function ArduinoProgramming() {
     }
   }
 
+  executeProgramRef.current = executeProgram
+
+  useEffect(() => {
+    if (!key || !ready) return
+    let disposed = false
+    const checkPower = () => {
+      if (disposed) return
+      const powered = getEngine()?.mech.isArduinoPowered(key) ?? false
+      if (!powered) {
+        if (powerWasOnRef.current === true || activeArduinoPrograms.has(key)) {
+          stopProgramRef.current?.(false)
+        }
+        powerWasOnRef.current = false
+        return
+      }
+      if (powerWasOnRef.current !== true) {
+        powerWasOnRef.current = true
+        if (!activeArduinoPrograms.has(key)) void executeProgramRef.current?.()
+      }
+    }
+    const interval = window.setInterval(checkPower, 50)
+    checkPower()
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [key, ready])
+
   const close = () => {
-    // Like a physical Arduino, the program keeps running after closing the IDE.
-    gameStore.set({ arduinoProgramKey: null, screen: 'playing' })
+    // The IDE is only a view; the board and its saved sketch remain active.
+    gameStore.set({ screen: 'playing' })
   }
 
   return (
-    <section className="absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36]" aria-label="Programação do Arduino UNO">
+    <section className={`absolute inset-0 z-40 flex min-h-0 flex-col bg-[#f5f6f8] text-[#202a36] ${screen === 'arduino_programming' && key ? '' : 'hidden'}`} aria-label="Programação do Arduino UNO">
       <div className="flex h-1 shrink-0" aria-hidden="true">
         <span className="w-1/4 bg-[#E62B60]" />
         <span className="w-1/4 bg-[#4396D2]" />
@@ -597,7 +638,7 @@ export function ArduinoProgramming() {
         <div ref={workspaceHost} className="h-full w-full touch-none" />
       </div>
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-black/15 bg-[#e5eef3] px-3 py-2 sm:px-5">
-        <p className="hidden text-xs text-[#4a5360] sm:block">Os programas são salvos neste navegador para este Arduino.</p>
+        <p className="hidden text-xs text-[#4a5360] sm:block">Código salvo automaticamente. O Arduino executa ao receber energia.</p>
         <div className="ml-auto flex gap-2">
           <button
             type="button"
@@ -607,27 +648,16 @@ export function ArduinoProgramming() {
               if (!workspace) return
               stopProgram(false)
               workspace.clear()
-              setStatus('Área limpa. Arraste “quando iniciar” para começar.')
+              try {
+                window.localStorage.setItem(`crafteduc:arduino-program:${key ?? 'unknown'}`, JSON.stringify({ blocks: { languageVersion: 0, blocks: [] } }))
+              } catch {
+                // The workspace remains usable even if storage is unavailable.
+              }
+              setStatus('Programa apagado. Monte um novo código; ele iniciará quando a placa receber energia.')
             }}
             className="border-2 border-black/20 bg-white px-3 py-2 text-xs font-semibold text-[#333] disabled:opacity-50 sm:text-sm"
           >
             Limpar
-          </button>
-          <button
-            type="button"
-            onClick={() => { void executeProgram() }}
-            disabled={!ready || running}
-            className="border-2 border-black bg-[#A2C735] px-4 py-2 text-xs font-bold text-[#20313a] shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
-          >
-            Executar
-          </button>
-          <button
-            type="button"
-            onClick={() => stopProgram()}
-            disabled={!running}
-            className="border-2 border-black bg-[#E62B60] px-3 py-2 text-xs font-bold text-white shadow-[2px_2px_0_#000] disabled:opacity-50 sm:text-sm"
-          >
-            Parar
           </button>
         </div>
       </footer>

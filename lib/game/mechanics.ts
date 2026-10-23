@@ -211,6 +211,7 @@ export class Mechanics {
   // Program output state is kept separate from battery-box power calculations.
   private arduinoPinLevels = new Map<string, boolean>()
   private programmedServoAngles = new Map<string, { boardKey: string; degrees: number }>()
+  private poweredArduinoBoards = new Set<string>()
   private glueMesh: THREE.Mesh | null = null
   private suppress = false
   private powerDirty = true
@@ -877,6 +878,10 @@ export class Mechanics {
     return servos.length
   }
 
+  isArduinoPowered(boardKey: string) {
+    return this.poweredArduinoBoards.has(boardKey)
+  }
+
   setArduinoPinLevel(boardKey: string, pin: string, high: boolean) {
     if (this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return false
     this.arduinoPinLevels.set(`${boardKey}|${pin}`, Boolean(high))
@@ -1051,6 +1056,11 @@ export class Mechanics {
     // Conductive blocks connect their six face terminals internally. This
     // includes aluminum/iron/component blocks inside moving chassis or rotors.
     for (const [key, block] of electricalBlocks) {
+      if (block.id === B.ARDUINO_UNO) {
+        for (const terminal of [...Array.from({ length: 14 }, (_, index) => `D${index}`), '5V', 'GND', 'GND_2', 'VIN']) {
+          allNodes.add(node(key, terminal))
+        }
+      }
       if (block.id === B.SERVO) {
         for (const terminal of ['gnd', 'vcc', 'signal']) allNodes.add(node(key, terminal))
       }
@@ -1108,6 +1118,21 @@ export class Mechanics {
     const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
     const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
     const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
+    const nextPoweredArduinoBoards = new Set<string>()
+    for (const [key, block] of electricalBlocks) {
+      if (block.id !== B.ARDUINO_UNO) continue
+      const positiveTerminals = ['VIN', '5V'].map((terminal) => find(node(key, terminal)))
+      const groundTerminals = ['GND', 'GND_2'].map((terminal) => find(node(key, terminal)))
+      const hasSupply = activeBoxes.some((box) => {
+        const positive = find(box.positive)
+        const negative = find(box.negative)
+        return positive !== negative
+          && positiveTerminals.includes(positive)
+          && groundTerminals.includes(negative)
+      })
+      if (hasSupply) nextPoweredArduinoBoards.add(key)
+    }
+    this.poweredArduinoBoards = nextPoweredArduinoBoards
 
     // Include every conductive block exactly once, including those temporarily
     // removed from the static voxel grid for rigid-body simulation.

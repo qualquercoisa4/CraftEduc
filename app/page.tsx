@@ -127,7 +127,7 @@ export default function Page() {
       {!bootError && screen === 'sensor_config' && <ProximitySensorConfig />}
       {!bootError && screen === 'brush_color' && <BrushColorPicker />}
       {!bootError && screen === 'servo_config' && <ServoConfig />}
-      {!bootError && screen === 'arduino_programming' && <ArduinoProgramming />}
+      {!bootError && <ArduinoProgramming />}
 
       {!bootError && screen === 'paused' && (
         <section className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-black/55 px-4 text-center backdrop-blur-[2px]">
