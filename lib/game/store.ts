@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { type CategoryId, DEFAULT_HOTBAR, type ItemId } from './constants'
 
-export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'brush_color'
+export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'arduino_programming' | 'brush_color'
 
 export interface Settings {
   renderDistance: number
@@ -29,6 +29,7 @@ export interface GameState {
   breakProgress: number
   sensorConfigKey: string | null
   servoConfigKey: string | null
+  arduinoProgramKey: string | null
   brushColor: string
 }
 
@@ -77,6 +78,7 @@ export const gameStore = createStore({
   breakProgress: 0,
   sensorConfigKey: null,
   servoConfigKey: null,
+  arduinoProgramKey: null,
   brushColor: '#e53935',
 })
 
