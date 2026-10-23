@@ -15,6 +15,7 @@ export interface BlockState {
   servoOffAngle?: number
   servoOnAngle?: number
   color?: string
+  resinCoated?: boolean
 }
 
 const CS = CHUNK_SIZE
@@ -245,7 +246,7 @@ export class World {
             if (ny >= WORLD_HEIGHT) return false
             if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
-          }, this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y, wx, wz))
+          }, this.getState(wx, y, wz)?.resinCoated ? '#e5c46a' : this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y, wx, wz))
         }
     if (c.mesh) {
       c.mesh.geometry.dispose()
