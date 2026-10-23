@@ -165,6 +165,7 @@ interface ExtraRotor {
   facing: number
   blocks: CBlock[]
   byKey: Map<string, CBlock>
+  wheelOnly: boolean
   group: THREE.Group
   rotorBody: RAPIER.RigidBody
   joint: RAPIER.RevoluteImpulseJoint
@@ -1369,6 +1370,7 @@ export class Mechanics {
       facing: number
       blocks: CBlock[]
       byKey: Map<string, CBlock>
+      wheelOnly: boolean
     }[] = []
     const extraRotorKeys = new Set<string>()
     for (const candidateKey of [...chassisVisited]) {
@@ -1379,12 +1381,16 @@ export class Mechanics {
       const extraDir = DIRS[extraFacing]
       const ex = rx + extraDir[0], ey = ry + extraDir[1], ez = rz + extraDir[2]
       const seed = posKey(ex, ey, ez)
-      if (this.world.getBlock(ex, ey, ez) === B.AIR || this.world.getBlock(ex, ey, ez) === B.MOTOR || this.world.getBlock(ex, ey, ez) === B.SERVO
-        || !this.isGlued(rx, ry, rz, extraFacing) || visited.has(seed)
+      const wheelOnly = this.world.getBlock(ex, ey, ez) === B.AIR && Boolean(motorState?.mountedWheel)
+      if ((this.world.getBlock(ex, ey, ez) === B.AIR && !wheelOnly)
+        || this.world.getBlock(ex, ey, ez) === B.MOTOR || this.world.getBlock(ex, ey, ez) === B.SERVO
+        || (!wheelOnly && !this.isGlued(rx, ry, rz, extraFacing)) || visited.has(seed)
         || chassisVisited.has(seed) || extraRotorKeys.has(seed)) continue
 
-      const extraVisited = new Set<string>([seed])
-      const extraQueue: [number, number, number][] = [[ex, ey, ez]]
+      // A motor-mounted wheel must keep its own angular body even without
+      // a glued voxel attached to the shaft.
+      const extraVisited = new Set<string>(wheelOnly ? [] : [seed])
+      const extraQueue: [number, number, number][] = wheelOnly ? [] : [[ex, ey, ez]]
       let invalid = false
       while (extraQueue.length) {
         const [x, y, z] = extraQueue.shift()!
@@ -1401,7 +1407,7 @@ export class Mechanics {
           extraQueue.push([nx, ny, nz])
         }
       }
-      if (invalid || extraVisited.size === 0) continue
+      if (invalid || (!wheelOnly && extraVisited.size === 0)) continue
       const extraBlocks: CBlock[] = []
       const extraByKey = new Map<string, CBlock>()
       for (const key of extraVisited) {
@@ -1426,6 +1432,7 @@ export class Mechanics {
         facing: extraFacing,
         blocks: extraBlocks,
         byKey: extraByKey,
+        wheelOnly,
       })
     }
     for (const key of extraRotorKeys) chassisVisited.delete(key)
@@ -1582,22 +1589,20 @@ export class Mechanics {
     }
 
     const chassisVoxels = [
-      { x: mx, y: my, z: mz, id: actuatorId },
-      ...chassisBlocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id })),
+      { x: mx, y: my, z: mz, id: actuatorId, state: motorState },
+      ...chassisBlocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id, state: b.state })),
     ]
-    const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id }))
-    const chassisHasWheel = Boolean(motorState?.mountedWheel || chassisBlocks.some((block) => block.id === B.MOTOR && block.state?.mountedWheel))
+    const rotorVoxels = blocks.map((b) => ({ x: mx + b.rel[0], y: my + b.rel[1], z: mz + b.rel[2], id: b.id, state: b.state }))
     const chassisBody = this.rigidPhysics.createRigidBody(chassisVoxels, pivot, {
-      // A vehicle can steer around Y, but unrestricted roll/pitch makes the
-      // discrete voxel chassis pogo under traction impulses.
-      lockRotation: !chassisHasWheel, yawOnly: chassisHasWheel,
-      canSleep: false, linearDamping: 0.12, angularDamping: chassisHasWheel ? 0.22 : 0.65,
+      // Leave all rotation axes free: the physical mass distribution, contact
+      // friction and motor reaction torque decide whether the robot yaws or tips.
+      canSleep: false, linearDamping: 0.035, angularDamping: 0.10,
     })
     const rotorAxis = new THREE.Vector3(d[0], d[1], d[2])
     const rotorBody = wheelOnlyRotor
       ? this.rigidPhysics.createWheelRotorBody(pivot, rotorAxis)
       : this.rigidPhysics.createRigidBody(rotorVoxels, pivot, {
-        canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
+        canSleep: false, linearDamping: 0.025, angularDamping: 0.06,
       })
     if (!chassisBody || !rotorBody) {
       if (chassisBody) this.rigidPhysics.removeRigidBody(chassisBody)
@@ -1605,8 +1610,8 @@ export class Mechanics {
       this.mechDirty = true
       return 'idle'
     }
-    const parentAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(0.64) : new THREE.Vector3()
-    const childAnchor = wheelOnlyRotor ? rotorAxis.clone().multiplyScalar(-0.64) : new THREE.Vector3()
+    const parentAnchor = rotorAxis.clone().multiplyScalar(0.36)
+    const childAnchor = wheelOnlyRotor ? new THREE.Vector3() : rotorAxis.clone().multiplyScalar(0.36)
     const joint = this.rigidPhysics.createRevoluteJoint(
       chassisBody, rotorBody, rotorAxis, parentAnchor, childAnchor,
     )
@@ -1625,10 +1630,13 @@ export class Mechanics {
         y: visual.motorPos[1] + block.rel[1],
         z: visual.motorPos[2] + block.rel[2],
         id: block.id,
+        state: block.state,
       }))
-      const extraBody = this.rigidPhysics.createRigidBody(extraVoxels, visual.pivot, {
-        canSleep: false, linearDamping: 0.02, angularDamping: 0.03,
-      })
+      const extraBody = visual.wheelOnly
+        ? this.rigidPhysics.createWheelRotorBody(visual.pivot, visual.axis)
+        : this.rigidPhysics.createRigidBody(extraVoxels, visual.pivot, {
+          canSleep: false, linearDamping: 0.025, angularDamping: 0.06,
+        })
       if (!extraBody) {
         for (const extra of extraRotors) {
           this.rigidPhysics.removeRigidBody(extra.rotorBody)
@@ -1639,11 +1647,17 @@ export class Mechanics {
         this.mechDirty = true
         return 'idle'
       }
+      const extraParentAnchor = new THREE.Vector3(...visual.motorOffset)
+        .addScaledVector(visual.axis, 0.36)
+      const extraChildAnchor = visual.wheelOnly
+        ? new THREE.Vector3()
+        : visual.axis.clone().multiplyScalar(0.36)
       const extraJoint = this.rigidPhysics.createRevoluteJoint(
         chassisBody,
         extraBody,
         visual.axis,
-        new THREE.Vector3(...visual.motorOffset),
+        extraParentAnchor,
+        extraChildAnchor,
       )
       if (!extraJoint) {
         this.rigidPhysics.removeRigidBody(extraBody)
@@ -1665,6 +1679,7 @@ export class Mechanics {
         facing: visual.facing,
         blocks: visual.blocks,
         byKey: visual.byKey,
+        wheelOnly: visual.wheelOnly,
         group: visual.group,
         rotorBody: extraBody,
         joint: extraJoint,
@@ -2161,7 +2176,7 @@ export class Mechanics {
       for (const b of blocksInGroup) pivot.add(new THREE.Vector3(b.x + 0.5, b.y + 0.5, b.z + 0.5))
       pivot.multiplyScalar(1 / blocksInGroup.length)
       const physicsBody = this.rigidPhysics.createRigidBody(
-        blocksInGroup.map((b) => ({ x: b.x, y: b.y, z: b.z, id: b.id })),
+        blocksInGroup.map((b) => ({ x: b.x, y: b.y, z: b.z, id: b.id, state: b.state })),
         pivot,
         { canSleep: true, linearDamping: 0.04, angularDamping: 0.08 },
       )
@@ -2335,36 +2350,69 @@ export class Mechanics {
     return keyMap
   }
 
-  /** Apply smooth ground traction from every mounted wheel on a shared chassis. */
-  private applyMountedWheelTraction(c: Contraption, power: number, direction: number) {
+  /** Apply tyre forces at the contact patch, including rolling slip and lateral grip. */
+  private applyMountedWheelTraction(c: Contraption) {
+    type WheelContact = {
+      axis: THREE.Vector3
+      drive: THREE.Vector3
+      lateral: THREE.Vector3
+      rotorBody: RAPIER.RigidBody
+      point: THREE.Vector3
+      surfaceSpeed: number
+    }
     const hasPrimaryWheel = Boolean(c.motorState?.mountedWheel) || this.mountedWheels.has(c.motorKey)
-    const chassisWheels = (c.chassisBlocks ?? []).filter((block) =>
-      block.id === B.MOTOR && Boolean(block.state?.mountedWheel),
-    )
-    if (!hasPrimaryWheel && chassisWheels.length === 0) return
+    const wheels: { axisLocal: THREE.Vector3; offsetLocal: THREE.Vector3; rotorBody: RAPIER.RigidBody }[] = []
+    if (hasPrimaryWheel) {
+      wheels.push({
+        axisLocal: c.axis.clone(),
+        offsetLocal: c.axis.clone().multiplyScalar(0.36),
+        rotorBody: c.rotorBody,
+      })
+    }
+    for (const block of c.chassisBlocks ?? []) {
+      if (block.id !== B.MOTOR || !block.state?.mountedWheel) continue
+      const rotor = c.extraRotors.find((candidate) => candidate.motorKey === block.origKey)
+      if (!rotor) continue
+      const axis = new THREE.Vector3(...DIRS[rotor.facing])
+      wheels.push({
+        axisLocal: axis,
+        offsetLocal: new THREE.Vector3(...block.rel).addScaledVector(axis, 0.36),
+        rotorBody: rotor.rotorBody,
+      })
+    }
+    if (wheels.length === 0) return
 
     const t = c.chassisBody.translation()
     const r = c.chassisBody.rotation()
     const chassisPosition = new THREE.Vector3(t.x, t.y, t.z)
     const rotation = new THREE.Quaternion(r.x, r.y, r.z, r.w)
     const up = new THREE.Vector3(0, 1, 0)
+    const radius = 0.41
+    const contacts: WheelContact[] = []
 
-    // Aggregate each wheel's input once. Do not reset the chassis forces from
-    // inside this helper; doing so used to erase other wheel forces.
-    const applyWheel = (axisLocal: THREE.Vector3, offsetLocal: THREE.Vector3, wheelPower: number, wheelDirection: number) => {
-      if (wheelPower <= 0) return
-      const axle = axisLocal.clone().applyQuaternion(rotation).normalize()
-      const horizontalAxle = Math.hypot(axle.x, axle.z)
-      if (horizontalAxle < 0.65) return
+    for (const wheel of wheels) {
+      const axle = wheel.axisLocal.clone().applyQuaternion(rotation).normalize()
+      if (Math.hypot(axle.x, axle.z) < 0.65) continue
       const drive = axle.clone().cross(up)
       drive.y = 0
-      if (drive.lengthSq() < 1e-8) return
-      drive.normalize().multiplyScalar(wheelDirection < 0 ? -1 : 1)
+      if (drive.lengthSq() < 1e-8) continue
+      drive.normalize()
+      const lateral = axle.clone()
+      lateral.y = 0
+      if (lateral.lengthSq() < 1e-8) continue
+      lateral.normalize()
 
-      const center = chassisPosition.clone().add(offsetLocal.clone().applyQuaternion(rotation))
-      const bottomY = center.y - 0.49 * horizontalAxle
-      const cellX = Math.floor(center.x)
-      const cellZ = Math.floor(center.z)
+      const center = chassisPosition.clone().add(wheel.offsetLocal.clone().applyQuaternion(rotation))
+      // The vertical direction projected into the wheel plane gives the real
+      // bottom point even if the robot is tilted.
+      const down = new THREE.Vector3(0, -1, 0).addScaledVector(axle, axle.y)
+      const verticalReach = down.length()
+      if (verticalReach < 0.1) continue
+      down.normalize()
+      const contactPoint = center.clone().addScaledVector(down, radius)
+      const bottomY = center.y - radius * verticalReach
+      const cellX = Math.floor(contactPoint.x)
+      const cellZ = Math.floor(contactPoint.z)
       let supportY = GROUND_LEVEL
       for (let y = Math.min(WORLD_HEIGHT - 1, Math.floor(bottomY + 0.24)); y >= GROUND_LEVEL - 1; y--) {
         if (this.world.getBlock(cellX, y, cellZ) !== B.AIR) {
@@ -2373,35 +2421,73 @@ export class Mechanics {
         }
       }
       const gap = bottomY - supportY
-      if (gap > 0.22 || gap < -0.22) return
+      if (gap > 0.2 || gap < -0.35) continue
 
-      const velocity = c.chassisBody.linvel()
-      const forwardSpeed = velocity.x * drive.x + velocity.z * drive.z
-      const targetSpeed = Math.max(0.8, Math.min(3.2, wheelPower * 1.05))
-      const effort = Math.max(0, Math.min(1, 1 - forwardSpeed / targetSpeed))
-      const force = Math.min(24, wheelPower * 8) * effort
-      if (force <= 0.05) return
-      // Apply at axle/chassis height to avoid abrupt pitch impulses when a
-      // wheel crosses a voxel edge; lateral offsets can still produce steering yaw.
-      c.chassisBody.addForceAtPoint(
-        { x: drive.x * force, y: 0, z: drive.z * force },
-        { x: center.x, y: center.y, z: center.z },
+      const rotorW = wheel.rotorBody.angvel()
+      const chassisW = c.chassisBody.angvel()
+      const relativeSpin = new THREE.Vector3(
+        rotorW.x - chassisW.x,
+        rotorW.y - chassisW.y,
+        rotorW.z - chassisW.z,
+      )
+      contacts.push({
+        axis: axle,
+        drive,
+        lateral,
+        rotorBody: wheel.rotorBody,
+        point: contactPoint,
+        surfaceSpeed: relativeSpin.dot(axle) * radius,
+      })
+    }
+    if (contacts.length === 0) return
+
+    // Rapier derives body mass and inertia from each block's density and offset.
+    // Estimate wheel normal load from that assembled mass and limit traction to μN.
+    const totalMass = Math.max(
+      0.1,
+      c.chassisBody.mass()
+        + c.rotorBody.mass()
+        + c.extraRotors.reduce((sum, rotor) => sum + rotor.rotorBody.mass(), 0),
+    )
+    const maxTyreForce = (totalMass * 9.81 / contacts.length) * 0.85
+    const v = c.chassisBody.linvel()
+    const w = c.chassisBody.angvel()
+    const chassisVelocity = new THREE.Vector3(v.x, v.y, v.z)
+    const chassisAngular = new THREE.Vector3(w.x, w.y, w.z)
+
+    for (const contact of contacts) {
+      const contactVelocity = chassisVelocity.clone().add(
+        chassisAngular.clone().cross(contact.point.clone().sub(chassisPosition)),
+      )
+      const forwardSpeed = contactVelocity.dot(contact.drive)
+      const lateralSpeed = contactVelocity.dot(contact.lateral)
+
+      // A spinning tyre only accelerates the chassis while its tread slips
+      // against the ground. Differential wheel forces naturally generate yaw.
+      const longitudinalForce = THREE.MathUtils.clamp(
+        (contact.surfaceSpeed - forwardSpeed) * 24,
+        -maxTyreForce,
+        maxTyreForce,
+      )
+      const lateralLimit = Math.sqrt(Math.max(
+        0,
+        maxTyreForce * maxTyreForce - longitudinalForce * longitudinalForce,
+      ))
+      const lateralForce = THREE.MathUtils.clamp(
+        -lateralSpeed * 28,
+        -lateralLimit,
+        lateralLimit,
+      )
+      const force = contact.drive.clone().multiplyScalar(longitudinalForce)
+        .addScaledVector(contact.lateral, lateralForce)
+
+      // Applying at ground contact puts the braking/drive torque back into the
+      // rotor joint; Rapier transfers the equal reaction to the free chassis.
+      contact.rotorBody.addForceAtPoint(
+        { x: force.x, y: force.y, z: force.z },
+        { x: contact.point.x, y: contact.point.y, z: contact.point.z },
         true,
       )
-    }
-
-    if (hasPrimaryWheel) {
-      applyWheel(c.axis, c.axis.clone().multiplyScalar(0.64), power, direction)
-    }
-    // A four-wheel vehicle often has extra motors glued into its chassis but
-    // no block glued to each output shaft. Those wheels still need traction.
-    for (const block of chassisWheels) {
-      const facing = (((block.state?.facing ?? 2) % 6) + 6) % 6
-      const axis = new THREE.Vector3(...DIRS[facing])
-      const wheelPower = this.motorPower.get(block.origKey) ?? 0
-      const wheelDirection = this.motorDirection.get(block.origKey) ?? 1
-      const offset = new THREE.Vector3(...block.rel).addScaledVector(axis, 0.64)
-      applyWheel(axis, offset, wheelPower, wheelDirection)
     }
   }
 
@@ -2531,7 +2617,7 @@ export class Mechanics {
       const power = this.motorPower.get(c.motorKey) ?? 0
       const motor = this.models.get(c.motorKey)
       const direction = this.motorDirection.get(c.motorKey) ?? 1
-      this.applyMountedWheelTraction(c, power, direction)
+      this.applyMountedWheelTraction(c)
       if (c.actuatorId === B.SERVO) {
         const programmed = this.programmedServoAngles.get(c.motorKey)?.degrees
         const targetDegrees = programmed ?? (this.servoPowered.has(c.motorKey)
@@ -2579,27 +2665,34 @@ export class Mechanics {
         // Rapier's velocity motor alone was reporting "driving" while leaving
         // this body at zero angular velocity in the live preview.
         c.joint.configureMotorVelocity(c.speed, 0.85)
+        const chassisR = c.chassisBody.rotation()
+        const worldAxis = c.axis.clone().applyQuaternion(
+          new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
+        ).normalize()
         const angular = c.rotorBody.angvel()
-        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
-        const targetSpeed = c.speed
+        const axialSpeed = angular.x * worldAxis.x + angular.y * worldAxis.y + angular.z * worldAxis.z
         const maxTorque = Math.max(12, power * 12)
-        const torque = Math.max(-maxTorque, Math.min(maxTorque, (targetSpeed - axialSpeed) * 20))
+        const torque = THREE.MathUtils.clamp((c.speed - axialSpeed) * 20, -maxTorque, maxTorque)
         c.rotorBody.addTorque({
-          x: c.axis.x * torque,
-          y: c.axis.y * torque,
-          z: c.axis.z * torque,
+          x: worldAxis.x * torque,
+          y: worldAxis.y * torque,
+          z: worldAxis.z * torque,
         }, true)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
         c.unpoweredTime += dt
         c.joint.configureMotorVelocity(0, 0.95)
+        const chassisR = c.chassisBody.rotation()
+        const worldAxis = c.axis.clone().applyQuaternion(
+          new THREE.Quaternion(chassisR.x, chassisR.y, chassisR.z, chassisR.w),
+        ).normalize()
         const angular = c.rotorBody.angvel()
-        const axialSpeed = angular.x * c.axis.x + angular.y * c.axis.y + angular.z * c.axis.z
-        const brakingTorque = Math.max(-8, Math.min(8, -axialSpeed * 12))
+        const axialSpeed = angular.x * worldAxis.x + angular.y * worldAxis.y + angular.z * worldAxis.z
+        const brakingTorque = THREE.MathUtils.clamp(-axialSpeed * 12, -8, 8)
         c.rotorBody.addTorque({
-          x: c.axis.x * brakingTorque,
-          y: c.axis.y * brakingTorque,
-          z: c.axis.z * brakingTorque,
+          x: worldAxis.x * brakingTorque,
+          y: worldAxis.y * brakingTorque,
+          z: worldAxis.z * brakingTorque,
         }, true)
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)

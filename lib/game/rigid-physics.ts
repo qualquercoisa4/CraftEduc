@@ -9,6 +9,7 @@ export interface PhysicsVoxel {
   z: number
   id: number
   key?: string
+  state?: { batteries?: number; mountedWheel?: boolean }
 }
 
 /**
@@ -30,10 +31,38 @@ export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.MOTOR]: 1.4,
   [B.SERVO]: 0.45,
   [B.IRON]: 2.6,
+  [B.PROXIMITY_SENSOR]: 0.18,
+  [B.ARDUINO_UNO]: 0.08,
 }
 
-export function blockMass(id: number) {
-  return BLOCK_MASS[id] ?? 0.8
+export function blockMass(id: number, state?: PhysicsVoxel['state']) {
+  const base = BLOCK_MASS[id] ?? 0.8
+  // Battery cells and the mounted wheel affect the centre of mass and inertia.
+  if (id === B.BATTERY_BOX) return base + Math.max(0, Math.min(3, Math.floor(state?.batteries ?? 0))) * 0.12
+  if (id === B.MOTOR && state?.mountedWheel) return base + 0.08
+  return base
+}
+
+const BLOCK_FRICTION: Readonly<Record<number, number>> = {
+  [B.AIR]: 0,
+  [B.ALUMINUM]: 0.45,
+  [B.COMPONENT]: 0.62,
+  [B.LED]: 0.55,
+  [B.WHEEL]: 1.05,
+  [B.SWITCH]: 0.62,
+  [B.GEAR]: 0.58,
+  [B.BATTERY_BOX]: 0.72,
+  [B.ROBOTICS]: 0.78,
+  [B.WOOD]: 0.68,
+  [B.MOTOR]: 0.70,
+  [B.SERVO]: 0.62,
+  [B.IRON]: 0.58,
+  [B.PROXIMITY_SENSOR]: 0.58,
+  [B.ARDUINO_UNO]: 0.55,
+}
+
+export function blockFriction(id: number) {
+  return BLOCK_FRICTION[id] ?? 0.72
 }
 
 
@@ -55,14 +84,19 @@ export class RigidPhysics {
   private fixedBody: RAPIER.RigidBody | null = null
   private staticColliders = new Map<string, RAPIER.Collider>()
   private initialized = false
+  private accumulator = 0
+  private readonly fixedStep = 1 / 60
+  private readonly maxSubsteps = 5
   private initializing: Promise<void>
   private disposed = false
 
   constructor(private readonly voxelWorld: World) {
     this.initializing = RAPIER.init().then(() => {
       if (this.disposed) return
-      const physics = new RAPIER.World({ x: 0, y: -18, z: 0 })
-      physics.timestep = 1 / 60
+      // One world unit is treated as roughly one metre. Keep gravity physical
+      // and integrate at a fixed rate so contacts don't depend on device FPS.
+      const physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+      physics.timestep = this.fixedStep
       this.rapierWorld = physics
       this.fixedBody = physics.createRigidBody(RAPIER.RigidBodyDesc.fixed())
       // The voxel ground extends below GROUND_LEVEL. A single wide collider
@@ -70,8 +104,8 @@ export class RigidPhysics {
       physics.createCollider(
         RAPIER.ColliderDesc.cuboid(2048, 0.5, 2048)
           .setTranslation(0, GROUND_LEVEL - 0.5, 0)
-          .setFriction(0.9)
-          .setRestitution(0.02),
+          .setFriction(0.88)
+          .setRestitution(0.005),
         this.fixedBody,
       )
       this.initialized = true
@@ -106,8 +140,8 @@ export class RigidPhysics {
     const collider = this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
         .setTranslation(x + 0.5, y + 0.5, z + 0.5)
-        .setFriction(0.82)
-        .setRestitution(0.01),
+        .setFriction(blockFriction(id))
+        .setRestitution(0.005),
       this.fixedBody,
     )
     this.staticColliders.set(key, collider)
@@ -156,11 +190,11 @@ export class RigidPhysics {
       this.rapierWorld.createCollider(
         RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
-          // Rapier derives the body's total mass and inertia from every
-          // block collider, so light aluminum can be lifted by a wood arm.
-          .setDensity(blockMass(voxel.id))
-          .setFriction(0.82)
-          .setRestitution(0.01),
+          // Rapier derives total mass, centre of mass and inertia from every
+          // collider's density and position; offset/heavy parts can tip the build.
+          .setDensity(blockMass(voxel.id, voxel.state))
+          .setFriction(blockFriction(voxel.id))
+          .setRestitution(0.005),
         body,
       )
     }
@@ -171,20 +205,22 @@ export class RigidPhysics {
   createWheelRotorBody(pivot: THREE.Vector3, axis: THREE.Vector3) {
     if (!this.ready || !this.rapierWorld) return null
     const axle = axis.clone().normalize()
-    const center = pivot.clone().addScaledVector(axle, 0.64)
+    // This rotor's origin matches the visible wheel at the end of the motor shaft.
+    const center = pivot.clone().addScaledVector(axle, 0.36)
     const body = this.rapierWorld.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(center.x, center.y, center.z)
         .setCanSleep(false)
         .setCcdEnabled(true)
-        .setLinearDamping(0.02)
-        .setAngularDamping(0.03),
+        .setLinearDamping(0.025)
+        .setAngularDamping(0.06),
     )
     const rotation = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), axle)
     this.rapierWorld.createCollider(
       RAPIER.ColliderDesc.cylinder(0.075, 0.49)
         .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w })
-        .setDensity(blockMass(B.WHEEL))
+        .setMass(0.32)
+        .setFriction(1.05)
         .setSensor(true),
       body,
     )
@@ -214,8 +250,20 @@ export class RigidPhysics {
 
   step(dt: number) {
     if (!this.ready || !this.rapierWorld) return
-    this.rapierWorld.timestep = Math.max(1 / 120, Math.min(dt, 1 / 30))
-    this.rapierWorld.step()
+
+    // Fixed 60 Hz integration with bounded catch-up prevents the same build
+    // behaving differently at 25 FPS and 60 FPS.
+    this.accumulator += Math.max(0, Math.min(dt, 0.1))
+    let steps = 0
+    while (this.accumulator >= this.fixedStep && steps < this.maxSubsteps) {
+      this.rapierWorld.timestep = this.fixedStep
+      this.rapierWorld.step()
+      this.accumulator -= this.fixedStep
+      steps++
+    }
+    if (steps === this.maxSubsteps && this.accumulator > this.fixedStep * this.maxSubsteps) {
+      this.accumulator = this.fixedStep * this.maxSubsteps
+    }
   }
 
   dispose() {
@@ -224,6 +272,7 @@ export class RigidPhysics {
     this.rapierWorld?.free()
     this.rapierWorld = null
     this.fixedBody = null
+    this.accumulator = 0
     this.initialized = false
   }
 }
