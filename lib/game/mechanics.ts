@@ -735,7 +735,13 @@ export class Mechanics {
   }
 
   /** Resolve an exposed electrical terminal, never an arbitrary point inside a block. */
-  resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
+  resolveTerminal(
+    key: string,
+    hitPoint: THREE.Vector3,
+    face: number,
+    rayOrigin?: THREE.Vector3,
+    rayDirection?: THREE.Vector3,
+  ) {
     const [x, y, z] = parseKey(key)
     const id = this.world.getBlock(x, y, z)
     if (id === B.ARDUINO_UNO) {
@@ -783,6 +789,37 @@ export class Mechanics {
       return terminals[0].point.distanceTo(hitPoint) <= 0.45 ? terminals[0] : null
     }
     if (id === B.PROXIMITY_SENSOR) {
+      const entry = this.models.get(key)
+      if (entry?.type !== 'sensor') return null
+      entry.model.group.updateWorldMatrix(true, true)
+
+      if (rayOrigin && rayDirection) {
+        const ray = new THREE.Ray(rayOrigin, rayDirection.clone().normalize())
+        const raycaster = new THREE.Raycaster(ray.origin, ray.direction, 0, 8)
+        const intersections = raycaster.intersectObjects(entry.model.terminalTargets, false)
+        let target = intersections[0]?.object as THREE.Mesh | undefined
+
+        // Forgiving fallback for a touch just beside a target: choose the pin
+        // nearest the actual view ray, not the generic voxel-box entry point.
+        if (!target) {
+          const candidates = entry.model.terminalTargets.map((candidate) => {
+            const point = entry.model.group.localToWorld(candidate.position.clone())
+            const closestPoint = ray.closestPointToPoint(point, new THREE.Vector3())
+            return { candidate, distance: point.distanceTo(closestPoint) }
+          }).sort((a, b) => a.distance - b.distance)
+          if (candidates[0] && candidates[0].distance <= 0.18) target = candidates[0].candidate
+        }
+
+        if (!target) return null
+        const terminal = String(target.userData.terminalId ?? '')
+        if (!['VCC', 'TRIG', 'ECHO', 'GND'].includes(terminal)) return null
+        return {
+          terminal,
+          point: entry.model.group.localToWorld(target.position.clone()),
+        }
+      }
+
+      // Compatibility fallback for calls that do not provide a view ray.
       const facing = this.world.getState(x, y, z)?.facing ?? 5
       const q = facingQuaternion(facing)
       const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
@@ -792,10 +829,8 @@ export class Mechanics {
         { terminal: 'ECHO', local: new THREE.Vector3(0.08, -0.405, -0.005) },
         { terminal: 'GND', local: new THREE.Vector3(0.24, -0.405, -0.005) },
       ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
-      terminals.sort((a, b) => a.point.distanceToSquared(b.point) - b.point.distanceToSquared(a.point))
-      // Mobile taps are imprecise; enlarge the terminal hit area around each visible pin.
-      // Raycasting hits the voxel face, not the small pin itself; include the front/top surfaces.
-      return terminals[0].point.distanceTo(hitPoint) <= 1.25 ? terminals[0] : null
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.35 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [

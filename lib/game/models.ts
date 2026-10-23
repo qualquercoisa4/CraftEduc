@@ -202,6 +202,7 @@ export function createArduinoWheelModel(facing = 0): WheelModel {
 export interface ProximitySensorModel {
   group: THREE.Group
   indicator: THREE.Mesh
+  terminalTargets: THREE.Mesh[]
 }
 
 /** HC-SR04-inspired board with two ultrasonic cans and four accessible terminals. */
@@ -238,6 +239,15 @@ export function createProximitySensorModel(facing = 5, active = false): Proximit
     { id: 'ECHO', x: 0.08, material: m.sensorOn },
     { id: 'GND', x: 0.24, material: m.batteryBlack },
   ]
+  const terminalTargets: THREE.Mesh[] = []
+  const terminalTargetMaterial = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0,
+    colorWrite: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  })
   for (const terminal of terminalPins) {
     const pad = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.025, 0.07), m.solder)
     pad.position.set(terminal.x, -0.235, -0.005)
@@ -245,6 +255,15 @@ export function createProximitySensorModel(facing = 5, active = false): Proximit
     const pin = new THREE.Mesh(new THREE.BoxGeometry(0.027, 0.18, 0.027), terminal.material)
     pin.position.set(terminal.x, -0.32, -0.005)
     group.add(pin)
+
+    // Each pin gets its own invisible raycast target so the game can distinguish
+    // VCC, TRIG, ECHO and GND instead of guessing from the block's hit point.
+    const target = new THREE.Mesh(new THREE.BoxGeometry(0.158, 0.24, 0.24), terminalTargetMaterial)
+    target.position.set(terminal.x, -0.32, -0.005)
+    target.userData.terminalId = terminal.id
+    target.name = `sensor-terminal-${terminal.id}`
+    group.add(target)
+    terminalTargets.push(target)
   }
   const labelCanvas = document.createElement('canvas')
   labelCanvas.width = 512
@@ -265,7 +284,7 @@ export function createProximitySensorModel(facing = 5, active = false): Proximit
   indicator.position.set(0.34, -0.17, 0.055)
   group.add(indicator)
   group.quaternion.copy(facingQuaternion(facing))
-  const model = { group, indicator }
+  const model = { group, indicator, terminalTargets }
   setProximitySensorActive(model, active)
   return model
 }

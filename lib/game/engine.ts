@@ -93,6 +93,8 @@ export class Engine {
   private last = 0
   private elapsed = 0
   target: Hit | null = null
+  private targetRayOrigin = new THREE.Vector3()
+  private targetRayDirection = new THREE.Vector3(0, 0, -1)
   wireStart: { key: string; terminal: string; point: THREE.Vector3 } | null = null
 
   private breakHeld = false
@@ -889,7 +891,9 @@ export class Engine {
     if (isWireItem(item)) {
       if (!hit) return
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
-      const terminal = this.mech.resolveTerminal(key, hit.point, hit.face)
+      const terminal = this.mech.resolveTerminal(
+        key, hit.point, hit.face, this.targetRayOrigin, this.targetRayDirection,
+      )
       if (!terminal) {
         showToast('Mire em um terminal exposto; madeira não conduz energia')
         return
@@ -1453,6 +1457,8 @@ export class Engine {
     const dir = new THREE.Vector3()
     this.camera.getWorldDirection(dir)
     const origin = new THREE.Vector3(this.player.pos.x, this.player.pos.y + this.player.eye, this.player.pos.z)
+    this.targetRayOrigin.copy(origin)
+    this.targetRayDirection.copy(dir).normalize()
     const hit = this.raycast(origin, dir, REACH)
     this.target = hit
     if (hit) {
