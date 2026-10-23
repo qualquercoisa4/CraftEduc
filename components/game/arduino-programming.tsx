@@ -257,7 +257,7 @@ export function ArduinoProgramming() {
           trashcan: true,
           sounds: false,
           zoom: {
-            controls: true,
+            controls: false,
             wheel: true,
             startScale: 0.78,
             maxScale: 1.45,
@@ -265,7 +265,7 @@ export function ArduinoProgramming() {
             scaleSpeed: 1.1,
           },
           move: {
-            scrollbars: true,
+            scrollbars: false,
             drag: true,
             wheel: true,
           },
@@ -335,7 +335,7 @@ export function ArduinoProgramming() {
       // Blockly's SVG scrollbars can outlive a detached React screen on mobile.
       // Explicitly clear the host after disposing the workspace.
       workspaceHost.current?.replaceChildren()
-      document.querySelectorAll('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground').forEach((element) => element.remove())
+      document.querySelectorAll('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground, .blocklyMainWorkspaceScrollbar').forEach((element) => element.remove())
       workspaceRef.current = null
       resizeWorkspaceRef.current = null
       setReady(false)
@@ -345,7 +345,7 @@ export function ArduinoProgramming() {
 
   useEffect(() => {
     const visible = screen === 'arduino_programming' && Boolean(key)
-    document.querySelectorAll<HTMLElement>('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground').forEach((element) => {
+    document.querySelectorAll<HTMLElement>('.blocklyWidgetDiv, .blocklyDropDownDiv, .blocklyTooltipDiv, .blocklyScrollbar, .blocklyScrollbarHandle, .blocklyScrollbarBackground, .blocklyMainWorkspaceScrollbar').forEach((element) => {
       if (visible) element.style.removeProperty('display')
       else element.style.display = 'none'
     })
@@ -639,7 +639,7 @@ export function ArduinoProgramming() {
             Carregando editor de blocos…
           </div>
         )}
-        <div ref={workspaceHost} className="h-full w-full touch-none" />
+        <div ref={workspaceHost} className="arduino-blockly-workspace h-full w-full touch-none" />
       </div>
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-black/15 bg-[#e5eef3] px-3 py-2 sm:px-5">
         <p className="hidden text-xs text-[#4a5360] sm:block">Código salvo automaticamente. O Arduino executa ao receber energia.</p>
