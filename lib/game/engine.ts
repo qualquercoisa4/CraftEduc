@@ -1099,6 +1099,14 @@ export class Engine {
       return
     }
 
+    if (item === 'resin_applicator') {
+      const coated = this.mech.applyResinCoating(hit.x, hit.y, hit.z)
+      if (this.world.getBlock(hit.x, hit.y, hit.z) === B.AIR) return
+      sfx.glue()
+      showToast(coated ? 'Resina protetora aplicada' : 'Resina removida')
+      return
+    }
+
     if (item === 'glue') {
       const on = this.mech.toggleGlue(hit.x, hit.y, hit.z, hit.face)
       const state = this.world.getState(hit.x, hit.y, hit.z)
@@ -1671,6 +1679,8 @@ export class Engine {
         : `${use} em um terminal para começar o fio`
     } else if (item === 'glue') {
       hint = `${use} numa face para aplicar ou remover cola quente`
+    } else if (item === 'resin_applicator') {
+      hint = `${use} em um bloco para aplicar ou remover a resina protetora`
     } else if (hit?.id === B.BATTERY_BOX && item === 'battery') {
       hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.BATTERY_BOX && item === null) {
