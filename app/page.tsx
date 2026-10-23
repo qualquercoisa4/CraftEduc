@@ -114,16 +114,14 @@ export default function Page() {
             >
               Multiplayer
             </button>
-            {!isTouch && (
-              <button
-                type="button"
-                aria-label="Pausar jogo"
-                onClick={pauseGame}
-                className="border-2 border-black bg-black/40 px-3 py-2 text-sm text-white hover:bg-black/60"
-              >
-                Pausar
-              </button>
-            )}
+            <button
+              type="button"
+              aria-label="Pausar jogo"
+              onClick={pauseGame}
+              className="border-2 border-black bg-black/40 px-3 py-2 text-sm text-white hover:bg-black/60"
+            >
+              Pausar
+            </button>
           </div>
         </>
       )}
