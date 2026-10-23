@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { B, CHUNK_SIZE, GROUND_LEVEL, WORLD_HEIGHT, isOpaque, posKey } from './constants'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
+import { getTerrainBlock, getTerrainColor, type WorldType } from './world-generation'
 
 export interface BlockState {
   facing?: number
@@ -28,9 +29,22 @@ export class Chunk {
   constructor(
     public cx: number,
     public cz: number,
+    terrainAt?: (x: number, y: number, z: number) => number,
   ) {
-    for (let y = 0; y < GROUND_LEVEL; y++)
-      for (let z = 0; z < CS; z++) for (let x = 0; x < CS; x++) this.data[idx(x, y, z)] = B.ROBOTICS
+    if (!terrainAt) {
+      for (let y = 0; y < GROUND_LEVEL; y++)
+        for (let z = 0; z < CS; z++) for (let x = 0; x < CS; x++) this.data[idx(x, y, z)] = B.ROBOTICS
+      return
+    }
+
+    this.maxY = 0
+    for (let y = 0; y < WORLD_HEIGHT; y++)
+      for (let z = 0; z < CS; z++)
+        for (let x = 0; x < CS; x++) {
+          const id = terrainAt(cx * CS + x, y, cz * CS + z)
+          this.data[idx(x, y, z)] = id
+          if (id !== B.AIR) this.maxY = Math.max(this.maxY, y)
+        }
   }
 }
 
@@ -45,7 +59,17 @@ export class World {
   constructor(
     private scene: THREE.Scene,
     private material: THREE.Material,
+    public readonly type: WorldType = 'flat',
+    public readonly seed = 20261023,
   ) {}
+
+  terrainBlockAt(x: number, y: number, z: number) {
+    return getTerrainBlock(this.type, this.seed, x, y, z)
+  }
+
+  terrainColorAt(y: number) {
+    return getTerrainColor(this.type, y)
+  }
 
   getChunk(cx: number, cz: number) {
     return this.chunks.get(chunkKey(cx, cz))
@@ -55,19 +79,23 @@ export class World {
     const k = chunkKey(cx, cz)
     let c = this.chunks.get(k)
     if (!c) {
-      c = new Chunk(cx, cz)
+      c = new Chunk(
+        cx,
+        cz,
+        this.type === 'flat' ? undefined : (x, y, z) => this.terrainBlockAt(x, y, z),
+      )
       this.chunks.set(k, c)
     }
     return c
   }
 
   getBlock(x: number, y: number, z: number): number {
-    if (y < 0) return B.ROBOTICS
+    if (y < 0) return this.terrainBlockAt(x, 0, z) === B.AIR ? B.AIR : B.ROBOTICS
     if (y >= WORLD_HEIGHT) return B.AIR
     const cx = Math.floor(x / CS)
     const cz = Math.floor(z / CS)
     const c = this.chunks.get(chunkKey(cx, cz))
-    if (!c) return y < GROUND_LEVEL ? B.ROBOTICS : B.AIR
+    if (!c) return this.terrainBlockAt(x, y, z)
     return c.data[idx(x - cx * CS, y, z - cz * CS)]
   }
 
@@ -157,7 +185,7 @@ export class World {
             if (ny >= WORLD_HEIGHT) return false
             if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
-          }, this.getState(wx, y, wz)?.color)
+          }, this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y))
         }
     if (c.mesh) {
       c.mesh.geometry.dispose()
