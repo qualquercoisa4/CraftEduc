@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { getEngine } from '@/lib/game/engine'
-import { gameStore, showToast, useGame } from '@/lib/game/store'
+import { gameStore, useGame } from '@/lib/game/store'
 
 type BlockLike = {
   type: string
@@ -406,6 +406,7 @@ export function ArduinoProgramming() {
     const wait = async (ms: number) => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, Math.max(0, Math.min(60000, ms))))
     }
+    let statement: (block: BlockLike) => Promise<void>
     const sequence = async (first: BlockLike | null): Promise<void> => {
       let block = first
       let steps = 0
@@ -416,7 +417,7 @@ export function ArduinoProgramming() {
         if (steps % 6 === 0) await wait(0)
       }
     }
-    const statement = async (block: BlockLike): Promise<void> => {
+    statement = async (block: BlockLike): Promise<void> => {
       if (!active()) return
       const input = (name: string) => asBlock(block.getInputTargetBlock(name))
       switch (block.type) {
