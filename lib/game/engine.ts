@@ -850,17 +850,6 @@ export class Engine {
       gameStore.set({ arduinoProgramKey: key, screen: 'arduino_programming' })
       return
     }
-    if (hit && targetBlockId === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
-      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
-      gameStore.set({ sensorConfigKey: key, screen: 'sensor_config' })
-      return
-    }
-    if (hit && targetBlockId === B.SERVO && item === 'programming_tablet') {
-      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
-      gameStore.set({ servoConfigKey: key, screen: 'servo_config' })
-      return
-    }
-
     // Articulated bodies are authoritative on the host. Guests send an intent
     // rather than disassembling their local visual replica independently.
     if (hit?.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
@@ -1546,10 +1535,6 @@ export class Engine {
       hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
       hint = `${use} para abrir a programação do Arduino UNO`
-    } else if (hit?.id === B.SERVO && item === 'programming_tablet') {
-      hint = `${use} para programar o servo motor`
-    } else if (hit?.id === B.PROXIMITY_SENSOR && item === 'programming_tablet') {
-      hint = `${use} para programar o sensor de proximidade`
     } else if (hit?.id === B.MOTOR && (item === null || item === 'motor')) {
       const f = this.world.getState(hit.x, hit.y, hit.z)?.facing ?? 2
       const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
