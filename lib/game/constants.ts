@@ -19,7 +19,14 @@ export const B = {
   PROXIMITY_SENSOR: 12,
   COLOR_BLOCK: 13,
   SERVO: 14,
+  ARDUINO_UNO: 15,
 } as const
+
+export const ARDUINO_UNO_TERMINAL_IDS = [
+  'D0', 'D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'D11', 'D12', 'D13',
+  '5V', 'GND', 'GND_2', 'VIN',
+] as const
+export type ArduinoUnoTerminalId = (typeof ARDUINO_UNO_TERMINAL_IDS)[number]
 
 export const COLOR_VARIANTS = [
   { id: 'red', name: 'Vermelho', color: '#e53935' },
@@ -81,11 +88,11 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO
+  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO && id !== B.ARDUINO_UNO
 }
 
 export function isModelBlock(id: number) {
-  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO
+  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
@@ -93,11 +100,13 @@ const FULL: Bounds = [0, 0, 0, 1, 1, 1]
 const BOX_BOUNDS: Bounds = [0.04, 0, 0.08, 0.96, 0.36, 0.92]
 const SWITCH_BOUNDS: Bounds = [0.01, 0.04, 0.03, 0.99, 0.38, 0.97]
 const SENSOR_BOUNDS: Bounds = [0.04, 0.08, 0.04, 0.96, 0.92, 0.96]
+const ARDUINO_UNO_BOUNDS: Bounds = [0.02, 0.1, 0.03, 0.98, 0.3, 0.97]
 
 export function blockBounds(id: number): Bounds {
   if (id === B.BATTERY_BOX) return BOX_BOUNDS
   if (id === B.SWITCH) return SWITCH_BOUNDS
   if (id === B.PROXIMITY_SENSOR) return SENSOR_BOUNDS
+  if (id === B.ARDUINO_UNO) return ARDUINO_UNO_BOUNDS
   return FULL
 }
 
@@ -118,6 +127,7 @@ export type ItemId =
   | 'switch'
   | 'proximity_sensor'
   | 'servo'
+  | 'arduino_uno'
   | 'programming_tablet'
   | 'paintbrush'
   | `colored_block_${ColorVariantId}`
@@ -190,6 +200,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'motors',
     block: B.SERVO,
   },
+  arduino_uno: {
+    name: 'Arduino UNO',
+    description: 'Placa controladora com pinos D0–D13, 5V e GND conectáveis. A programação será adicionada em uma etapa futura.',
+    category: 'components',
+    block: B.ARDUINO_UNO,
+  },
   programming_tablet: {
     name: 'Tablet de Programação',
     description: 'Use na mão para abrir e editar a programação de componentes compatíveis.',
@@ -256,6 +272,7 @@ export const ITEM_ORDER: ItemId[] = [
   'switch',
   'proximity_sensor',
   'servo',
+  'arduino_uno',
   'motor',
   'wire',
   'glue',
@@ -281,6 +298,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.SWITCH]: 'switch',
   [B.PROXIMITY_SENSOR]: 'proximity_sensor',
   [B.SERVO]: 'servo',
+  [B.ARDUINO_UNO]: 'arduino_uno',
   [B.COLOR_BLOCK]: 'colored_block_red',
   [B.MOTOR]: 'motor',
   [B.BATTERY_BOX]: 'battery_box',

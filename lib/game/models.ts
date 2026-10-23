@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { DIRS } from './constants'
+import { ARDUINO_UNO_TERMINAL_IDS, DIRS, type ArduinoUnoTerminalId } from './constants'
 import { makePixelTexture, metalCanvas } from './textures'
 
 let mats: ReturnType<typeof createMaterials> | null = null
@@ -33,6 +33,8 @@ function createMaterials() {
     servoSignal: new THREE.MeshLambertMaterial({ color: 0xf4ce31 }),
     servoVoltage: new THREE.MeshLambertMaterial({ color: 0xc93635 }),
     servoGround: new THREE.MeshLambertMaterial({ color: 0x56382d }),
+    arduinoBlue: new THREE.MeshLambertMaterial({ color: 0x0875b9 }),
+    arduinoReset: new THREE.MeshLambertMaterial({ color: 0xd94135 }),
   }
 }
 
@@ -376,6 +378,163 @@ export function createSwitchModel(enabled = false): SwitchModel {
 
 export function setSwitchState(model: SwitchModel, enabled: boolean) {
   model.rocker.rotation.z = enabled ? -0.16 : 0.16
+}
+
+
+export interface ArduinoUnoTerminal {
+  id: ArduinoUnoTerminalId
+  localPosition: THREE.Vector3
+}
+
+export interface ArduinoUnoModel {
+  group: THREE.Group
+  terminals: ArduinoUnoTerminal[]
+}
+
+let arduinoSilkscreenMaterial: THREE.MeshBasicMaterial | null = null
+
+function getArduinoSilkscreenMaterial() {
+  if (arduinoSilkscreenMaterial) return arduinoSilkscreenMaterial
+  const canvas = document.createElement('canvas')
+  canvas.width = 512
+  canvas.height = 512
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.fillStyle = '#f5f6f7'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  const boardWidth = 0.84
+  const boardDepth = 0.76
+  const pxX = (x: number) => ((x + boardWidth / 2) / boardWidth) * canvas.width
+  const pxY = (z: number) => ((boardDepth / 2 - z) / boardDepth) * canvas.height
+
+  ctx.font = 'bold 17px Arial, sans-serif'
+  const digitalStart = -0.35
+  const digitalStep = 0.70 / 13
+  for (let i = 0; i <= 13; i++) ctx.fillText(String(i), pxX(digitalStart + digitalStep * i), pxY(-0.205))
+  ctx.font = 'bold 16px Arial, sans-serif'
+  ctx.fillText('DIGITAL (PWM~)', pxX(0.08), pxY(-0.145))
+  ctx.font = 'bold 18px Arial, sans-serif'
+  ctx.fillText('5V', pxX(-0.23), pxY(0.205))
+  ctx.font = 'bold 15px Arial, sans-serif'
+  ctx.fillText('GND', pxX(-0.11), pxY(0.205))
+  ctx.fillText('GND', pxX(0.01), pxY(0.205))
+  ctx.font = 'bold 16px Arial, sans-serif'
+  ctx.fillText('POWER', pxX(-0.12), pxY(0.14))
+  ctx.font = 'bold 13px Arial, sans-serif'
+  ctx.fillText('VIN', pxX(-0.34), pxY(0.12))
+  ctx.font = 'bold 20px Arial, sans-serif'
+  ctx.fillText('ARDUINO', pxX(0.30), pxY(0.13))
+  ctx.font = 'bold 24px Arial, sans-serif'
+  ctx.fillText('UNO', pxX(0.30), pxY(0.19))
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.magFilter = THREE.LinearFilter
+  texture.minFilter = THREE.LinearFilter
+  arduinoSilkscreenMaterial = new THREE.MeshBasicMaterial({
+    map: texture, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  })
+  return arduinoSilkscreenMaterial
+}
+
+/** Arduino UNO-inspired board whose wire terminals keep stable, independent IDs. */
+export function createArduinoUnoModel(): ArduinoUnoModel {
+  const m = getMaterials()
+  const group = new THREE.Group()
+  const box = (
+    width: number, height: number, depth: number,
+    x: number, y: number, z: number, material: THREE.Material,
+  ) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material)
+    mesh.position.set(x, y, z)
+    group.add(mesh)
+    return mesh
+  }
+
+  // Main blue PCB and mounting holes.
+  box(0.92, 0.06, 0.84, 0, 0, 0, m.arduinoBlue)
+  const silkscreen = new THREE.Mesh(new THREE.PlaneGeometry(0.84, 0.76), getArduinoSilkscreenMaterial())
+  silkscreen.rotation.x = -Math.PI / 2
+  silkscreen.position.set(0, 0.0315, 0)
+  group.add(silkscreen)
+  for (const x of [-0.4, 0.4]) {
+    for (const z of [-0.34, 0.34]) {
+      const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.034, 0.034, 0.014, 16), m.solder)
+      ring.position.set(x, 0.036, z)
+      group.add(ring)
+      const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.016, 16), m.batteryBlack)
+      hole.position.set(x, 0.044, z)
+      group.add(hole)
+    }
+  }
+
+  // USB-B connector and barrel power input are separate from the pin headers.
+  box(0.15, 0.105, 0.22, -0.37, 0.028, -0.055, m.steel)
+  box(0.035, 0.062, 0.14, -0.448, 0.035, -0.055, m.batteryBlack)
+  box(0.015, 0.04, 0.09, -0.468, 0.035, -0.055, m.steel)
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.067, 0.067, 0.15, 16), m.plastic)
+  barrel.rotation.z = Math.PI / 2
+  barrel.position.set(-0.37, 0.028, 0.245)
+  group.add(barrel)
+  const barrelRim = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.018, 16), m.steel)
+  barrelRim.rotation.z = Math.PI / 2
+  barrelRim.position.set(-0.45, 0.028, 0.245)
+  group.add(barrelRim)
+  const barrelOpening = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.02, 16), m.batteryBlack)
+  barrelOpening.rotation.z = Math.PI / 2
+  barrelOpening.position.set(-0.461, 0.028, 0.245)
+  group.add(barrelOpening)
+
+  // Reset button, USB interface chip, microcontroller, clock crystal and LEDs.
+  box(0.105, 0.055, 0.095, -0.285, 0.05, -0.02, m.plastic)
+  const reset = new THREE.Mesh(new THREE.CylinderGeometry(0.031, 0.031, 0.045, 16), m.arduinoReset)
+  reset.position.set(-0.285, 0.083, -0.02)
+  group.add(reset)
+  box(0.115, 0.035, 0.09, -0.13, 0.05, 0.075, m.batteryBlack)
+  box(0.22, 0.035, 0.16, 0.14, 0.052, 0.055, m.batteryBlack)
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 7; i++) box(0.018, 0.012, 0.012, 0.14 + side * 0.12, 0.043, -0.015 + i * 0.023, m.solder)
+  }
+  box(0.105, 0.027, 0.045, -0.13, 0.052, -0.12, m.steel)
+  for (const x of [-0.23, -0.18]) {
+    const led = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 6), x < -0.2 ? m.sensorOn : m.arduinoReset)
+    led.position.set(x, 0.075, -0.12)
+    group.add(led)
+  }
+
+  const terminals: ArduinoUnoTerminal[] = []
+  const addHeader = (
+    pins: { id: ArduinoUnoTerminalId; x: number; z: number; color?: THREE.Material }[],
+    width: number,
+  ) => {
+    if (!pins.length) return
+    const z = pins[0].z
+    const centerX = (pins[0].x + pins[pins.length - 1].x) / 2
+    box(width, 0.04, 0.075, centerX, 0.048, z, m.plastic)
+    for (const pin of pins) {
+      box(0.032, 0.036, 0.05, pin.x, 0.066, pin.z, m.batteryBlack)
+      box(0.018, 0.084, 0.018, pin.x, 0.092, pin.z, pin.color ?? m.brass)
+      terminals.push({ id: pin.id, localPosition: new THREE.Vector3(pin.x, 0.134, pin.z) })
+    }
+  }
+
+  const digitalPins = Array.from({ length: 14 }, (_, index) => ({
+    id: ARDUINO_UNO_TERMINAL_IDS[index],
+    x: -0.35 + index * (0.70 / 13),
+    z: -0.27,
+  }))
+  addHeader(digitalPins, 0.77)
+  addHeader([
+    { id: '5V', x: -0.23, z: 0.28, color: m.red },
+    { id: 'GND', x: -0.11, z: 0.28, color: m.batteryBlack },
+    { id: 'GND_2', x: 0.01, z: 0.28, color: m.batteryBlack },
+  ], 0.36)
+
+  // VIN is a selectable positive input contact on the barrel jack, not a data pin.
+  terminals.push({ id: 'VIN', localPosition: new THREE.Vector3(-0.43, 0.105, 0.245) })
+  return { group, terminals }
 }
 
 /* ---------------- Wires ---------------- */

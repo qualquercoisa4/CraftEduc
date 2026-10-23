@@ -25,6 +25,7 @@ export function tileFor(id: number, powered: boolean): number {
     case B.WOOD:
       return T.WOOD
     case B.COMPONENT:
+    case B.ARDUINO_UNO:
       return T.COMPONENT
     case B.LED:
       return powered ? T.LED_ON : T.LED_OFF
@@ -394,6 +395,21 @@ function drawItemPixels(item: ItemId, px: Px) {
       }
       rect(4, 12, 1, 3, [216, 178, 74]); rect(7, 12, 1, 3, [216, 178, 74])
       rect(10, 12, 1, 3, [216, 178, 74]); rect(13, 12, 1, 3, [216, 178, 74])
+      break
+    }
+    case 'arduino_uno': {
+      // Small pixel-art Arduino UNO silhouette with PCB, headers, USB and reset button.
+      rect(1, 3, 14, 10, [8, 105, 177])
+      rect(2, 4, 12, 8, [12, 119, 191])
+      rect(2, 2, 12, 1, [120, 190, 225])
+      rect(1, 5, 2, 4, [185, 193, 201])
+      rect(0, 6, 2, 2, [45, 49, 54])
+      rect(5, 5, 5, 4, [25, 27, 31])
+      rect(5, 5, 5, 1, [75, 80, 86])
+      for (const x of [3, 5, 7, 9, 11]) rect(x, 2, 1, 2, [242, 194, 48])
+      for (const x of [3, 5, 7, 9, 11]) rect(x, 12, 1, 2, [242, 194, 48])
+      rect(12, 4, 2, 2, [35, 37, 41])
+      px(13, 4, [224, 54, 48])
       break
     }
     case 'servo': {

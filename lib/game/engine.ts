@@ -22,7 +22,7 @@ import { Mechanics, type Wire } from './mechanics'
 import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { createArduinoWheelModel, createBatteryBoxModel, createMotorModel, createProximitySensorModel, wireCurve } from './models'
+import { createArduinoUnoModel, createArduinoWheelModel, createBatteryBoxModel, createMotorModel, createProximitySensorModel, wireCurve } from './models'
 import { Particles } from './particles'
 import { Player } from './player'
 import { HORIZON_COLOR, createSky } from './sky'
@@ -1202,6 +1202,15 @@ export class Engine {
       g.scale.setScalar(0.5)
       g.position.set(0.48, -0.42, -0.75)
       g.rotation.set(0.1, 0.5, 0)
+      return g
+    }
+    if (item === 'arduino_uno') {
+      const m = createArduinoUnoModel().group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.48)
+      g.position.set(0.48, -0.46, -0.78)
+      g.rotation.set(0.16, 0.52, 0.12)
       return g
     }
     if (item === 'proximity_sensor') {

@@ -11,6 +11,8 @@ import {
   type SwitchModel,
   type ProximitySensorModel,
   type ServoModel,
+  type ArduinoUnoModel,
+  createArduinoUnoModel,
   createProximitySensorModel,
   createServoModel,
   setServoFacing,
@@ -101,6 +103,7 @@ type ModelEntry =
   | { type: 'switch'; model: SwitchModel }
   | { type: 'sensor'; model: ProximitySensorModel }
   | { type: 'servo'; model: ServoModel; status: 'idle' | 'stalled' | 'driving' }
+  | { type: 'arduino_uno'; model: ArduinoUnoModel }
 
 export interface Wire {
   id: number
@@ -260,7 +263,7 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     if (this.suppress) return
     const key = posKey(x, y, z)
-    if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR) {
+    if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -329,6 +332,11 @@ export class Mechanics {
       model.shaft.rotation.z = state.servoOffAngle * Math.PI / 180
       this.scene.add(model.group)
       this.models.set(key, { type: 'servo', model, status: 'idle' })
+    } else if (newId === B.ARDUINO_UNO) {
+      const model = createArduinoUnoModel()
+      model.group.position.set(x + 0.5, y + 0.14, z + 0.5)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'arduino_uno', model })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
@@ -720,6 +728,17 @@ export class Mechanics {
   resolveTerminal(key: string, hitPoint: THREE.Vector3, face: number) {
     const [x, y, z] = parseKey(key)
     const id = this.world.getBlock(x, y, z)
+    if (id === B.ARDUINO_UNO) {
+      const entry = this.models.get(key)
+      if (entry?.type !== 'arduino_uno') return null
+      entry.model.group.updateWorldMatrix(true, false)
+      const terminals = entry.model.terminals.map((terminal) => ({
+        terminal: terminal.id,
+        point: entry.model.group.localToWorld(terminal.localPosition.clone()),
+      }))
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.065 ? terminals[0] : null
+    }
     if (id === B.BATTERY_BOX) {
       const terminals = [
         { terminal: '+', point: new THREE.Vector3(x + 0.82, y + 0.12, z + 0.97) },
@@ -803,6 +822,22 @@ export class Mechanics {
 
   wiresAt(key: string) {
     return this.wires.filter((w) => w.a === key || w.b === key)
+  }
+
+  /** Resolve which component and terminal are connected to a specific Arduino pin. */
+  getTerminalConnections(key: string, terminal: string) {
+    return this.wires
+      .filter((wire) => (wire.a === key && wire.ta === terminal) || (wire.b === key && wire.tb === terminal))
+      .map((wire) => {
+        const isA = wire.a === key && wire.ta === terminal
+        return {
+          wireId: wire.id,
+          terminal,
+          componentKey: isA ? wire.b : wire.a,
+          componentTerminal: isA ? wire.tb : wire.ta,
+          color: wire.color,
+        }
+      })
   }
 
   removeWiresAt(key: string) {
