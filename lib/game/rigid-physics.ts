@@ -111,13 +111,24 @@ export class RigidPhysics {
             .setRestitution(0.005),
           this.fixedBody,
         )
-        physics.createCollider(
-          RAPIER.ColliderDesc.cuboid(64, 0.5, 64)
-            .setTranslation(0, this.voxelWorld.waterBottomY - 0.5, 0)
-            .setFriction(0.72)
-            .setRestitution(0.005),
-          this.fixedBody,
-        )
+        // Match the four ocean regions used by the water surface meshes.
+        // Keeping the seabed out from under the island prevents a second,
+        // lower floor from catching objects underneath the platform.
+        const oceanFloorRegions = [
+          { x: 0, z: -37, width: 128, depth: 54 },
+          { x: 0, z: 37, width: 128, depth: 54 },
+          { x: -37, z: 0, width: 54, depth: 20 },
+          { x: 37, z: 0, width: 54, depth: 20 },
+        ]
+        for (const region of oceanFloorRegions) {
+          physics.createCollider(
+            RAPIER.ColliderDesc.cuboid(region.width / 2, 0.5, region.depth / 2)
+              .setTranslation(region.x, this.voxelWorld.waterBottomY - 0.5, region.z)
+              .setFriction(0.72)
+              .setRestitution(0.005),
+            this.fixedBody,
+          )
+        }
       } else {
         // Other worlds preserve their existing continuous ground.
         physics.createCollider(
