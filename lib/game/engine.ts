@@ -26,7 +26,7 @@ import { isMotorItemId, motorItemForVariant } from './motor-specs'
 import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { createArduinoUnoModel, createArduinoWheelModel, createBatteryBoxModel, createMotorModel, createProximitySensorModel, wireCurve } from './models'
+import { createArduinoUnoModel, createArduinoWheelModel, createBatteryBoxModel, createMotorModel, createProximitySensorModel, motorWorldBounds, wireCurve } from './models'
 import { Particles } from './particles'
 import { Player } from './player'
 import { HORIZON_COLOR, createSky } from './sky'
@@ -582,8 +582,8 @@ export class Engine {
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
       return
     }
-    if (cell.id === B.MOTOR && (item == null || isMotorItemId(item)) && !intent.sneaking) {
-      this.mech.rotateMotor(cell.x, cell.y, cell.z)
+    if (cell.id === B.MOTOR && (item == null || isMotorItemId(item))) {
+      this.mech.rotateMotor(cell.x, cell.y, cell.z, intent.sneaking)
       const state = this.world.getState(cell.x, cell.y, cell.z)
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
       return
@@ -598,7 +598,7 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
@@ -1251,12 +1251,13 @@ export class Engine {
       return
     }
 
-    if (hit.id === B.MOTOR && (item === null || item === 'motor') && !this.player.sneaking) {
-      const f = this.mech.rotateMotor(hit.x, hit.y, hit.z)
+    if (hit.id === B.MOTOR && (item === null || isMotorItemId(item))) {
+      const rolling = this.player.sneaking
+      const orientation = this.mech.rotateMotor(hit.x, hit.y, hit.z, rolling)
       const state = this.world.getState(hit.x, hit.y, hit.z)
       this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
       sfx.rotate()
-      showToast(`Motor virado para: ${DIR_NAMES[f]}`)
+      showToast(rolling ? `Motor girado no eixo de saída (${(state?.motorRoll ?? 0) * 90}°)` : `Motor virado para: ${DIR_NAMES[orientation]}`)
       return
     }
 
@@ -1271,7 +1272,7 @@ export class Engine {
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
-    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: hit.face, motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
@@ -1817,11 +1818,11 @@ export class Engine {
       hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
       hint = `${use} para abrir a programação do Arduino UNO`
-    } else if (hit?.id === B.MOTOR && (item === null || item === 'motor')) {
-      const f = this.world.getState(hit.x, hit.y, hit.z)?.facing ?? 2
+    } else if (hit?.id === B.MOTOR && (item === null || isMotorItemId(item))) {
+      const state = this.world.getState(hit.x, hit.y, hit.z)
       const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
       const extra = status === 'stalled' ? '  •  TRAVADO!' : ''
-      hint = `${use} para girar o motor (eixo: ${DIR_NAMES[f]})${extra}`
+      hint = this.player.sneaking ? `${use} para girar o motor 90° ao redor do eixo de saída${extra}` : `${use} para mudar a direção do eixo do motor (${DIR_NAMES[state?.facing ?? 2]})${extra}`
     } else if (item === 'battery') {
       hint = 'Mire num compartimento de pilha AAA'
     }
