@@ -484,6 +484,47 @@ function drawItemPixels(item: ItemId, px: Px) {
       px(5, 7, [210, 60, 50])
       break
     }
+    case 'motor_tt': {
+      // Yellow TT gearbox, side-mounted DC can and output shaft.
+      rect(1, 5, 6, 6, [166, 173, 182])
+      rect(2, 4, 4, 1, [217, 221, 226])
+      rect(1, 10, 6, 2, [91, 97, 105])
+      rect(6, 4, 8, 8, [255, 196, 0])
+      rect(7, 5, 6, 6, [232, 170, 0])
+      rect(7, 5, 6, 1, [255, 223, 89])
+      rect(8, 7, 4, 1, [196, 145, 8])
+      rect(12, 6, 2, 4, [187, 193, 201])
+      rect(14, 7, 2, 2, [235, 237, 241])
+      px(2, 3, [211, 131, 67])
+      break
+    }
+    case 'motor_n20': {
+      // Compact N20 metal can and high-ratio steel gearbox.
+      rect(2, 5, 7, 6, [170, 177, 185])
+      rect(3, 4, 5, 1, [226, 230, 234])
+      rect(3, 11, 5, 1, [108, 115, 124])
+      rect(2, 6, 7, 1, [207, 212, 218])
+      rect(8, 4, 5, 8, [116, 124, 134])
+      rect(9, 5, 3, 6, [179, 186, 194])
+      rect(12, 6, 2, 4, [211, 216, 222])
+      rect(14, 7, 2, 2, [237, 239, 242])
+      px(4, 7, [210, 62, 51])
+      break
+    }
+    case 'motor_37d': {
+      // Large black motor can, silver gearbox and thick shaft.
+      rect(1, 5, 7, 7, [35, 38, 42])
+      rect(2, 4, 5, 1, [80, 85, 92])
+      rect(2, 6, 5, 1, [58, 62, 69])
+      rect(1, 10, 7, 2, [23, 25, 28])
+      rect(7, 4, 6, 9, [169, 177, 186])
+      rect(8, 5, 4, 7, [201, 207, 213])
+      rect(7, 4, 6, 1, [232, 235, 239])
+      for (const y of [5, 10]) for (const x of [8, 11]) px(x, y, [88, 94, 102])
+      rect(12, 6, 2, 5, [187, 193, 201])
+      rect(14, 7, 2, 2, [231, 233, 237])
+      break
+    }
     case 'wire': {
       rect(2, 2, 2, 12, [74, 74, 80])
       rect(12, 2, 2, 12, [74, 74, 80])
