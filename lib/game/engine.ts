@@ -598,7 +598,15 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
+    if (this.isMotorFootprintOccupied(x, y, z)) {
+      showToast('Esse espaço já está ocupado pela carcaça de um motor')
+      return
+    }
     const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    if (block === B.MOTOR && this.motorModelOverlapsBlocks(x, y, z, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(cell.x, cell.y, cell.z))) {
+      showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
+      return
+    }
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
@@ -1270,9 +1278,17 @@ export class Engine {
     const pz = hit.z + n[2]
     if (py < 0 || py >= WORLD_HEIGHT) return
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
+    if (this.isMotorFootprintOccupied(px, py, pz)) {
+      showToast('Esse espaço já está ocupado pela carcaça de um motor')
+      return
+    }
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
     const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    if (block === B.MOTOR && this.motorModelOverlapsBlocks(px, py, pz, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(hit.x, hit.y, hit.z))) {
+      showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
+      return
+    }
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
