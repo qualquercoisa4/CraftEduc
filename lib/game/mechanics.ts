@@ -48,6 +48,22 @@ const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
 const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
+
+/**
+ * Approximate a DC motor's torque-speed curve without changing its no-load
+ * target speed. Torque is strongest at standstill and falls as the rotor
+ * approaches the commanded speed. A small floor preserves controller authority
+ * under load and avoids making simple classroom robots unexpectedly stall.
+ */
+export function motorTorqueFactorForSpeed(targetSpeed: number, actualRelativeSpeed: number) {
+  if (!Number.isFinite(targetSpeed) || !Number.isFinite(actualRelativeSpeed)) return 0
+  const targetMagnitude = Math.abs(targetSpeed)
+  if (targetMagnitude < 1e-4) return 0
+  const speedRatio = actualRelativeSpeed * Math.sign(targetSpeed) / targetMagnitude
+  if (speedRatio <= 0) return 1
+  return THREE.MathUtils.clamp(1 - speedRatio * 0.85, 0.15, 1)
+}
+
 export const PROXIMITY_SENSOR_RANGE = 32
 export type ProximityComparison = 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
 
@@ -2799,6 +2815,28 @@ export class Mechanics {
     })
   }
 
+  /**
+   * Measure the rotor speed relative to its chassis along the joint axis.
+   * Using relative speed keeps the motor model correct when the whole robot
+   * turns or moves, instead of treating world-space rotation as motor speed.
+   */
+  private relativeAngularSpeedAlongAxis(
+    rotorBody: RAPIER.RigidBody,
+    chassisBody: RAPIER.RigidBody,
+    localAxis: THREE.Vector3,
+  ) {
+    const rawRotation = chassisBody.rotation()
+    const chassisRotation = new THREE.Quaternion(
+      rawRotation.x, rawRotation.y, rawRotation.z, rawRotation.w,
+    )
+    const axis = localAxis.clone().applyQuaternion(chassisRotation).normalize()
+    const rotor = rotorBody.angvel()
+    const chassis = chassisBody.angvel()
+    return (rotor.x - chassis.x) * axis.x
+      + (rotor.y - chassis.y) * axis.y
+      + (rotor.z - chassis.z) * axis.z
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
@@ -2969,7 +3007,9 @@ export class Mechanics {
         c.speed = power * MOTOR_RAD_PER_POWER_UNIT * direction
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * power)
+        const actualSpeed = this.relativeAngularSpeedAlongAxis(c.rotorBody, c.chassisBody, c.axis)
+        const torqueFactor = motorTorqueFactorForSpeed(c.speed, actualSpeed)
+        c.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * power * torqueFactor)
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
@@ -3002,7 +3042,9 @@ export class Mechanics {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
           extra.speed = extraPower * MOTOR_RAD_PER_POWER_UNIT * extraDirection
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * extraPower)
+          const actualSpeed = this.relativeAngularSpeedAlongAxis(extra.rotorBody, c.chassisBody, extra.axis)
+          const torqueFactor = motorTorqueFactorForSpeed(extra.speed, actualSpeed)
+          extra.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * extraPower * torqueFactor)
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {

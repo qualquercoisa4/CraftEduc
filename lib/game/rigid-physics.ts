@@ -13,9 +13,11 @@ export interface PhysicsVoxel {
 }
 
 /**
- * Relative block mass in kilograms per voxel. Density is applied to each
- * Rapier collider, so multi-block assemblies get their mass and inertia from
- * the actual material mix instead of treating every block as equally heavy.
+ * Effective mass in kilograms for each component/voxel. Mass is assigned
+ * directly to the collider so intentional shape changes (for example, the
+ * smaller motor housing around a mounted wheel) do not change component mass.
+ * Rapier still derives the assembly's combined centre of mass and inertia
+ * from each collider's mass, shape and position.
  */
 export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.AIR]: 0,
@@ -238,7 +240,10 @@ export class RigidPhysics {
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
           // Rapier derives total mass, centre of mass and inertia from every
           // collider's density and position; offset/heavy parts can tip the build.
-          .setDensity(blockMass(voxel.id, voxel.state))
+          // A voxel's configured mass belongs to the component, not its collider
+          // volume. This matters for the intentionally smaller motor housing:
+          // changing its collision shape must not silently make the motor lighter.
+          .setMass(blockMass(voxel.id, voxel.state))
           .setFriction(blockFriction(voxel.id))
           .setRestitution(0.005),
         body,
@@ -312,7 +317,10 @@ export class RigidPhysics {
 
     // Fixed 60 Hz integration with bounded catch-up prevents the same build
     // behaving differently at 25 FPS and 60 FPS.
-    this.accumulator += Math.max(0, Math.min(dt, 0.1))
+    // A bad frame delta must never poison the accumulator with NaN or
+    // infinity; ignore invalid deltas and let the next valid frame recover.
+    const safeDt = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0
+    this.accumulator += safeDt
     let steps = 0
     while (this.accumulator >= this.fixedStep && steps < this.maxSubsteps) {
       this.rapierWorld.timestep = this.fixedStep
