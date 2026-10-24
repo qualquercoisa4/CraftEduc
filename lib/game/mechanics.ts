@@ -37,12 +37,11 @@ import type { Player } from './player'
 
 const HALF_PI = Math.PI / 2
 // Approximate electromechanical limits in SI units.
-const MOTOR_RAD_PER_POWER_UNIT = 1.05
-const MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_VELOCITY_DAMPING = 2.0
-const MOTOR_COAST_TORQUE_NM = 0.12
+const MOTOR_COAST_TORQUE_NM = 0.001
 const MOTOR_COAST_DAMPING = 0.25
-const SERVO_MAX_TORQUE_NM = 1.6
+// TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
+const SERVO_MAX_TORQUE_NM = 0.176
 // Avoid the exact PI boundary in revolute-joint limits.
 const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
@@ -345,7 +344,7 @@ export class Mechanics {
     if (newId === B.MOTOR) {
       const st = this.world.ensureState(x, y, z)
       st.facing ??= 2
-      const model = createMotorModel(st.facing)
+      const model = createMotorModel(st.facing, st.motorType)
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'motor', model, spin: 0, status: 'idle' })
@@ -3023,10 +3022,26 @@ export class Mechanics {
         c.joint.configureMotorPosition(commandedTarget, 18, 3)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
-        c.speed = power * MOTOR_RAD_PER_POWER_UNIT * direction
+        const spec = getMotorSpec(c.motorState?.motorType)
+        // Battery cells are modeled as 1.5 V each. Speed and available torque
+        // scale with delivered voltage; the motor's torque falls as its shaft
+        // approaches no-load speed, using a linear DC motor torque-speed curve.
+        const voltageRatio = Math.max(0, Math.min(1, power * 1.5 / spec.nominalVoltageV))
+        const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
+        const rotorOmega = c.rotorBody.angvel()
+        const chassisOmega = c.chassisBody.angvel()
+        const relativeOmega = Math.hypot(
+          rotorOmega.x - chassisOmega.x,
+          rotorOmega.y - chassisOmega.y,
+          rotorOmega.z - chassisOmega.z,
+        )
+        const torqueRatio = targetOmega > 1e-5
+          ? Math.max(0.03, Math.min(1, 1 - relativeOmega / targetOmega))
+          : 0
+        c.speed = targetOmega * direction
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * power)
+        c.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio))
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
@@ -3057,9 +3072,21 @@ export class Mechanics {
         const extraMotor = this.models.get(extra.motorKey)
         if (extraPower > 0) {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-          extra.speed = extraPower * MOTOR_RAD_PER_POWER_UNIT * extraDirection
+          const spec = getMotorSpec(extra.motorState?.motorType)
+          const voltageRatio = Math.max(0, Math.min(1, extraPower * 1.5 / spec.nominalVoltageV))
+          const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
+          const rotorOmega = extra.rotorBody.angvel()
+          const relativeOmega = Math.hypot(
+            rotorOmega.x - chassisOmega.x,
+            rotorOmega.y - chassisOmega.y,
+            rotorOmega.z - chassisOmega.z,
+          )
+          const torqueRatio = targetOmega > 1e-5
+            ? Math.max(0.03, Math.min(1, 1 - relativeOmega / targetOmega))
+            : 0
+          extra.speed = targetOmega * extraDirection
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(MOTOR_MAX_TORQUE_PER_POWER_UNIT_NM * extraPower)
+          extra.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
