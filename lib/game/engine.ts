@@ -1658,6 +1658,106 @@ export class Engine {
     if (hint !== s.hint) gameStore.set({ hint })
   }
 
+  private frame = (now: number) => {
+    this.raf = requestAnimationFrame(this.frame)
+    const dt = Math.min(0.05, (now - this.last) / 1000)
+    this.last = now
+    this.elapsed += dt
+    this.frames++
+    const s = gameStore.get()
+    const frozen = s.screen === 'paused' || ((s.screen === 'options' || s.screen === 'controls') && s.returnScreen === 'paused')
+
+    let centerX: number
+    let centerZ: number
+    if (s.screen === 'title' || ((s.screen === 'options' || s.screen === 'controls') && s.returnScreen === 'title')) {
+      const a = this.elapsed * 0.08
+      const cx = 4.5
+      const cz = -3.5
+      this.camera.position.set(cx + Math.sin(a) * 10, GROUND_LEVEL + 5, cz + Math.cos(a) * 10)
+      this.camera.lookAt(cx, GROUND_LEVEL + 1, cz)
+      centerX = this.camera.position.x
+      centerZ = this.camera.position.z
+      this.outline.visible = false
+      this.handRoot.visible = false
+      this.mech.update(dt)
+    } else {
+      this.handRoot.visible = true
+      if (!frozen) {
+        const playing = s.screen === 'playing'
+        const k = this.keys
+        const t = this.touch
+        const forward = playing ? (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) + t.moveY : 0
+        const strafe = playing ? (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + t.moveX : 0
+        if (forward <= 0) this.sprintLatch = false
+        const shift = playing && (k.has('ShiftLeft') || k.has('ShiftRight'))
+        const space = playing && k.has('Space')
+        this.player.update(dt, {
+          forward,
+          strafe,
+          jump: space || (playing && t.jump),
+          sneak: shift || (playing && t.sneak),
+          sprint: playing && (k.has('ControlLeft') || k.has('ControlRight') || this.sprintLatch || t.sprint),
+          flyUp: space || (playing && t.flyUp),
+          flyDown: shift || (playing && t.flyDown),
+        })
+        if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
+          gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
+        this.mech.update(dt)
+        // Player-vs-machine contacts use the latest host snapshot on every client.
+        // The client moves only its local player; it never advances the shared machine physics.
+        if (playing) this.mech.resolvePlayerCollision(this.player, dt)
+      }
+      this.updateCamera(dt)
+      centerX = this.player.pos.x
+      centerZ = this.player.pos.z
+      this.updateTarget()
+      if (s.screen === 'playing') this.updateHolds(dt)
+      this.updateHand(frozen ? 0 : dt)
+      this.updateHint()
+    }
+
+    this.updateRemoteAvatars(frozen ? 0 : dt)
+    this.sky.mesh.position.copy(this.camera.position)
+    this.sky.material.uniforms.uTime.value = this.elapsed
+    this.updateChunks(centerX, centerZ)
+    this.particles.update(frozen ? 0 : dt, this.camera)
+    if (this.physicsDebugLabel) {
+      const hit = this.target
+      const target = hit
+        ? `\nray target: id=${hit.id} cell=(${hit.x},${hit.y},${hit.z}) dist=${hit.dist.toFixed(2)} moving=${hit.moving?.kind ?? 'static'} source=${hit.moving?.key ?? '-'}`
+        : '\nray target: none'
+      this.physicsDebugLabel.textContent = this.mech.physicsDebugText() + target
+    }
+
+    this.renderer.clear()
+    this.renderer.render(this.scene, this.camera)
+    if (this.handRoot.visible) {
+      this.renderer.clearDepth()
+      this.renderer.render(this.handScene, this.handCamera)
+    }
+
+    this.debugTimer += dt
+    if (this.debugTimer > 0.5) {
+      this.fps = Math.round(this.frames / this.debugTimer)
+      this.frames = 0
+      this.debugTimer = 0
+      if (s.debug) {
+        const p = this.player.pos
+        const yawDeg = ((((-this.player.yaw * 180) / Math.PI) % 360) + 360) % 360
+        const facing = ['Norte (-Z)', 'Leste (+X)', 'Sul (+Z)', 'Oeste (-X)'][Math.round(yawDeg / 90) % 4]
+        gameStore.set({
+          debugInfo: [
+            `CraftEduc Robótica (${this.fps} fps)`,
+            `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
+            `Chunk: ${Math.floor(p.x / CHUNK_SIZE)}, ${Math.floor(p.z / CHUNK_SIZE)}  (${this.world.chunks.size} carregados)`,
+            `Olhando para: ${facing}`,
+            `Fios: ${this.mech.wires.length}  Mecanismos: ${this.mech.contraptions.size}`,
+          ].join('\n'),
+        })
+      }
+    }
+  }
+
   private updateCamera(dt: number) {
     const p = this.player
     const s = gameStore.get()
@@ -1673,107 +1773,6 @@ export class Engine {
     cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-10 * dt))
     cam.updateProjectionMatrix()
     cam.updateMatrixWorld()
-  }
-
-  private updateTarget() {
-    const dir = new THREE.Vector3()
-    this.camera.getWorldDirection(dir)
-    const origin = new THREE.Vector3(this.player.pos.x, this.player.pos.y + this.player.eye, this.player.pos.z)
-    this.targetRayOrigin.copy(origin)
-    this.targetRayDirection.copy(dir).normalize()
-    const hit = this.raycast(origin, dir, REACH)
-    this.target = hit
-    if (hit) {
-      const b = blockBounds(hit.id)
-      this.outline.visible = true
-      this.outline.position.set(hit.x + (b[0] + b[3]) / 2, hit.y + (b[1] + b[4]) / 2, hit.z + (b[2] + b[5]) / 2)
-      this.outline.scale.set(b[3] - b[0] + 0.004, b[4] - b[1] + 0.004, b[5] - b[2] + 0.004)
-    } else this.outline.visible = false
-
-    if (this.wireStart) {
-      this.wireMarker.visible = true
-      this.wireMarker.position.copy(this.wireStart.point)
-      const end = hit ? hit.point : origin.clone().addScaledVector(dir, 3)
-      const pts = wireCurve(this.wireStart.point, end).getPoints(15)
-      ;(this.wirePreview.geometry as THREE.BufferGeometry).setFromPoints(pts)
-      this.wirePreview.visible = true
-    } else {
-      this.wireMarker.visible = false
-      this.wirePreview.visible = false
-    }
-  }
-
-  private updateHolds(dt: number) {
-    if (this.breakHeld) {
-      this.breakTimer -= dt
-      if (this.breakTimer <= 0) {
-        this.breakTimer = 0.3
-        this.breakBlock()
-      }
-    }
-    if (this.useHeld && this.lastUseWasPlace) {
-      this.useTimer -= dt
-      if (this.useTimer <= 0) {
-        this.useTimer = 0.2
-        this.use()
-      }
-    }
-    if (this.touchHolding && !this.touchMovedFar) {
-      this.touchHoldTime += dt
-      const threshold = 0.35
-      if (!this.touchBroke) {
-        gameStore.set({ breakProgress: Math.min(1, this.touchHoldTime / threshold) })
-        if (this.touchHoldTime >= threshold) {
-          this.touchBroke = true
-          this.breakTimer = 0.3
-          this.breakBlock()
-          gameStore.set({ breakProgress: 0 })
-        }
-      } else {
-        this.breakTimer -= dt
-        if (this.breakTimer <= 0) {
-          this.breakTimer = 0.3
-          this.breakBlock()
-        }
-      }
-    } else if (this.touchHolding && this.touchBroke) {
-      this.breakTimer -= dt
-      if (this.breakTimer <= 0) {
-        this.breakTimer = 0.3
-        this.breakBlock()
-      }
-    }
-  }
-
-  private updateHint() {
-    const s = gameStore.get()
-    const item = s.hotbar[s.selected]
-    const hit = this.target
-    const use = s.isTouch ? 'Toque' : 'Botão direito'
-    let hint: string | null = null
-    if (isWireItem(item)) {
-      hint = this.wireStart
-        ? `${use} em um terminal para terminar o fio  •  ${s.isTouch ? 'Segure' : 'Botão esquerdo'} para cancelar`
-        : `${use} em um terminal para começar o fio`
-    } else if (item === 'glue') {
-      hint = `${use} numa face para aplicar ou remover cola quente`
-    } else if (item === 'resin_applicator') {
-      hint = `${use} em um bloco para aplicar ou remover a resina protetora`
-    } else if (hit?.id === B.BATTERY_BOX && item === 'battery') {
-      hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
-    } else if (hit?.id === B.BATTERY_BOX && item === null) {
-      hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
-    } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
-      hint = `${use} para abrir a programação do Arduino UNO`
-    } else if (hit?.id === B.MOTOR && (item === null || item === 'motor')) {
-      const f = this.world.getState(hit.x, hit.y, hit.z)?.facing ?? 2
-      const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
-      const extra = status === 'stalled' ? '  •  TRAVADO!' : ''
-      hint = `${use} para girar o motor (eixo: ${DIR_NAMES[f]})${extra}`
-    } else if (item === 'battery') {
-      hint = 'Mire num compartimento de pilha AAA'
-    }
-    if (hint !== s.hint) gameStore.set({ hint })
   }
 
   private updateChunks(px: number, pz: number) {
