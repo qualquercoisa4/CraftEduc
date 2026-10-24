@@ -59,24 +59,91 @@ function cylZ(radius: number, length: number, mat: THREE.Material, z: number, se
   return m
 }
 
+export type MotorTerminalId = 'A' | 'B'
+export interface MotorTerminal {
+  id: MotorTerminalId
+  localPosition: THREE.Vector3
+}
+
 export interface MotorModel {
   group: THREE.Group
   shaft: THREE.Group
+  terminals: MotorTerminal[]
 }
 
-export function createMotorModel(facing: number, variant: MotorVariantId = 'fa130'): MotorModel {
+/** Local-space housing and exposed-lead envelope before orientation is applied. */
+export function getMotorLocalBounds(variant: MotorVariantId | string | null | undefined) {
+  switch (variant) {
+    case 'tt48':
+      return { min: new THREE.Vector3(-1.22, -0.34, -0.47), max: new THREE.Vector3(0.44, 0.34, 0.47) }
+    case 'n20_100':
+      return { min: new THREE.Vector3(-0.19, -0.20, -1.02), max: new THREE.Vector3(0.19, 0.20, 0.50) }
+    case '37d_30':
+      return { min: new THREE.Vector3(-0.31, -0.30, -0.51), max: new THREE.Vector3(0.31, 0.30, 0.55) }
+    default:
+      return { min: new THREE.Vector3(-0.31, -0.31, -0.54), max: new THREE.Vector3(0.31, 0.31, 0.50) }
+  }
+}
+
+/** Roll about the local output shaft; this preserves the shaft's facing direction. */
+export function motorOrientationQuaternion(facing: number, roll = 0) {
+  const facingQ = facingQuaternion(facing)
+  const turns = ((Math.round(roll) % 4) + 4) % 4
+  return facingQ.multiply(new THREE.Quaternion().setFromAxisAngle(Z_AXIS, turns * Math.PI / 2))
+}
+
+/** State-aware world AABB used for extended motor targeting and collision envelopes. */
+export function motorWorldBounds(
+  x: number, y: number, z: number,
+  variant: MotorVariantId | string | null | undefined,
+  facing = 2, roll = 0,
+) {
+  const local = getMotorLocalBounds(variant)
+  const localCenter = local.min.clone().add(local.max).multiplyScalar(0.5)
+  const half = local.max.clone().sub(local.min).multiplyScalar(0.5)
+  const q = motorOrientationQuaternion(facing, roll)
+  const center = localCenter.applyQuaternion(q).add(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5))
+  const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(q)
+  const ay = new THREE.Vector3(0, 1, 0).applyQuaternion(q)
+  const az = new THREE.Vector3(0, 0, 1).applyQuaternion(q)
+  const extent = new THREE.Vector3(
+    Math.abs(ax.x) * half.x + Math.abs(ay.x) * half.y + Math.abs(az.x) * half.z,
+    Math.abs(ax.y) * half.x + Math.abs(ay.y) * half.y + Math.abs(az.y) * half.z,
+    Math.abs(ax.z) * half.x + Math.abs(ay.z) * half.y + Math.abs(az.z) * half.z,
+  )
+  return { min: center.clone().sub(extent), max: center.clone().add(extent) }
+}
+
+function addMotorTerminal(
+  group: THREE.Group,
+  id: MotorTerminalId,
+  wireAnchor: THREE.Vector3,
+  exposedPoint: THREE.Vector3,
+  wireMaterial: THREE.Material,
+): MotorTerminal {
+  const delta = exposedPoint.clone().sub(wireAnchor)
+  const lead = new THREE.Mesh(
+    new THREE.BoxGeometry(0.045, 0.045, Math.max(0.025, delta.length())),
+    wireMaterial,
+  )
+  lead.position.copy(wireAnchor).add(exposedPoint).multiplyScalar(0.5)
+  lead.quaternion.setFromUnitVectors(Z_AXIS, delta.clone().normalize())
+  group.add(lead)
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.04, 0.045), getMaterials().copper)
+  tip.position.copy(exposedPoint)
+  group.add(tip)
+  return { id, localPosition: exposedPoint.clone() }
+}
+
+export function createMotorModel(facing: number, variant: MotorVariantId = 'fa130', roll = 0): MotorModel {
   const m = getMaterials()
   const group = new THREE.Group()
   const inner = new THREE.Group()
   group.add(inner)
 
-  // FA-130 remains the original model: keep the existing scale, position,
-  // end cap, terminals and front bearing exactly as before the variant redesign.
-  // Only TT and N20 are elongated; 37D stays in a compact single-block envelope.
   if (variant === 'tt48') {
-    // TT dual-shaft gearmotor: long transverse DC can and unmistakable yellow
-    // reduction box. The two opposed output axles are children of one rotor group,
-    // so both sides visibly rotate together.
+    // TT gearbox: long side-mounted DC can, distinctive yellow reduction case,
+    // molded seam, ribs, top cover and four fastening points.
     const can = cylZ(0.205, 0.94, m.motorBody, -0.53, 18)
     can.rotation.y = Math.PI / 2
     can.position.set(-0.50, 0, -0.09)
@@ -99,90 +166,98 @@ export function createMotorModel(facing: number, variant: MotorVariantId = 'fa13
     const bottomSeam = new THREE.Mesh(new THREE.BoxGeometry(0.59, 0.028, 0.48), m.plastic)
     bottomSeam.position.set(0.09, -0.292, 0)
     inner.add(bottomSeam)
-    // Molded ribs and small cover screws make the reduction housing legible.
+    const sideCover = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.32, 0.022), m.yellow)
+    sideCover.position.set(0.09, -0.005, 0.319)
+    inner.add(sideCover)
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.018, 0.028), m.plastic)
+    seam.position.set(0.09, -0.19, 0.326)
+    inner.add(seam)
     for (const x of [-0.19, 0.00, 0.19]) {
       const rib = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.36, 0.025), m.brass)
       rib.position.set(x, 0.015, 0.312)
       inner.add(rib)
     }
     for (const x of [-0.15, 0.31]) {
-      const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 8), m.steel)
-      screw.position.set(x, 0.325, -0.13)
-      inner.add(screw)
+      for (const z of [-0.13, 0.13]) {
+        const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 8), m.steel)
+        screw.rotation.x = Math.PI / 2
+        screw.position.set(x, 0.325, z)
+        inner.add(screw)
+      }
     }
 
+    // The TT has two opposed output shafts on the reduction gearbox. Both are
+    // children of one rotor pivot, so they rotate independently of the housing
+    // but always together with each other.
     const shaft = new THREE.Group()
-    // Keep the simulator's output-joint anchor at local +Z = 0.36.
     shaft.position.z = 0.36
     const addTTOutput = (centerZ: number) => {
       const axle = cylZ(0.043, 0.29, m.servoWhite, centerZ, 10)
       shaft.add(axle)
-      // Off-axis flat/key: it makes the otherwise round axle visibly spin.
       const key = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.022, 0.13), m.shaftMark)
       key.position.set(0.036, 0, centerZ + (centerZ > -0.2 ? 0.045 : -0.045))
       shaft.add(key)
       const collar = cylZ(0.064, 0.045, m.steel, centerZ + (centerZ > -0.2 ? 0.105 : -0.105), 12)
       shaft.add(collar)
     }
-    // The gear case is centred around z=0; one shaft exits each side.
-    addTTOutput(-0.035) // forward side: world-local centre z≈0.325
-    addTTOutput(-0.655) // opposite side: world-local centre z≈-0.295
+    addTTOutput(-0.035)
+    addTTOutput(-0.655)
     inner.add(shaft)
-    group.quaternion.copy(facingQuaternion(facing))
-    return { group, shaft }
+
+    const terminals = [
+      addMotorTerminal(inner, 'A', new THREE.Vector3(-0.97, 0.13, -0.09), new THREE.Vector3(-1.19, 0.13, -0.09), m.red),
+      addMotorTerminal(inner, 'B', new THREE.Vector3(-0.97, -0.13, -0.09), new THREE.Vector3(-1.19, -0.13, -0.09), m.plastic),
+    ]
+    group.quaternion.copy(motorOrientationQuaternion(facing, roll))
+    return { group, shaft, terminals }
   }
 
   if (variant === 'n20_100') {
-    // N20 100:1: elongated silver micro-can, compact square metal gearhead,
-    // machined faceplate, four screws and a thin D-shaft.
-    const body = cylZ(0.157, 0.88, m.motorBody, -0.45, 14)
-    inner.add(body)
-    const rear = cylZ(0.132, 0.085, m.plastic, -0.91, 14)
-    inner.add(rear)
-    const endRing = cylZ(0.163, 0.025, m.solder, -0.84, 14)
-    inner.add(endRing)
-    for (const z of [-0.64, -0.31]) {
-      const band = cylZ(0.16, 0.018, m.steel, z, 14)
-      inner.add(band)
-    }
+    // N20: slim motor can, compact rectangular metal gearhead, faceplate,
+    // four screws, D-shaft and distinct red/black electrical pigtails.
+    inner.add(cylZ(0.157, 0.76, m.motorBody, -0.42, 14))
+    inner.add(cylZ(0.132, 0.075, m.plastic, -0.82, 14))
+    inner.add(cylZ(0.163, 0.025, m.solder, -0.75, 14))
+    for (const z of [-0.60, -0.34]) inner.add(cylZ(0.16, 0.018, m.steel, z, 14))
+
     const gearhead = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.34, 0.32), m.steel)
-    gearhead.position.set(0, 0, 0.085)
+    gearhead.position.set(0, 0, 0.065)
     inner.add(gearhead)
     const face = new THREE.Mesh(new THREE.BoxGeometry(0.365, 0.335, 0.045), m.solder)
-    face.position.set(0, 0, 0.267)
+    face.position.set(0, 0, 0.245)
     inner.add(face)
     const inset = new THREE.Mesh(new THREE.BoxGeometry(0.235, 0.205, 0.018), m.batteryBlack)
-    inset.position.set(0, 0, 0.294)
+    inset.position.set(0, 0, 0.272)
     inner.add(inset)
     for (const x of [-0.135, 0.135]) {
       for (const y of [-0.115, 0.115]) {
         const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.019, 0.019, 0.018, 8), m.steel)
-        screw.position.set(x, y, 0.307)
+        screw.position.set(x, y, 0.285)
         inner.add(screw)
       }
     }
-    // The shaft stays on the shared simulator joint axis; a D-shaped key
-    // shows rotation and distinguishes it from the TT's dual output shafts.
+
+    const terminals = [
+      addMotorTerminal(inner, 'A', new THREE.Vector3(-0.075, -0.045, -0.81), new THREE.Vector3(-0.075, -0.045, -0.99), m.red),
+      addMotorTerminal(inner, 'B', new THREE.Vector3(0.075, -0.045, -0.81), new THREE.Vector3(0.075, -0.045, -0.99), m.plastic),
+    ]
     const shaft = new THREE.Group()
-    shaft.position.z = 0.36
-    shaft.add(cylZ(0.028, 0.27, m.brass, 0.115, 10))
-    const flat = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.025, 0.15), m.shaftMark)
-    flat.position.set(0.021, 0, 0.15)
+    shaft.position.z = 0.27
+    shaft.add(cylZ(0.028, 0.22, m.brass, 0.10, 10))
+    const flat = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.025, 0.12), m.shaftMark)
+    flat.position.set(0.021, 0, 0.12)
     shaft.add(flat)
     inner.add(shaft)
-    group.quaternion.copy(facingQuaternion(facing))
-    return { group, shaft }
+    group.quaternion.copy(motorOrientationQuaternion(facing, roll))
+    return { group, shaft, terminals }
   }
 
   if (variant === '37d_30') {
-    // 37D gearmotor: keep a compact footprint; differentiate it with a dark
-    // heavy motor can, metal reduction housing, machined plate and thick output.
-    const body = cylZ(0.285, 0.49, m.batteryBlack, -0.075, 20)
-    inner.add(body)
-    const rearCap = cylZ(0.255, 0.065, m.steel, -0.35, 20)
-    inner.add(rearCap)
-    const rearRim = cylZ(0.274, 0.022, m.solder, -0.305, 20)
-    inner.add(rearRim)
+    // Heavier 37 mm gearmotor: dark can, metal gearbox, machined faceplate,
+    // four bolts, thicker keyed output shaft and two exposed power terminals.
+    inner.add(cylZ(0.285, 0.49, m.batteryBlack, -0.075, 20))
+    inner.add(cylZ(0.255, 0.065, m.steel, -0.35, 20))
+    inner.add(cylZ(0.274, 0.022, m.solder, -0.305, 20))
     const housing = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.49, 0.26), m.steel)
     housing.position.set(0, 0, 0.19)
     inner.add(housing)
@@ -199,47 +274,50 @@ export function createMotorModel(facing: number, variant: MotorVariantId = 'fa13
         inner.add(bolt)
       }
     }
+    const terminals = [
+      addMotorTerminal(inner, 'A', new THREE.Vector3(-0.13, 0.14, -0.37), new THREE.Vector3(-0.13, 0.14, -0.49), m.red),
+      addMotorTerminal(inner, 'B', new THREE.Vector3(0.13, 0.14, -0.37), new THREE.Vector3(0.13, 0.14, -0.49), m.plastic),
+    ]
     const shaft = new THREE.Group()
-    shaft.position.z = 0.36
-    shaft.add(cylZ(0.052, 0.22, m.brass, 0.11, 12))
+    shaft.position.z = 0.31
+    shaft.add(cylZ(0.052, 0.22, m.brass, 0.10, 12))
     const key = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.027, 0.12), m.shaftMark)
-    key.position.set(0.04, 0, 0.14)
+    key.position.set(0.04, 0, 0.13)
     shaft.add(key)
     inner.add(shaft)
-    group.quaternion.copy(facingQuaternion(facing))
-    return { group, shaft }
+    group.quaternion.copy(motorOrientationQuaternion(facing, roll))
+    return { group, shaft, terminals }
   }
 
-  // Preserve the original FA-130 geometry from before additional motor
-  // variants were introduced. The FA-130 dimensions and offsets are unchanged.
-  const body = cylZ(0.3, 0.56, m.motorBody, -0.06)
-  inner.add(body)
-  const backCap = cylZ(0.26, 0.1, m.plastic, -0.38)
-  inner.add(backCap)
+  // The original FA-130 housing dimensions, cap, copper tabs and output shaft
+  // stay unchanged; only exposed electrical tips are added to make wire targets
+  // practical to hit on a phone screen.
+  inner.add(cylZ(0.3, 0.56, m.motorBody, -0.06))
+  inner.add(cylZ(0.26, 0.1, m.plastic, -0.38))
   for (const side of [-1, 1]) {
     const tab = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), m.copper)
     tab.position.set(0.14 * side, 0.1, -0.46)
     inner.add(tab)
   }
-  const boss = cylZ(0.09, 0.06, m.steel, 0.25)
-  inner.add(boss)
-  const ring = cylZ(0.305, 0.04, m.plastic, 0.2)
-  inner.add(ring)
-
+  inner.add(cylZ(0.09, 0.06, m.steel, 0.25))
+  inner.add(cylZ(0.305, 0.04, m.plastic, 0.2))
+  const terminals = [
+    addMotorTerminal(inner, 'A', new THREE.Vector3(-0.14, 0.10, -0.46), new THREE.Vector3(-0.14, 0.10, -0.535), m.red),
+    addMotorTerminal(inner, 'B', new THREE.Vector3(0.14, 0.10, -0.46), new THREE.Vector3(0.14, 0.10, -0.535), m.plastic),
+  ]
   const shaft = new THREE.Group()
   shaft.position.z = 0.28
-  const rod = cylZ(0.04, 0.22, m.brass, 0.11, 8)
-  shaft.add(rod)
+  shaft.add(cylZ(0.04, 0.22, m.brass, 0.11, 8))
   const mark = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.09, 0.04), m.shaftMark)
   mark.position.set(0, 0.045, 0.2)
   shaft.add(mark)
   inner.add(shaft)
-  group.quaternion.copy(facingQuaternion(facing))
-  return { group, shaft }
+  group.quaternion.copy(motorOrientationQuaternion(facing, roll))
+  return { group, shaft, terminals }
 }
 
-export function setMotorFacing(model: MotorModel, facing: number) {
-  model.group.quaternion.copy(facingQuaternion(facing))
+export function setMotorFacing(model: MotorModel, facing: number, roll = 0) {
+  model.group.quaternion.copy(motorOrientationQuaternion(facing, roll))
 }
 
 export interface ServoModel {
