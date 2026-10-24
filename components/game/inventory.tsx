@@ -188,7 +188,8 @@ export function Inventory() {
         >
           <p className="text-white">{ITEMS[hover].name}</p>
           <p className="text-sm leading-snug text-[#a8a8a8]">{ITEMS[hover].description}</p>
-          <p className="text-sm text-[#5555ff]">
+          {ITEMS[hover].physicalInfo && <p className="mt-1 text-[10px] leading-snug text-[#74d8ff]">{ITEMS[hover].physicalInfo}</p>}
+          <p className="mt-1 text-sm text-[#5555ff]">
             {CATEGORIES.find((c) => c.id === ITEMS[hover].category)?.label}
           </p>
         </div>
