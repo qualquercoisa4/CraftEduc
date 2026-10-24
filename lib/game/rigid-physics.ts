@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import { B, GROUND_LEVEL, WORLD_HEIGHT, isOpaque, parseKey, posKey } from './constants'
 import type { World } from './world'
 import { getMotorSpec } from './motor-specs'
+import { getMotorLocalBounds, motorOrientationQuaternion } from './models'
 
 export interface PhysicsVoxel {
   x: number
@@ -10,7 +11,7 @@ export interface PhysicsVoxel {
   z: number
   id: number
   key?: string
-  state?: { batteries?: number; mountedWheel?: boolean; motorType?: string }
+  state?: { batteries?: number; mountedWheel?: boolean; motorType?: string; facing?: number; motorRoll?: number }
 }
 
 /**
@@ -180,9 +181,23 @@ export class RigidPhysics {
     if (y < this.minimumColliderY(x, z) || y >= WORLD_HEIGHT) return
     const id = this.voxelWorld.getBlock(x, y, z)
     if (id === B.AIR) return
-    const collider = this.rapierWorld.createCollider(
-      RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
+    let colliderDesc: RAPIER.ColliderDesc
+    if (id === B.MOTOR) {
+      const state = this.voxelWorld.getState(x, y, z)
+      const bounds = getMotorLocalBounds(state?.motorType)
+      const half = bounds.max.clone().sub(bounds.min).multiplyScalar(0.5)
+      const localCenter = bounds.min.clone().add(bounds.max).multiplyScalar(0.5)
+      const rotation = motorOrientationQuaternion(state?.facing ?? 2, state?.motorRoll ?? 0)
+      const worldCenter = localCenter.applyQuaternion(rotation).add(new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5))
+      colliderDesc = RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z)
+        .setTranslation(worldCenter.x, worldCenter.y, worldCenter.z)
+        .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w })
+    } else {
+      colliderDesc = RAPIER.ColliderDesc.cuboid(0.5, 0.5, 0.5)
         .setTranslation(x + 0.5, y + 0.5, z + 0.5)
+    }
+    const collider = this.rapierWorld.createCollider(
+      colliderDesc
         .setFriction(blockFriction(id))
         .setRestitution(0.005),
       this.fixedBody,
@@ -233,14 +248,33 @@ export class RigidPhysics {
     else if (options.lockRotation) desc = desc.lockRotations()
     const body = this.rapierWorld.createRigidBody(desc)
     for (const voxel of voxels) {
-      // Reduce mounted motor housing size so the tyre reaches the ground first.
-      const motorHousingHalfExtent = voxel.id === B.MOTOR && voxel.state?.mountedWheel ? 0.28 : 0.5
-      this.rapierWorld.createCollider(
-        RAPIER.ColliderDesc.cuboid(motorHousingHalfExtent, motorHousingHalfExtent, motorHousingHalfExtent)
+      let colliderDesc: RAPIER.ColliderDesc
+      if (voxel.id === B.MOTOR && !voxel.state?.mountedWheel) {
+        const bounds = getMotorLocalBounds(voxel.state?.motorType)
+        const half = bounds.max.clone().sub(bounds.min).multiplyScalar(0.5)
+        const localCenter = bounds.min.clone().add(bounds.max).multiplyScalar(0.5)
+        const rotation = motorOrientationQuaternion(voxel.state?.facing ?? 2, voxel.state?.motorRoll ?? 0)
+        const offset = localCenter.applyQuaternion(rotation)
+        colliderDesc = RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z)
+          .setTranslation(
+            voxel.x + 0.5 - pivot.x + offset.x,
+            voxel.y + 0.5 - pivot.y + offset.y,
+            voxel.z + 0.5 - pivot.z + offset.z,
+          )
+          .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w })
+          // A long TT/N20 housing must keep its actual component mass instead
+          // of gaining mass merely because its collision envelope spans >1 voxel.
+          .setMass(blockMass(voxel.id, voxel.state))
+      } else {
+        // Keep the existing reduced housing collider when a wheel is mounted,
+        // so its tyre can reach the floor before the motor casing.
+        const motorHousingHalfExtent = voxel.id === B.MOTOR && voxel.state?.mountedWheel ? 0.28 : 0.5
+        colliderDesc = RAPIER.ColliderDesc.cuboid(motorHousingHalfExtent, motorHousingHalfExtent, motorHousingHalfExtent)
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
-          // Rapier derives total mass, centre of mass and inertia from every
-          // collider's density and position; offset/heavy parts can tip the build.
           .setDensity(blockMass(voxel.id, voxel.state))
+      }
+      this.rapierWorld.createCollider(
+        colliderDesc
           .setFriction(blockFriction(voxel.id))
           .setRestitution(0.005),
         body,
