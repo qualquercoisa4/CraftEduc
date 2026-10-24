@@ -207,8 +207,8 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     block: B.PROXIMITY_SENSOR,
   },
   servo: {
-    name: 'Servo motor SG90',
-    description: 'Servo de posição. Conecte GND (marrom), VCC (vermelho) e sinal (amarelo); configure os ângulos pelo tablet.', physicalInfo: 'Massa: 0,45 kg • Curso configurável: 0°–180° • Torque simulado: até 1,6 N·m',
+    name: 'Servo motor TowerPro SG90',
+    description: 'Microservo posicional com engrenagens plásticas. Conecte GND, alimentação e sinal PWM; não é um motor de rotação contínua.', physicalInfo: 'TowerPro SG90 • 4,8 V • 9 g • Curso aproximado: 0°–180° • Torque de bloqueio: 0,176 N·m (1,8 kg·cm)',
     category: 'motors',
     block: B.SERVO,
   },
