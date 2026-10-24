@@ -1,3 +1,5 @@
+import type { MotorVariantId } from './motor-specs'
+
 export const CHUNK_SIZE = 16
 export const WORLD_HEIGHT = 64
 export const GROUND_LEVEL = 4
@@ -119,6 +121,9 @@ export type ItemId =
   | 'gear'
   | 'led'
   | 'motor'
+  | 'motor_tt'
+  | 'motor_n20'
+  | 'motor_37d'
   | 'wire'
   | 'glue'
   | 'resin_applicator'
@@ -151,6 +156,7 @@ export interface ItemDef {
   name: string
   description: string
   physicalInfo?: string
+  motorType?: MotorVariantId
   category: Exclude<CategoryId, 'all'>
   block?: number
   color?: string
@@ -224,8 +230,34 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'tools',
   },
   motor: {
-    name: 'Motor CC Pequeno',
-    description: 'Motor CC com eixo rotativo. A polaridade define o sentido; ele movimenta peças fixadas com cola quente.', physicalInfo: 'Massa: 1,40 kg • Torque máximo simulado: 4,0 N·m por unidade de potência • Pode perder velocidade sob carga',
+    name: 'Motor CC Mabuchi FA-130RA',
+    description: 'Motor CC escovado sem redução. Gira muito rápido, mas entrega pouco torque no eixo; adequado para mecanismos leves.',
+    physicalInfo: 'Mabuchi FA-130RA-18100 • 3 V • 17 g • 12.300 rpm sem carga • Torque de bloqueio: 0,00353 N·m • Corrente de bloqueio: 2,1 A',
+    motorType: 'fa130',
+    category: 'motors',
+    block: B.MOTOR,
+  },
+  motor_tt: {
+    name: 'Motor TT com redução 1:48',
+    description: 'Motor CC com caixa de redução plástica. A redução diminui a velocidade e aumenta o torque de saída; comum em robótica educacional.',
+    physicalInfo: '3–6 V • 30,6 g • 200 rpm sem carga a 6 V • Redução 1:48 • Torque de bloqueio: 0,078 N·m',
+    motorType: 'tt48',
+    category: 'motors',
+    block: B.MOTOR,
+  },
+  motor_n20: {
+    name: 'Micromotor N20 metálico 100:1 HP',
+    description: 'Micromotor CC com caixa de engrenagens metálica e eixo tipo D. Compacto, com torque de saída maior que o motor sem redução.',
+    physicalInfo: 'Pololu 100:1 HP • 6 V • 9,5 g • 310 rpm sem carga • Torque na máxima eficiência: 0,028 N·m • Bloqueio extrapolado: 0,167 N·m',
+    motorType: 'n20_100',
+    category: 'motors',
+    block: B.MOTOR,
+  },
+  motor_37d: {
+    name: 'Motorredutor metálico 37D 30:1',
+    description: 'Motor CC de 12 V com caixa de engrenagens metálica e eixo de saída de 6 mm. Entrega torque elevado, mas exige corrente alta sob carga.',
+    physicalInfo: 'Pololu 37D 30:1 • 12 V • 185 g • 330 rpm sem carga • Torque na máxima eficiência: 0,177 N·m • Bloqueio extrapolado: 1,37 N·m • Corrente de bloqueio: 5,5 A',
+    motorType: '37d_30',
     category: 'motors',
     block: B.MOTOR,
   },
@@ -293,6 +325,9 @@ export const ITEM_ORDER: ItemId[] = [
   'servo',
   'arduino_uno',
   'motor',
+  'motor_tt',
+  'motor_n20',
+  'motor_37d',
   'wire',
   'glue',
   'resin_applicator',
