@@ -598,7 +598,7 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: intent.face, motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
@@ -1482,8 +1482,8 @@ export class Engine {
       g.rotation.set(0.12, 0.48, 0.06)
       return g
     }
-    if (item === 'motor') {
-      const m = createMotorModel(0).group
+    if (isMotorItemId(item)) {
+      const m = createMotorModel(0, ITEMS[item].motorType ?? 'fa130').group
       const g = new THREE.Group()
       g.add(m)
       g.scale.setScalar(0.5)
