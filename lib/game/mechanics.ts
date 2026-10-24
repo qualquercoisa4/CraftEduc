@@ -622,11 +622,11 @@ export class Mechanics {
     ]))
     for (const wire of this.wires) {
       if (wire.a === key) {
-        const point = terminals.get(wire.ta as MotorModel['terminals'][number]['id'])
+        const point = terminals.get(wire.ta as 'A' | 'B')
         if (point) wire.pa.copy(point)
       }
       if (wire.b === key) {
-        const point = terminals.get(wire.tb as MotorModel['terminals'][number]['id'])
+        const point = terminals.get(wire.tb as 'A' | 'B')
         if (point) wire.pb.copy(point)
       }
       if (wire.a === key || wire.b === key) updateWireMesh(wire.mesh, wire.pa, wire.pb, wire.color)
