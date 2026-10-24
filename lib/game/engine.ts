@@ -19,6 +19,7 @@ import {
   parseKey,
 } from './constants'
 import { Mechanics, type Wire } from './mechanics'
+import { blockFriction, blockMass } from './rigid-physics'
 import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
@@ -961,6 +962,108 @@ export class Engine {
     return s.hotbar[s.selected]
   }
 
+  private scanAssembly(hit: Hit) {
+    const startKey = posKey(hit.x, hit.y, hit.z)
+    const startId = this.world.getBlock(hit.x, hit.y, hit.z) || hit.id
+    if (startId === B.AIR) {
+      showToast('Nenhum bloco físico disponível para análise')
+      return
+    }
+
+    type Cell = { x: number; y: number; z: number; id: number; state: NonNullable<ReturnType<World['getState']>> }
+    const cells: Cell[] = []
+    const seen = new Set<string>()
+    const queue: [number, number, number][] = [[hit.x, hit.y, hit.z]]
+    seen.add(startKey)
+    while (queue.length && cells.length < 500) {
+      const [x, y, z] = queue.shift()!
+      const id = this.world.getBlock(x, y, z) || (posKey(x, y, z) === startKey ? startId : B.AIR)
+      if (id === B.AIR) continue
+      const state = this.world.getState(x, y, z) ?? {}
+      cells.push({ x, y, z, id, state })
+      const glueMask = state.glue ?? 0
+      for (let face = 0; face < DIRS.length; face++) {
+        const [dx, dy, dz] = DIRS[face]
+        const nx = x + dx, ny = y + dy, nz = z + dz
+        const neighborKey = posKey(nx, ny, nz)
+        if (seen.has(neighborKey)) continue
+        const neighborId = this.world.getBlock(nx, ny, nz)
+        if (neighborId === B.AIR) continue
+        const neighborGlue = this.world.getState(nx, ny, nz)?.glue ?? 0
+        const glued = Boolean(glueMask & (1 << face)) || Boolean(neighborGlue & (1 << OPPOSITE[face]))
+        if (!glued) continue
+        seen.add(neighborKey)
+        queue.push([nx, ny, nz])
+      }
+    }
+
+    if (cells.length >= 500) showToast('Limite de análise: 500 blocos por leitura')
+    const count = cells.length
+    const min = { x: Math.min(...cells.map((b) => b.x)), y: Math.min(...cells.map((b) => b.y)), z: Math.min(...cells.map((b) => b.z)) }
+    const max = { x: Math.max(...cells.map((b) => b.x)), y: Math.max(...cells.map((b) => b.y)), z: Math.max(...cells.map((b) => b.z)) }
+    let massKg = 0, cx = 0, cy = 0, cz = 0, friction = 0, conductivity = 0
+    const groups = new Map<string, { name: string; count: number; massKg: number }>()
+    for (const cell of cells) {
+      const state = { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel }
+      const mass = blockMass(cell.id, state)
+      massKg += mass
+      cx += (cell.x + 0.5) * mass
+      cy += (cell.y + 0.5) * mass
+      cz += (cell.z + 0.5) * mass
+      friction += blockFriction(cell.id)
+      conductivity += blockConductivity(cell.id)
+      const itemId = BLOCK_TO_ITEM[cell.id]
+      const name = cell.id === B.COLOR_BLOCK
+        ? 'Bloco colorido'
+        : itemId ? ITEMS[itemId].name : 'Bloco estrutural'
+      const entry = groups.get(name) ?? { name, count: 0, massKg: 0 }
+      entry.count++
+      entry.massKg += mass
+      groups.set(name, entry)
+    }
+    const center = { x: cx / massKg, y: cy / massKg, z: cz / massKg }
+    let ix = 0, iy = 0, iz = 0
+    for (const cell of cells) {
+      const mass = blockMass(cell.id, { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel })
+      const dx = cell.x + 0.5 - center.x, dy = cell.y + 0.5 - center.y, dz = cell.z + 0.5 - center.z
+      // Unit-cube intrinsic inertia (m/6) plus the parallel-axis contribution.
+      ix += mass / 6 + mass * (dy * dy + dz * dz)
+      iy += mass / 6 + mass * (dx * dx + dz * dz)
+      iz += mass / 6 + mass * (dx * dx + dy * dy)
+    }
+    let gluedConnections = 0
+    const scanned = new Set(cells.map((cell) => posKey(cell.x, cell.y, cell.z)))
+    for (const cell of cells) {
+      const mask = cell.state.glue ?? 0
+      for (let face = 0; face < DIRS.length; face++) {
+        const [dx, dy, dz] = DIRS[face]
+        const nk = posKey(cell.x + dx, cell.y + dy, cell.z + dz)
+        if (!scanned.has(nk)) continue
+        const neighborGlue = this.world.getState(cell.x + dx, cell.y + dy, cell.z + dz)?.glue ?? 0
+        if ((mask & (1 << face)) || (neighborGlue & (1 << OPPOSITE[face]))) {
+          // Count each glued interface once, from the lexicographically smaller voxel key.
+          if (posKey(cell.x, cell.y, cell.z) < nk) gluedConnections++
+        }
+      }
+    }
+
+    for (const cell of cells) this.particles.burst(cell.x, cell.y, cell.z, tileFor(cell.id, false), Math.min(5, Math.max(2, Math.floor(80 / count))))
+    gameStore.set({
+      scannerReport: {
+        blockCount: count,
+        massKg,
+        dimensions: { x: max.x - min.x + 1, y: max.y - min.y + 1, z: max.z - min.z + 1 },
+        centerOfMass: center,
+        inertia: { x: ix, y: iy, z: iz },
+        averageFriction: friction / count,
+        averageConductivity: conductivity / count,
+        gluedConnections,
+        composition: [...groups.values()].sort((a, b) => b.massKg - a.massKg),
+      },
+      screen: 'scanner',
+    })
+  }
+
   use() {
     unlockAudio()
     const item = this.selectedItem()
@@ -973,6 +1076,14 @@ export class Engine {
     const targetBlockId = hit
       ? (this.world.getBlock(hit.x, hit.y, hit.z) || hit.id)
       : B.AIR
+    if (item === 'scanner_dws') {
+      if (!hit || targetBlockId === B.AIR) {
+        showToast('Aponte o Scanner DWS para um bloco da montagem')
+        return
+      }
+      this.scanAssembly(hit)
+      return
+    }
     // The tablet opens the appropriate editor for each programmable component.
     // Other items, especially wire, continue through their normal interaction paths.
     if (hit && targetBlockId === B.ARDUINO_UNO && item === 'programming_tablet') {
@@ -1351,6 +1462,21 @@ export class Engine {
       mesh.position.set(0.5, -0.45, -0.8)
       mesh.rotation.set(0, Math.PI / 4, 0)
       return mesh
+    }
+    if (item === 'scanner_dws') {
+      const g = new THREE.Group()
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.045), new THREE.MeshStandardMaterial({ color: 0x182b3d, metalness: 0.65, roughness: 0.32 }))
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.58), new THREE.MeshBasicMaterial({ color: 0x073d59 }))
+      screen.position.z = 0.026
+      const sweep = new THREE.Mesh(new THREE.PlaneGeometry(0.39, 0.025), new THREE.MeshBasicMaterial({ color: 0x59edff }))
+      sweep.position.set(0, 0.1, 0.03)
+      const target = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.075, 20), new THREE.MeshBasicMaterial({ color: 0xb7fbff, side: THREE.DoubleSide }))
+      target.position.set(0.08, -0.06, 0.031)
+      g.add(body, screen, sweep, target)
+      g.scale.setScalar(0.72)
+      g.position.set(0.48, -0.43, -0.78)
+      g.rotation.set(0.12, 0.48, 0.06)
+      return g
     }
     if (item === 'motor') {
       const m = createMotorModel(0).group
