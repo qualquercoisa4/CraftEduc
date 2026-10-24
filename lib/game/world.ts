@@ -2,12 +2,14 @@ import * as THREE from 'three'
 import { B, CHUNK_SIZE, GROUND_LEVEL, WORLD_HEIGHT, isOpaque, posKey } from './constants'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
 import { getTerrainBlock, getTerrainColor, type WorldType } from './world-generation'
+import type { MotorVariantId } from './motor-specs'
 
 export interface BlockState {
   facing?: number
   batteries?: number
   glue?: number
   mountedWheel?: boolean
+  motorType?: MotorVariantId
   switchOn?: boolean
   proximityOperator?: 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
   proximityDistance?: number
