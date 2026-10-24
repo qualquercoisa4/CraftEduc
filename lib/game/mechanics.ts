@@ -2495,20 +2495,46 @@ export class Mechanics {
         if (stableGroups.has(index)) continue
         const group = candidateGroups[index]
         const keys = new Set(group.map((item) => item.key))
-        const hasStableSupport = group.some((item) => {
+        const supportPoints: { x: number; z: number }[] = []
+        for (const item of group) {
           const floorY = this.world.type === 'beach' &&
             this.world.isWaterColumnAt(item.x + 0.5, item.z + 0.5)
             ? Math.ceil(this.world.waterBottomY)
             : GROUND_LEVEL
-          if (item.y <= floorY) return true
+          if (item.y <= floorY) {
+            supportPoints.push({ x: item.x + 0.5, z: item.z + 0.5 })
+            continue
+          }
           const belowKey = posKey(item.x, item.y - 1, item.z)
-          if (!occupied.has(belowKey) || keys.has(belowKey)) return false
+          if (!occupied.has(belowKey) || keys.has(belowKey)) continue
           const belowGroup = groupByKey.get(belowKey)
-          return belowGroup !== undefined && stableGroups.has(belowGroup)
-        })
-        if (hasStableSupport) {
-          stableGroups.add(index)
-          supportChanged = true
+          if (belowGroup !== undefined && stableGroups.has(belowGroup)) {
+            supportPoints.push({ x: item.x + 0.5, z: item.z + 0.5 })
+          }
+        }
+
+        // A cantilever can touch a pillar and still tip over. Approximate the
+        // support polygon by its footprint bounds and require the assembly's
+        // mass-weighted centre of mass to remain above that footprint.
+        if (supportPoints.length) {
+          let totalMass = 0, centerX = 0, centerZ = 0
+          for (const item of group) {
+            const mass = blockMass(item.id, item.state)
+            totalMass += mass
+            centerX += (item.x + 0.5) * mass
+            centerZ += (item.z + 0.5) * mass
+          }
+          centerX /= Math.max(totalMass, 1e-8)
+          centerZ /= Math.max(totalMass, 1e-8)
+          const minX = Math.min(...supportPoints.map((point) => point.x)) - 0.5
+          const maxX = Math.max(...supportPoints.map((point) => point.x)) + 0.5
+          const minZ = Math.min(...supportPoints.map((point) => point.z)) - 0.5
+          const maxZ = Math.max(...supportPoints.map((point) => point.z)) + 0.5
+          if (centerX >= minX - 0.03 && centerX <= maxX + 0.03 &&
+              centerZ >= minZ - 0.03 && centerZ <= maxZ + 0.03) {
+            stableGroups.add(index)
+            supportChanged = true
+          }
         }
       }
     }
