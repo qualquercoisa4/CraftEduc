@@ -616,7 +616,7 @@ export class Mechanics {
     const entry = this.models.get(key)
     if (entry?.type !== 'motor') return
     entry.model.group.updateWorldMatrix(true, false)
-    const terminals = new Map(entry.model.terminals.map((terminal) => [
+    const terminals = new Map((entry.model.terminals ?? []).map((terminal) => [
       terminal.id,
       entry.model.group.localToWorld(terminal.localPosition.clone()),
     ]))
@@ -959,7 +959,7 @@ export class Mechanics {
       const entry = this.models.get(key)
       if (entry?.type !== 'arduino_uno') return null
       entry.model.group.updateWorldMatrix(true, false)
-      const terminals = entry.model.terminals.map((terminal) => ({
+      const terminals = (entry.model.terminals ?? []).map((terminal) => ({
         terminal: terminal.id,
         point: entry.model.group.localToWorld(terminal.localPosition.clone()),
       }))
@@ -982,6 +982,7 @@ export class Mechanics {
         terminal: terminal.id,
         point: entry.model.group.localToWorld(terminal.localPosition.clone()),
       }))
+      if (terminals.length === 0) return null
       if (rayOrigin && rayDirection) {
         const ray = new THREE.Ray(rayOrigin, rayDirection.clone().normalize())
         const candidates = terminals.map((terminal) => {
