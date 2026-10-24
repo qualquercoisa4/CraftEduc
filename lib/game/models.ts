@@ -210,19 +210,20 @@ export function createMotorModel(facing: number, variant: MotorVariantId = 'fa13
     return { group, shaft }
   }
 
-  // Original FA-130 body and shaft geometry, intentionally preserved.
-  const body = cylZ(0.245, 0.55, m.motorBody, -0.06)
+  // Preserve the original FA-130 geometry from before additional motor
+  // variants were introduced. The FA-130 dimensions and offsets are unchanged.
+  const body = cylZ(0.3, 0.56, m.motorBody, -0.06)
   inner.add(body)
-  const backCap = cylZ(0.205, 0.085, m.plastic, -0.38)
+  const backCap = cylZ(0.26, 0.1, m.plastic, -0.38)
   inner.add(backCap)
   for (const side of [-1, 1]) {
     const tab = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), m.copper)
     tab.position.set(0.14 * side, 0.1, -0.46)
     inner.add(tab)
   }
-  const boss = cylZ(0.085, 0.06, m.steel, 0.235)
+  const boss = cylZ(0.09, 0.06, m.steel, 0.25)
   inner.add(boss)
-  const ring = cylZ(0.25, 0.04, m.plastic, 0.19)
+  const ring = cylZ(0.305, 0.04, m.plastic, 0.2)
   inner.add(ring)
 
   const shaft = new THREE.Group()
