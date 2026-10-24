@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { ARDUINO_UNO_TERMINAL_IDS, DIRS, type ArduinoUnoTerminalId } from './constants'
+import type { MotorVariantId } from './motor-specs'
 import { makePixelTexture, metalCanvas } from './textures'
 
 let mats: ReturnType<typeof createMaterials> | null = null
@@ -63,29 +64,95 @@ export interface MotorModel {
   shaft: THREE.Group
 }
 
-export function createMotorModel(facing: number): MotorModel {
+export function createMotorModel(facing: number, variant: MotorVariantId = 'fa130'): MotorModel {
   const m = getMaterials()
   const group = new THREE.Group()
   const inner = new THREE.Group()
   group.add(inner)
 
-  const body = cylZ(0.3, 0.56, m.motorBody, -0.06)
-  inner.add(body)
-  const backCap = cylZ(0.26, 0.1, m.plastic, -0.38)
-  inner.add(backCap)
-  for (const side of [-1, 1]) {
-    const tab = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), m.copper)
-    tab.position.set(0.14 * side, 0.1, -0.46)
-    inner.add(tab)
+  // All variants share the same mechanical shaft interface for the simulator,
+  // but their casing/gearbox geometry reflects the real component family.
+  let shaftOffset = 0.28
+  if (variant === 'tt48') {
+    // TT motor: small can arranged perpendicular to the yellow plastic gearbox.
+    const can = cylZ(0.205, 0.46, m.motorBody, 0)
+    can.rotation.y = Math.PI / 2
+    can.position.set(-0.17, 0, -0.11)
+    inner.add(can)
+    const cap = cylZ(0.17, 0.085, m.plastic, 0)
+    cap.rotation.y = Math.PI / 2
+    cap.position.set(-0.42, 0, -0.11)
+    inner.add(cap)
+    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.43, 0.38), m.yellow)
+    gearbox.position.set(0.04, 0, 0.12)
+    inner.add(gearbox)
+    const cover = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.035, 0.29), m.yellow)
+    cover.position.set(0.04, 0.235, 0.12)
+    inner.add(cover)
+    for (const side of [-1, 1]) {
+      const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 8), m.steel)
+      screw.position.set(0.04 + side * 0.16, 0.256, 0.12 + side * 0.10)
+      inner.add(screw)
+    }
+    const boss = cylZ(0.105, 0.07, m.steel, 0.32)
+    inner.add(boss)
+    shaftOffset = 0.39
+  } else if (variant === 'n20_100') {
+    // N20: narrow metal can with a compact, rectangular metal gearhead.
+    const body = cylZ(0.145, 0.48, m.motorBody, -0.075, 12)
+    inner.add(body)
+    const rear = cylZ(0.12, 0.075, m.plastic, -0.335, 12)
+    inner.add(rear)
+    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.28, 0.23), m.steel)
+    gearbox.position.z = 0.20
+    inner.add(gearbox)
+    const face = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.035), m.solder)
+    face.position.z = 0.333
+    inner.add(face)
+    const boss = cylZ(0.065, 0.055, m.steel, 0.36, 12)
+    inner.add(boss)
+    shaftOffset = 0.405
+  } else if (variant === '37d_30') {
+    // 37 mm DC gearmotor: large cylindrical can and metal gearbox face.
+    const body = cylZ(0.315, 0.57, m.batteryBlack, -0.09, 18)
+    inner.add(body)
+    const rear = cylZ(0.27, 0.075, m.steel, -0.415, 18)
+    inner.add(rear)
+    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.53, 0.48, 0.28), m.steel)
+    gearbox.position.z = 0.245
+    inner.add(gearbox)
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.49, 0.04), m.solder)
+    plate.position.z = 0.405
+    inner.add(plate)
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.022, 8), m.batteryBlack)
+      bolt.position.set(sx * 0.205, sy * 0.18, 0.435)
+      inner.add(bolt)
+    }
+    const boss = cylZ(0.105, 0.075, m.steel, 0.44, 12)
+    inner.add(boss)
+    shaftOffset = 0.51
+  } else {
+    // Mabuchi FA-130RA-style brushed DC can without a reduction gearbox.
+    const body = cylZ(0.245, 0.55, m.motorBody, -0.06)
+    inner.add(body)
+    const backCap = cylZ(0.205, 0.085, m.plastic, -0.38)
+    inner.add(backCap)
+    for (const side of [-1, 1]) {
+      const tab = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), m.copper)
+      tab.position.set(0.14 * side, 0.1, -0.46)
+      inner.add(tab)
+    }
+    const boss = cylZ(0.085, 0.06, m.steel, 0.235)
+    inner.add(boss)
+    const ring = cylZ(0.25, 0.04, m.plastic, 0.19)
+    inner.add(ring)
   }
-  const boss = cylZ(0.09, 0.06, m.steel, 0.25)
-  inner.add(boss)
-  const ring = cylZ(0.305, 0.04, m.plastic, 0.2)
-  inner.add(ring)
 
   const shaft = new THREE.Group()
-  shaft.position.z = 0.28
-  const rod = cylZ(0.04, 0.22, m.brass, 0.11, 8)
+  shaft.position.z = shaftOffset
+  const rodRadius = variant === '37d_30' ? 0.052 : variant === 'n20_100' ? 0.028 : 0.04
+  const rod = cylZ(rodRadius, 0.22, m.brass, 0.11, 8)
   shaft.add(rod)
   const mark = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.09, 0.04), m.shaftMark)
   mark.position.set(0, 0.045, 0.2)
