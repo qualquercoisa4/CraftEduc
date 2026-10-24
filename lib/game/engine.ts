@@ -1658,6 +1658,134 @@ export class Engine {
     if (hint !== s.hint) gameStore.set({ hint })
   }
 
+  private buildHandObject(item: ItemId | null): THREE.Object3D {
+    if (item === null) {
+      const tex = makePixelTexture(armCanvas())
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.75), new THREE.MeshLambertMaterial({ map: tex }))
+      arm.position.set(0.42, -0.42, -0.5)
+      arm.rotation.set(0.35, 0.25, 0.15)
+      return arm
+    }
+    const def = ITEMS[item]
+    if (def.block !== undefined && !isModelBlock(def.block)) {
+      const out = newBuffers()
+      emitCube(out, -0.5, -0.5, -0.5, def.block, false, () => false)
+      const mesh = new THREE.Mesh(buffersToGeometry(out), this.blockMaterial)
+      mesh.scale.setScalar(0.38)
+      mesh.position.set(0.5, -0.45, -0.8)
+      mesh.rotation.set(0, Math.PI / 4, 0)
+      return mesh
+    }
+    if (item === 'scanner_dws') {
+      const g = new THREE.Group()
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.045), new THREE.MeshStandardMaterial({ color: 0x182b3d, metalness: 0.65, roughness: 0.32 }))
+      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.58), new THREE.MeshBasicMaterial({ color: 0x073d59 }))
+      screen.position.z = 0.026
+      const sweep = new THREE.Mesh(new THREE.PlaneGeometry(0.39, 0.025), new THREE.MeshBasicMaterial({ color: 0x59edff }))
+      sweep.position.set(0, 0.1, 0.03)
+      const target = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.075, 20), new THREE.MeshBasicMaterial({ color: 0xb7fbff, side: THREE.DoubleSide }))
+      target.position.set(0.08, -0.06, 0.031)
+      g.add(body, screen, sweep, target)
+      g.scale.setScalar(0.72)
+      g.position.set(0.48, -0.43, -0.78)
+      g.rotation.set(0.12, 0.48, 0.06)
+      return g
+    }
+    if (item === 'motor') {
+      const m = createMotorModel(0).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.5)
+      g.position.set(0.48, -0.42, -0.75)
+      g.rotation.set(0.1, 0.5, 0)
+      return g
+    }
+    if (item === 'arduino_uno') {
+      const m = createArduinoUnoModel().group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.48)
+      g.position.set(0.48, -0.46, -0.78)
+      g.rotation.set(0.16, 0.52, 0.12)
+      return g
+    }
+    if (item === 'proximity_sensor') {
+      const m = createProximitySensorModel(4, false).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.62)
+      g.position.set(0.48, -0.45, -0.78)
+      g.rotation.set(0.2, 0.5, 0)
+      return g
+    }
+    if (item === 'wheel') {
+      const m = createArduinoWheelModel(0).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.7)
+      g.position.set(0.48, -0.45, -0.78)
+      g.rotation.set(0.2, 0.5, 0)
+      return g
+    }
+    if (item === 'battery_box') {
+      const m = createBatteryBoxModel(3).group
+      const g = new THREE.Group()
+      g.add(m)
+      g.scale.setScalar(0.5)
+      g.position.set(0.48, -0.48, -0.75)
+      g.rotation.set(0.35, 0.6, 0)
+      return g
+    }
+    const mesh = new THREE.Mesh(this.extrudeSprite(item), new THREE.MeshBasicMaterial({ vertexColors: true }))
+    mesh.scale.setScalar(0.55)
+    mesh.position.set(0.5, -0.36, -0.7)
+    mesh.rotation.set(0, -Math.PI / 2 + 0.25, 0.3)
+    return mesh
+  }
+
+  private extrudeSprite(item: ItemId) {
+    const c = getItemSpriteCanvas(item)
+    const data = c.getContext('2d')!.getImageData(0, 0, 16, 16).data
+    const op = (x: number, y: number) => x >= 0 && y >= 0 && x < 16 && y < 16 && data[(y * 16 + x) * 4 + 3] > 20
+    const positions: number[] = []
+    const colors: number[] = []
+    const indices: number[] = []
+    const s = 1 / 16
+    const t = 1 / 16
+    const col = new THREE.Color()
+    const quad = (v: number[][], shade: number) => {
+      const base = positions.length / 3
+      for (const p of v) {
+        positions.push(p[0], p[1], p[2])
+        colors.push(col.r * shade, col.g * shade, col.b * shade)
+      }
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
+    }
+    for (let y = 0; y < 16; y++)
+      for (let x = 0; x < 16; x++) {
+        if (!op(x, y)) continue
+        const i = (y * 16 + x) * 4
+        col.setRGB(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, THREE.SRGBColorSpace)
+        const x0 = x * s - 0.5
+        const x1 = x0 + s
+        const y1 = 0.5 - y * s
+        const y0 = y1 - s
+        const z0 = -t / 2
+        const z1 = t / 2
+        quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], 1)
+        quad([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], 0.7)
+        if (!op(x, y - 1)) quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], 0.9)
+        if (!op(x, y + 1)) quad([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], 0.5)
+        if (!op(x - 1, y)) quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], 0.6)
+        if (!op(x + 1, y)) quad([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], 0.6)
+      }
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    g.setIndex(indices)
+    return g
+  }
+
   private updateHand(dt: number) {
     const item = this.selectedItem()
     if (item !== this.heldItem) {
@@ -1667,8 +1795,9 @@ export class Engine {
         this.handRoot.remove(this.handObj)
         this.handObj.traverse((o) => (o as THREE.Mesh).geometry?.dispose())
       }
-      this.handObj = this.buildHandObject(item)
-      this.handRoot.add(this.handObj)
+      const nextHandObject = this.buildHandObject(item)
+      this.handObj = nextHandObject
+      this.handRoot.add(nextHandObject)
       if (!first) {
         this.equip = 0
         showItemLabel(item ? ITEMS[item].name : 'Mão vazia')
