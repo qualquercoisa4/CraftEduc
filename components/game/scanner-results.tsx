@@ -23,7 +23,7 @@ export function ScannerResults() {
               <div>
                 <p className="text-[10px] tracking-[0.28em] text-cyan-200/70">DWS • DEEP WEIGHT SCANNER</p>
                 <h2 className="mt-1 text-lg font-semibold tracking-wide sm:text-2xl">Relatório físico do conjunto</h2>
-                <p className="mt-1 text-xs text-cyan-100/60">Análise concluída • ${report.blockCount} blocos conectados</p>
+                <p className="mt-1 text-xs text-cyan-100/60">Análise concluída • {report.blockCount} blocos conectados</p>
               </div>
             </div>
             <button type="button" aria-label="Fechar scanner" onClick={() => gameStore.set({ screen: 'playing' })} className="border border-cyan-100/30 p-2 text-cyan-100/70 hover:bg-cyan-100/10 hover:text-white"><X className="size-5" /></button>
