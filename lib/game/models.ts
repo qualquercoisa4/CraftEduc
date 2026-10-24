@@ -70,93 +70,130 @@ export function createMotorModel(facing: number, variant: MotorVariantId = 'fa13
   const inner = new THREE.Group()
   group.add(inner)
 
-  // All variants share the same mechanical shaft interface for the simulator,
-  // but their casing/gearbox geometry reflects the real component family.
-  let shaftOffset = 0.28
-  if (variant === 'tt48') {
-    // TT motor: small can arranged perpendicular to the yellow plastic gearbox.
-    const can = cylZ(0.205, 0.46, m.motorBody, 0)
-    can.rotation.y = Math.PI / 2
-    can.position.set(-0.17, 0, -0.11)
-    inner.add(can)
-    const cap = cylZ(0.17, 0.085, m.plastic, 0)
-    cap.rotation.y = Math.PI / 2
-    cap.position.set(-0.42, 0, -0.11)
-    inner.add(cap)
-    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.43, 0.38), m.yellow)
-    gearbox.position.set(0.04, 0, 0.12)
-    inner.add(gearbox)
-    const cover = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.035, 0.29), m.yellow)
-    cover.position.set(0.04, 0.235, 0.12)
-    inner.add(cover)
-    for (const side of [-1, 1]) {
-      const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.018, 8), m.steel)
-      screw.position.set(0.04 + side * 0.16, 0.256, 0.12 + side * 0.10)
-      inner.add(screw)
-    }
-    const boss = cylZ(0.105, 0.07, m.steel, 0.32)
-    inner.add(boss)
-    shaftOffset = 0.39
-  } else if (variant === 'n20_100') {
-    // N20: narrow metal can with a compact, rectangular metal gearhead.
-    const body = cylZ(0.145, 0.48, m.motorBody, -0.075, 12)
-    inner.add(body)
-    const rear = cylZ(0.12, 0.075, m.plastic, -0.335, 12)
-    inner.add(rear)
-    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.29, 0.28, 0.23), m.steel)
-    gearbox.position.z = 0.20
-    inner.add(gearbox)
-    const face = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.30, 0.035), m.solder)
-    face.position.z = 0.333
-    inner.add(face)
-    const boss = cylZ(0.065, 0.055, m.steel, 0.36, 12)
-    inner.add(boss)
-    shaftOffset = 0.405
-  } else if (variant === '37d_30') {
-    // 37 mm DC gearmotor: large cylindrical can and metal gearbox face.
-    const body = cylZ(0.315, 0.57, m.batteryBlack, -0.09, 18)
-    inner.add(body)
-    const rear = cylZ(0.27, 0.075, m.steel, -0.415, 18)
-    inner.add(rear)
-    const gearbox = new THREE.Mesh(new THREE.BoxGeometry(0.53, 0.48, 0.28), m.steel)
-    gearbox.position.z = 0.245
-    inner.add(gearbox)
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.54, 0.49, 0.04), m.solder)
-    plate.position.z = 0.405
-    inner.add(plate)
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
-      const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.022, 8), m.batteryBlack)
-      bolt.position.set(sx * 0.205, sy * 0.18, 0.435)
-      inner.add(bolt)
-    }
-    const boss = cylZ(0.105, 0.075, m.steel, 0.44, 12)
-    inner.add(boss)
-    shaftOffset = 0.51
-  } else {
-    // Mabuchi FA-130RA-style brushed DC can without a reduction gearbox.
-    const body = cylZ(0.245, 0.55, m.motorBody, -0.06)
-    inner.add(body)
-    const backCap = cylZ(0.205, 0.085, m.plastic, -0.38)
-    inner.add(backCap)
-    for (const side of [-1, 1]) {
-      const tab = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.1), m.copper)
-      tab.position.set(0.14 * side, 0.1, -0.46)
-      inner.add(tab)
-    }
-    const boss = cylZ(0.085, 0.06, m.steel, 0.235)
-    inner.add(boss)
-    const ring = cylZ(0.25, 0.04, m.plastic, 0.19)
-    inner.add(ring)
+  // Local +Z is the output shaft. facingQuaternion turns that axis toward the
+  // face used to place the motor, so the same model works on all six directions.
+  // Scale is intentionally stylized for the voxel world: the assembly fits
+  // roughly in a 2 x 1 x 1 envelope while keeping its mechanical silhouette.
+  const addBox = (
+    width: number, height: number, depth: number,
+    material: THREE.Material,
+    x: number, y: number, z: number,
+  ) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), material)
+    mesh.position.set(x, y, z)
+    inner.add(mesh)
+    return mesh
+  }
+  const addCylinderX = (
+    radius: number, length: number, material: THREE.Material,
+    x: number, y: number, z: number, segments = 18,
+  ) => {
+    const mesh = cylZ(radius, length, material, 0, segments)
+    mesh.rotation.y = Math.PI / 2
+    mesh.position.set(x, y, z)
+    inner.add(mesh)
+    return mesh
+  }
+  const addFaceBolt = (x: number, y: number, z: number, radius = 0.025) => {
+    const bolt = cylZ(radius, 0.018, m.batteryBlack, z, 8)
+    bolt.position.x = x
+    bolt.position.y = y
+    inner.add(bolt)
+    const slot = addBox(radius * 1.1, 0.008, 0.008, m.solder, x, y, z + 0.011)
+    slot.rotation.z = Math.PI / 4
+    return bolt
   }
 
+  if (variant === 'tt48') {
+    // TT gearmotor: long brushed can laid sideways, bright yellow gearbox,
+    // molded cover, mounting details and a transverse output shaft.
+    addCylinderX(0.205, 0.92, m.motorBody, -0.50, 0.005, -0.105, 18)
+    addCylinderX(0.176, 0.075, m.plastic, -0.965, 0.005, -0.105, 18)
+    addCylinderX(0.185, 0.035, m.solder, -0.91, 0.005, -0.105, 18)
+    addBox(0.63, 0.59, 0.49, m.yellow, 0.03, 0, -0.005)
+    addBox(0.49, 0.045, 0.35, m.yellow, 0.03, 0.307, -0.015)
+    addBox(0.58, 0.035, 0.43, m.plastic, 0.03, -0.31, -0.01)
+    // Mold seams on the gearbox sides.
+    addBox(0.018, 0.44, 0.025, m.brass, -0.295, 0, 0.05)
+    addBox(0.018, 0.44, 0.025, m.brass, 0.355, 0, 0.05)
+    for (const x of [-0.19, 0.25]) {
+      for (const z of [-0.15, 0.13]) {
+        const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.026, 0.02, 8), m.steel)
+        screw.rotation.x = Math.PI / 2
+        screw.position.set(x, 0.335, z)
+        inner.add(screw)
+      }
+    }
+    // The visible output bearing is aligned with the shared +Z drive interface.
+    const bearing = cylZ(0.135, 0.11, m.steel, 0.245, 16)
+    inner.add(bearing)
+    const bearingInset = cylZ(0.092, 0.035, m.plastic, 0.31, 16)
+    inner.add(bearingInset)
+  } else if (variant === 'n20_100') {
+    // N20: narrow silver motor can, square metal reduction head, D-shaft boss
+    // and recognizable red/black pigtail wires at the rear.
+    cylZ(0.178, 0.87, m.motorBody, -0.515, 14)
+    cylZ(0.151, 0.075, m.plastic, -0.97, 14)
+    cylZ(0.164, 0.025, m.solder, -0.92, 14)
+    // Stator seam rings make the small can read as metal rather than a generic block.
+    cylZ(0.181, 0.018, m.steel, -0.70, 14)
+    cylZ(0.181, 0.018, m.steel, -0.38, 14)
+    addBox(0.39, 0.36, 0.34, m.steel, 0, 0, 0.075)
+    addBox(0.355, 0.325, 0.045, m.solder, 0, 0, 0.265)
+    addBox(0.22, 0.20, 0.018, m.plastic, 0, 0, 0.294)
+    for (const x of [-0.135, 0.135]) {
+      for (const y of [-0.115, 0.115]) addFaceBolt(x, y, 0.298, 0.018)
+    }
+    cylZ(0.087, 0.15, m.steel, 0.335, 12)
+    // Short insulated leads emerge from the rear of the can.
+    addBox(0.045, 0.04, 0.17, m.red, -0.075, -0.045, -0.995)
+    addBox(0.045, 0.04, 0.17, m.plastic, 0.075, -0.045, -0.995)
+  } else if (variant === '37d_30') {
+    // 37 mm industrial-style gearmotor: thick dark steel can, machined gearbox
+    // face, four mounting screws, bearing collar and a visibly thicker shaft.
+    cylZ(0.365, 0.80, m.batteryBlack, -0.555, 22)
+    cylZ(0.315, 0.095, m.steel, -0.99, 22)
+    cylZ(0.35, 0.025, m.solder, -0.15, 22)
+    // Light longitudinal bands and label plate on the can.
+    addBox(0.055, 0.022, 0.50, m.steel, -0.20, 0.305, -0.54)
+    addBox(0.055, 0.022, 0.50, m.steel, 0.20, 0.305, -0.54)
+    addBox(0.74, 0.66, 0.34, m.steel, 0, 0, 0.015)
+    addBox(0.71, 0.63, 0.045, m.solder, 0, 0, 0.208)
+    addBox(0.42, 0.35, 0.018, m.batteryBlack, 0, 0, 0.24)
+    for (const x of [-0.265, 0.265]) {
+      for (const y of [-0.215, 0.215]) addFaceBolt(x, y, 0.244, 0.028)
+    }
+    cylZ(0.155, 0.17, m.steel, 0.305, 18)
+    cylZ(0.105, 0.045, m.batteryBlack, 0.39, 16)
+  } else {
+    // Mabuchi FA-130-style bare brushed motor: smooth silver can, black end cap,
+    // visible copper tabs and a small front bearing. No gearbox, so it is
+    // deliberately slimmer and its output torque is much lower than reductions.
+    cylZ(0.255, 0.78, m.motorBody, -0.455, 20)
+    cylZ(0.225, 0.085, m.plastic, -0.885, 20)
+    cylZ(0.245, 0.025, m.solder, -0.075, 20)
+    cylZ(0.258, 0.018, m.steel, -0.67, 20)
+    cylZ(0.258, 0.018, m.steel, -0.36, 20)
+    // Pressed steel tabs with copper terminals at the rear.
+    for (const x of [-0.115, 0.115]) {
+      addBox(0.065, 0.045, 0.16, m.copper, x, -0.12, -0.845)
+      addBox(0.045, 0.035, 0.12, x < 0 ? m.red : m.plastic, x, -0.12, -0.94)
+    }
+    cylZ(0.115, 0.31, m.steel, 0.105, 16)
+    cylZ(0.078, 0.08, m.plastic, 0.285, 16)
+  }
+
+  // All variants expose the same mechanical connection point (0.36 units from
+  // the block centre), matching the Rapier revolute-joint anchor. Only shaft
+  // diameter/visible casing changes; orientation is always local +Z.
   const shaft = new THREE.Group()
-  shaft.position.z = shaftOffset
-  const rodRadius = variant === '37d_30' ? 0.052 : variant === 'n20_100' ? 0.028 : 0.04
-  const rod = cylZ(rodRadius, 0.22, m.brass, 0.11, 8)
+  shaft.position.z = 0.36
+  const rodRadius = variant === '37d_30' ? 0.052 : variant === 'n20_100' ? 0.028 : variant === 'tt48' ? 0.04 : 0.032
+  const rod = cylZ(rodRadius, 0.22, m.brass, 0.11, 10)
   shaft.add(rod)
-  const mark = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.09, 0.04), m.shaftMark)
-  mark.position.set(0, 0.045, 0.2)
-  shaft.add(mark)
+  const flat = new THREE.Mesh(new THREE.BoxGeometry(rodRadius * 0.85, 0.07, 0.13), m.shaftMark)
+  flat.position.set(rodRadius * 0.5, 0.045, 0.18)
+  shaft.add(flat)
   inner.add(shaft)
 
   group.quaternion.copy(facingQuaternion(facing))
