@@ -10,6 +10,8 @@ export interface BlockState {
   glue?: number
   mountedWheel?: boolean
   motorType?: MotorVariantId
+  /** Quarter-turns around the motor's local output shaft, 0–3. */
+  motorRoll?: number
   switchOn?: boolean
   proximityOperator?: 'greater' | 'greaterEqual' | 'equal' | 'lessEqual' | 'less'
   proximityDistance?: number
