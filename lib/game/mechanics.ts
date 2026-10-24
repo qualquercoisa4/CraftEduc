@@ -978,7 +978,7 @@ export class Mechanics {
       const entry = this.models.get(key)
       if (entry?.type !== 'motor') return null
       entry.model.group.updateWorldMatrix(true, false)
-      const terminals = entry.model.terminals.map((terminal) => ({
+      const terminals = (entry.model.terminals ?? []).map((terminal) => ({
         terminal: terminal.id,
         point: entry.model.group.localToWorld(terminal.localPosition.clone()),
       }))
