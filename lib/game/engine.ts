@@ -22,6 +22,7 @@ import {
 } from './constants'
 import { Mechanics, type Wire } from './mechanics'
 import { blockFriction, blockMass } from './rigid-physics'
+import { isMotorItemId, motorItemForVariant } from './motor-specs'
 import type { BlockEdit, MovingActionIntent, NetworkPlayer, NetworkWire, MultiplayerRules } from './multiplayer'
 import type { SkinConfig } from './multiplayer-types'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
@@ -581,7 +582,7 @@ export class Engine {
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
       return
     }
-    if (cell.id === B.MOTOR && (item === null || item === 'motor') && !intent.sneaking) {
+    if (cell.id === B.MOTOR && (item == null || isMotorItemId(item)) && !intent.sneaking) {
       this.mech.rotateMotor(cell.x, cell.y, cell.z)
       const state = this.world.getState(cell.x, cell.y, cell.z)
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
@@ -597,7 +598,7 @@ export class Engine {
     const y = cell.y + direction[1]
     const z = cell.z + direction[2]
     if (y < 0 || y >= WORLD_HEIGHT || this.world.getBlock(x, y, z) !== B.AIR) return
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR || block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: intent.face, motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(x, y, z, block, state)
     this.multiplayerBridge.blockChanged(x, y, z, block, state)
     sfx.place(METAL.has(block))
@@ -1006,7 +1007,7 @@ export class Engine {
     let massKg = 0, cx = 0, cy = 0, cz = 0, friction = 0, conductivity = 0
     const groups = new Map<string, { name: string; count: number; massKg: number }>()
     for (const cell of cells) {
-      const state = { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel }
+      const state = { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel, motorType: cell.state.motorType }
       const mass = blockMass(cell.id, state)
       massKg += mass
       cx += (cell.x + 0.5) * mass
@@ -1026,7 +1027,7 @@ export class Engine {
     const center = { x: cx / massKg, y: cy / massKg, z: cz / massKg }
     let ix = 0, iy = 0, iz = 0
     for (const cell of cells) {
-      const mass = blockMass(cell.id, { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel })
+      const mass = blockMass(cell.id, { batteries: cell.state.batteries, mountedWheel: cell.state.mountedWheel, motorType: cell.state.motorType })
       const dx = cell.x + 0.5 - center.x, dy = cell.y + 0.5 - center.y, dz = cell.z + 0.5 - center.z
       // Unit-cube intrinsic inertia (m/6) plus the parallel-axis contribution.
       ix += mass / 6 + mass * (dy * dy + dz * dz)
@@ -1342,6 +1343,7 @@ export class Engine {
     const hit = this.target
     if (!hit) return
     let item: ItemId | undefined = BLOCK_TO_ITEM[hit.id]
+    if (hit.id === B.MOTOR) item = motorItemForVariant(this.world.getState(hit.x, hit.y, hit.z)?.motorType)
     if (hit.id === B.COLOR_BLOCK) {
       const color = this.world.getState(hit.x, hit.y, hit.z)?.color
       const variant = COLOR_VARIANTS.find((candidate) => candidate.color.toLowerCase() === color?.toLowerCase()) ?? COLOR_VARIANTS[0]
