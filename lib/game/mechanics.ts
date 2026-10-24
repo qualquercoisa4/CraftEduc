@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
-import { blockFriction, RigidPhysics } from './rigid-physics'
+import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
