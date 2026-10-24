@@ -1658,6 +1658,124 @@ export class Engine {
     if (hint !== s.hint) gameStore.set({ hint })
   }
 
+  private updateCamera(dt: number) {
+    const p = this.player
+    const s = gameStore.get()
+    const cam = this.camera
+    const w = p.walkDist * Math.PI
+    const bob = p.bob
+    cam.position.set(p.pos.x, p.pos.y + p.eye, p.pos.z)
+    const right = new THREE.Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw))
+    cam.position.addScaledVector(right, Math.sin(w) * 0.045 * bob)
+    cam.position.y -= Math.abs(Math.cos(w)) * 0.06 * bob
+    cam.rotation.set(p.pitch, p.yaw, Math.sin(w) * 0.008 * bob)
+    const targetFov = s.settings.fov * (p.sprinting ? (p.flying ? 1.2 : 1.12) : 1)
+    cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-10 * dt))
+    cam.updateProjectionMatrix()
+    cam.updateMatrixWorld()
+  }
+
+  private updateTarget() {
+    const dir = new THREE.Vector3()
+    this.camera.getWorldDirection(dir)
+    const origin = new THREE.Vector3(this.player.pos.x, this.player.pos.y + this.player.eye, this.player.pos.z)
+    this.targetRayOrigin.copy(origin)
+    this.targetRayDirection.copy(dir).normalize()
+    const hit = this.raycast(origin, dir, REACH)
+    this.target = hit
+    if (hit) {
+      const b = blockBounds(hit.id)
+      this.outline.visible = true
+      this.outline.position.set(hit.x + (b[0] + b[3]) / 2, hit.y + (b[1] + b[4]) / 2, hit.z + (b[2] + b[5]) / 2)
+      this.outline.scale.set(b[3] - b[0] + 0.004, b[4] - b[1] + 0.004, b[5] - b[2] + 0.004)
+    } else this.outline.visible = false
+
+    if (this.wireStart) {
+      this.wireMarker.visible = true
+      this.wireMarker.position.copy(this.wireStart.point)
+      const end = hit ? hit.point : origin.clone().addScaledVector(dir, 3)
+      const pts = wireCurve(this.wireStart.point, end).getPoints(15)
+      ;(this.wirePreview.geometry as THREE.BufferGeometry).setFromPoints(pts)
+      this.wirePreview.visible = true
+    } else {
+      this.wireMarker.visible = false
+      this.wirePreview.visible = false
+    }
+  }
+
+  private updateHolds(dt: number) {
+    if (this.breakHeld) {
+      this.breakTimer -= dt
+      if (this.breakTimer <= 0) {
+        this.breakTimer = 0.3
+        this.breakBlock()
+      }
+    }
+    if (this.useHeld && this.lastUseWasPlace) {
+      this.useTimer -= dt
+      if (this.useTimer <= 0) {
+        this.useTimer = 0.2
+        this.use()
+      }
+    }
+    if (this.touchHolding && !this.touchMovedFar) {
+      this.touchHoldTime += dt
+      const threshold = 0.35
+      if (!this.touchBroke) {
+        gameStore.set({ breakProgress: Math.min(1, this.touchHoldTime / threshold) })
+        if (this.touchHoldTime >= threshold) {
+          this.touchBroke = true
+          this.breakTimer = 0.3
+          this.breakBlock()
+          gameStore.set({ breakProgress: 0 })
+        }
+      } else {
+        this.breakTimer -= dt
+        if (this.breakTimer <= 0) {
+          this.breakTimer = 0.3
+          this.breakBlock()
+        }
+      }
+    } else if (this.touchHolding && this.touchBroke) {
+      this.breakTimer -= dt
+      if (this.breakTimer <= 0) {
+        this.breakTimer = 0.3
+        this.breakBlock()
+      }
+    }
+  }
+
+  private updateHint() {
+    const s = gameStore.get()
+    const item = s.hotbar[s.selected]
+    const hit = this.target
+    const use = s.isTouch ? 'Toque' : 'Botão direito'
+    let hint: string | null = null
+    if (isWireItem(item)) {
+      hint = this.wireStart
+        ? `${use} em um terminal para terminar o fio  •  ${s.isTouch ? 'Segure' : 'Botão esquerdo'} para cancelar`
+        : `${use} em um terminal para começar o fio`
+    } else if (item === 'glue') {
+      hint = `${use} numa face para aplicar ou remover cola quente`
+    } else if (item === 'resin_applicator') {
+      hint = `${use} em um bloco para aplicar ou remover a resina protetora`
+    } else if (hit?.id === B.BATTERY_BOX && item === 'battery') {
+      hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
+    } else if (hit?.id === B.BATTERY_BOX && item === null) {
+      hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
+    } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
+      hint = `${use} para abrir a programação do Arduino UNO`
+    } else if (hit?.id === B.MOTOR && (item === null || item === 'motor')) {
+      const f = this.world.getState(hit.x, hit.y, hit.z)?.facing ?? 2
+      const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
+      const extra = status === 'stalled' ? '  •  TRAVADO!' : ''
+      hint = `${use} para girar o motor (eixo: ${DIR_NAMES[f]})${extra}`
+    } else if (item === 'battery') {
+      hint = 'Mire num compartimento de pilha AAA'
+    }
+    if (hint !== s.hint) gameStore.set({ hint })
+  }
+
   private updateChunks(px: number, pz: number) {
     const R = gameStore.get().settings.renderDistance
     const pcx = Math.floor(px / CHUNK_SIZE)
