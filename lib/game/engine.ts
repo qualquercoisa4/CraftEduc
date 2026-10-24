@@ -1271,7 +1271,7 @@ export class Engine {
     if (this.world.getBlock(px, py, pz) !== B.AIR) return
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
-    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR || block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130' } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
     this.world.setBlock(px, py, pz, block, state)
     this.multiplayerBridge?.blockChanged(px, py, pz, block, state)
     sfx.place(METAL.has(block))
