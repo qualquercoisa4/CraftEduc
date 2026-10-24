@@ -345,7 +345,8 @@ export class Mechanics {
     if (newId === B.MOTOR) {
       const st = this.world.ensureState(x, y, z)
       st.facing ??= 2
-      const model = createMotorModel(st.facing, st.motorType)
+      st.motorRoll ??= 0
+      const model = createMotorModel(st.facing, st.motorType, st.motorRoll)
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'motor', model, spin: 0, status: 'idle' })
@@ -494,8 +495,22 @@ export class Mechanics {
     if (previous?.glue || next?.glue) this.rebuildGlue()
     this.removeResinVisual(key)
     if (next?.resinCoated) this.syncResinVisual(x, y, z)
-    const model = this.models.get(key)
-    if (id === B.MOTOR && model?.type === 'motor' && next?.facing !== undefined) setMotorFacing(model.model, next.facing)
+    let model = this.models.get(key)
+    if (id === B.MOTOR && model?.type === 'motor') {
+      const nextVariant = next?.motorType
+      if (nextVariant && nextVariant !== previous?.motorType) {
+        const replacement = createMotorModel(next?.facing ?? previous?.facing ?? 2, nextVariant, next?.motorRoll ?? 0)
+        replacement.group.position.copy(model.model.group.position)
+        this.scene.add(replacement.group)
+        disposeObject(model.model.group)
+        model = { ...model, model: replacement }
+        this.models.set(key, model)
+      } else {
+        setMotorFacing(model.model, next?.facing ?? previous?.facing ?? 2, next?.motorRoll ?? 0)
+      }
+      this.refreshMotorTerminalWires(key)
+      if (!this.contraptions.has(key) && !this.findExtraRotor(key)) this.rigidPhysics.syncStaticBlock(x, y, z)
+    }
     if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
     if (id === B.SWITCH && model?.type === 'switch') setSwitchState(model.model, Boolean(next?.switchOn))
     if (id === B.PROXIMITY_SENSOR && model?.type === 'sensor') {
@@ -551,13 +566,47 @@ export class Mechanics {
 
   /* ---------------- Interactions ---------------- */
 
-  rotateMotor(x: number, y: number, z: number) {
+  rotateMotor(x: number, y: number, z: number, rollAroundShaft = false) {
+    const key = posKey(x, y, z)
     const st = this.world.ensureState(x, y, z)
-    st.facing = ((st.facing ?? 2) + 1) % 6
-    const e = this.models.get(posKey(x, y, z))
-    if (e?.type === 'motor') setMotorFacing(e.model, st.facing)
+    st.facing ??= 2
+    st.motorRoll ??= 0
+    if (rollAroundShaft) st.motorRoll = (st.motorRoll + 1) % 4
+    else st.facing = (st.facing + 1) % 6
+
+    const entry = this.models.get(key)
+    if (entry?.type === 'motor') {
+      setMotorFacing(entry.model, st.facing, st.motorRoll)
+      this.refreshMotorTerminalWires(key)
+    }
+    // Static motor colliders need their orientation/extended TT footprint rebuilt;
+    // assembled rotors are rebuilt by the normal mechanism dirty path instead.
+    if (!this.contraptions.has(key) && !this.findExtraRotor(key)) this.rigidPhysics.syncStaticBlock(x, y, z)
     this.mechDirty = true
-    return st.facing
+    this.powerDirty = true
+    this.powerCooldown = 0
+    return rollAroundShaft ? st.motorRoll : st.facing
+  }
+
+  private refreshMotorTerminalWires(key: string) {
+    const entry = this.models.get(key)
+    if (entry?.type !== 'motor') return
+    entry.model.group.updateWorldMatrix(true, false)
+    const terminals = new Map(entry.model.terminals.map((terminal) => [
+      terminal.id,
+      entry.model.group.localToWorld(terminal.localPosition.clone()),
+    ]))
+    for (const wire of this.wires) {
+      if (wire.a === key) {
+        const point = terminals.get(wire.ta as MotorModel['terminals'][number]['id'])
+        if (point) wire.pa.copy(point)
+      }
+      if (wire.b === key) {
+        const point = terminals.get(wire.tb as MotorModel['terminals'][number]['id'])
+        if (point) wire.pb.copy(point)
+      }
+      if (wire.a === key || wire.b === key) updateWireMesh(wire.mesh, wire.pa, wire.pb, wire.color)
+    }
   }
 
   rotateServo(x: number, y: number, z: number) {
@@ -902,15 +951,25 @@ export class Mechanics {
       return terminals[0].point.distanceTo(hitPoint) <= 0.3 ? terminals[0] : null
     }
     if (id === B.MOTOR) {
-      const facing = this.world.getState(x, y, z)?.facing ?? 2
-      const q = facingQuaternion(facing)
-      const center = new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5)
-      const terminals = [-1, 1].map((side) => ({
-        terminal: side < 0 ? 'A' : 'B',
-        point: new THREE.Vector3(0.14 * side, 0.1, -0.46).applyQuaternion(q).add(center),
+      const entry = this.models.get(key)
+      if (entry?.type !== 'motor') return null
+      entry.model.group.updateWorldMatrix(true, false)
+      const terminals = entry.model.terminals.map((terminal) => ({
+        terminal: terminal.id,
+        point: entry.model.group.localToWorld(terminal.localPosition.clone()),
       }))
+      if (rayOrigin && rayDirection) {
+        const ray = new THREE.Ray(rayOrigin, rayDirection.clone().normalize())
+        const candidates = terminals.map((terminal) => {
+          const closest = ray.closestPointToPoint(terminal.point, new THREE.Vector3())
+          return { ...terminal, distanceToRay: closest.distanceTo(terminal.point), alongRay: closest.clone().sub(rayOrigin).dot(ray.direction) }
+        }).filter((terminal) => terminal.alongRay >= 0 && terminal.alongRay <= 8)
+          .sort((a, b) => a.distanceToRay - b.distanceToRay)
+        const best = candidates[0]
+        return best && best.distanceToRay <= 0.17 ? { terminal: best.terminal, point: best.point } : null
+      }
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
-      return terminals[0].point.distanceTo(hitPoint) <= 0.38 ? terminals[0] : null
+      return terminals[0].point.distanceTo(hitPoint) <= 0.28 ? terminals[0] : null
     }
     const servoEntry = this.models.get(key)
     if (servoEntry?.type === 'servo') {
