@@ -2461,7 +2461,8 @@ export class Mechanics {
     }
     const byKey = new Map(blocks.map((b) => [b.key, b]))
     const visited = new Set<string>()
-    const fallingGroups: typeof blocks[] = []
+    const candidateGroups: typeof blocks[] = []
+    const groupByKey = new Map<string, number>()
     for (const block of blocks) {
       if (visited.has(block.key) || this.fallingKeys.has(block.key)) continue
       const group: typeof blocks = []
@@ -2478,19 +2479,49 @@ export class Mechanics {
           if (next && !visited.has(key)) { visited.add(key); queue.push(next) }
         }
       }
-      const keys = new Set(group.map((item) => item.key))
-      const supported = group.some((item) => {
-        const floorY = this.world.type === 'beach' &&
-          this.world.isWaterColumnAt(item.x + 0.5, item.z + 0.5)
-          ? Math.ceil(this.world.waterBottomY)
-          : GROUND_LEVEL
-        if (item.y <= floorY) return true
-        const below = posKey(item.x, item.y - 1, item.z)
-        return occupied.has(below) && !keys.has(below)
-      })
-      // A connected glue component is one rigid body. Unconnected blocks are
-      // independent bodies and still collide with each other in Rapier.
-      if (!supported || group.some((item) => forceKeys?.has(item.key))) fallingGroups.push(group)
+      const groupIndex = candidateGroups.length
+      candidateGroups.push(group)
+      for (const item of group) groupByKey.set(item.key, groupIndex)
+    }
+
+    // Propagate support from the actual floor upward. Merely touching another
+    // voxel is not enough: that voxel must itself have a stable support path.
+    // This prevents towers from falling one block at a time across scan ticks.
+    const stableGroups = new Set<number>()
+    let supportChanged = true
+    while (supportChanged) {
+      supportChanged = false
+      for (let index = 0; index < candidateGroups.length; index++) {
+        if (stableGroups.has(index)) continue
+        const group = candidateGroups[index]
+        const keys = new Set(group.map((item) => item.key))
+        const hasStableSupport = group.some((item) => {
+          const floorY = this.world.type === 'beach' &&
+            this.world.isWaterColumnAt(item.x + 0.5, item.z + 0.5)
+            ? Math.ceil(this.world.waterBottomY)
+            : GROUND_LEVEL
+          if (item.y <= floorY) return true
+          const belowKey = posKey(item.x, item.y - 1, item.z)
+          if (!occupied.has(belowKey) || keys.has(belowKey)) return false
+          const belowGroup = groupByKey.get(belowKey)
+          return belowGroup !== undefined && stableGroups.has(belowGroup)
+        })
+        if (hasStableSupport) {
+          stableGroups.add(index)
+          supportChanged = true
+        }
+      }
+    }
+
+    const fallingGroups: typeof blocks[] = []
+    for (let index = 0; index < candidateGroups.length; index++) {
+      const group = candidateGroups[index]
+      // A connected glue component is one rigid body. Unsupported stacks are
+      // released in the same scan, instead of waiting for each lower voxel to
+      // land or for the next 250 ms physics scan.
+      if (!stableGroups.has(index) || group.some((item) => forceKeys?.has(item.key))) {
+        fallingGroups.push(group)
+      }
     }
 
     for (const blocksInGroup of fallingGroups) {
