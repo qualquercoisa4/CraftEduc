@@ -238,7 +238,10 @@ export class RigidPhysics {
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
           // Rapier derives total mass, centre of mass and inertia from every
           // collider's density and position; offset/heavy parts can tip the build.
-          .setDensity(blockMass(voxel.id, voxel.state))
+          // A voxel's configured mass belongs to the component, not its collider
+          // volume. This matters for the intentionally smaller motor housing:
+          // changing its collision shape must not silently make the motor lighter.
+          .setMass(blockMass(voxel.id, voxel.state))
           .setFriction(blockFriction(voxel.id))
           .setRestitution(0.005),
         body,
