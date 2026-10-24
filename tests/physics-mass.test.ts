@@ -36,6 +36,12 @@ async function main() {
   await physics.waitUntilReady()
   assert.equal(physics.ready, true, 'Rapier must initialize for the test')
 
+  // Invalid frame deltas must be ignored instead of poisoning the fixed-step
+  // accumulator; the subsequent free-fall check proves normal stepping recovers.
+  physics.step(Number.NaN)
+  physics.step(Number.POSITIVE_INFINITY)
+  physics.step(-1)
+
   // Component mass must remain stable when the collision shape is intentionally
   // smaller than a voxel, as with the motor housing used for a mounted wheel.
   const mountedMotorMass = blockMass(B.MOTOR, { mountedWheel: true })
