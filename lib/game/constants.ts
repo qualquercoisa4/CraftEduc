@@ -130,6 +130,7 @@ export type ItemId =
   | 'servo'
   | 'arduino_uno'
   | 'programming_tablet'
+  | 'scanner_dws'
   | 'paintbrush'
   | `colored_block_${ColorVariantId}`
   | `wire_${ColorVariantId}`
@@ -149,6 +150,7 @@ export const CATEGORIES: { id: CategoryId; label: string; icon: ItemId }[] = [
 export interface ItemDef {
   name: string
   description: string
+  physicalInfo?: string
   category: Exclude<CategoryId, 'all'>
   block?: number
   color?: string
@@ -157,110 +159,115 @@ export interface ItemDef {
 export const ITEMS: Record<ItemId, ItemDef> = {
   robotics: {
     name: 'Bloco de Robótica',
-    description: 'Piso condutivo (92%). Conduz eletricidade entre faces conectadas.',
+    description: 'Bloco estrutural condutivo usado como base para circuitos e montagens robóticas.',
+    physicalInfo: 'Massa: 0,90 kg • Condutividade: 92% • Atrito: 0,78 • Volume: 1 m³',
     category: 'blocks',
     block: B.ROBOTICS,
   },
-  iron: { name: 'Bloco de Ferro', description: 'Estrutura metálica resistente. Condutividade: 90%.', category: 'blocks', block: B.IRON },
-  wood: { name: 'Bloco de Madeira', description: 'Ótimo para protótipos. Isolante elétrico: 0%; não conduz corrente.', category: 'blocks', block: B.WOOD },
+  iron: { name: 'Bloco de Ferro', description: 'Bloco de ferro de alta massa, indicado para estruturas rígidas e contrapesos.', physicalInfo: 'Massa: 2,60 kg • Condutividade: 90% • Atrito: 0,58 • Volume: 1 m³', category: 'blocks', block: B.IRON },
+  wood: { name: 'Bloco de Madeira', description: 'Bloco leve para chassis e protótipos. Isola circuitos elétricos.', physicalInfo: 'Massa: 1,20 kg • Isolante elétrico • Atrito: 0,68 • Volume: 1 m³', category: 'blocks', block: B.WOOD },
   component: {
     name: 'Bloco de Componente',
-    description: 'Placa de circuito. Condutividade: 98%; conecte os fios às faces expostas.',
+    description: 'Placa de circuito para montar conexões e apoiar componentes eletrônicos.',
+    physicalInfo: 'Massa: 0,28 kg • Condutividade: 98% • Atrito: 0,62 • Volume: 1 m³',
     category: 'blocks',
     block: B.COMPONENT,
   },
   aluminum: {
     name: 'Perfil de Alumínio',
-    description: 'Perfil V-slot para chassis. Condutividade: 95%.',
+    description: 'Perfil de alumínio leve para chassis, suportes e estruturas de robôs.',
+    physicalInfo: 'Massa: 0,18 kg • Condutividade: 95% • Atrito: 0,45 • Volume equivalente: 1 m³',
     category: 'blocks',
     block: B.ALUMINUM,
   },
-  gear: { name: 'Bloco de Engrenagem', description: 'Engrenagens de latão. Condutividade: 90%.', category: 'blocks', block: B.GEAR },
-  wheel: { name: 'Roda de Arduino', description: 'Roda de borracha com aro amarelo de cinco raios e boa aderência para veículos robóticos.', category: 'motors', block: B.WHEEL },
+  gear: { name: 'Bloco de Engrenagem', description: 'Bloco de engrenagem metálica para montagens mecânicas e transmissão de movimento.', physicalInfo: 'Massa: 0,42 kg • Condutividade: 90% • Atrito: 0,58 • Volume: 1 m³', category: 'blocks', block: B.GEAR },
+  wheel: { name: 'Roda de Arduino', description: 'Roda de borracha com aro de cinco raios, feita para tração em veículos robóticos.', physicalInfo: 'Massa: 0,32 kg • Atrito: 1,05 • Peça móvel; aderência depende da carga normal', category: 'motors', block: B.WHEEL },
   led: {
     name: 'LED',
-    description: 'LED polarizado: ânodo (+) e cátodo (−). Só acende com a polaridade correta.',
+    description: 'Diodo emissor de luz. Respeite a polaridade: ânodo positivo e cátodo negativo.', physicalInfo: 'Massa: 0,12 kg • Consumo e brilho são simplificados • Não é um bloco estrutural',
     category: 'components',
     block: B.LED,
   },
   switch: {
     name: 'Interruptor elétrico',
-    description: 'Interruptor de dois polos: ligado, fecha dois pares independentes; desligado, interrompe a corrente.',
+    description: 'Interruptor de dois polos que abre ou fecha dois pares de contatos independentes.', physicalInfo: 'Massa: 0,22 kg • Condutividade dos contatos: alta • Estado ligado/desligado altera o circuito',
     category: 'components',
     block: B.SWITCH,
   },
   proximity_sensor: {
     name: 'Sensor de proximidade',
-    description: 'Detecta blocos à frente e só conduz energia quando a distância atende à condição programada. Shift + botão direito para girar.',
+    description: 'Sensor frontal que mede a distância até um bloco e responde à condição configurada. Shift + botão direito para girar.', physicalInfo: 'Massa: 0,18 kg • Alcance simulado: até 32 blocos • Leitura por raio em passos de 0,1 bloco',
     category: 'components',
     block: B.PROXIMITY_SENSOR,
   },
   servo: {
     name: 'Servo motor SG90',
-    description: 'Servo de posição. Conecte GND (marrom), VCC (vermelho) e sinal (amarelo); programe as posições de 0° a 180° pelo tablet.',
+    description: 'Servo de posição. Conecte GND (marrom), VCC (vermelho) e sinal (amarelo); configure os ângulos pelo tablet.', physicalInfo: 'Massa: 0,45 kg • Curso configurável: 0°–180° • Torque simulado: até 1,6 N·m',
     category: 'motors',
     block: B.SERVO,
   },
   arduino_uno: {
     name: 'Arduino UNO',
-    description: 'Placa controladora com pinos D0–D13, 5V e GND conectáveis. A programação será adicionada em uma etapa futura.',
+    description: 'Placa controladora com pinos digitais D0–D13, 5V, GND e VIN para conectar componentes.', physicalInfo: 'Massa: 0,08 kg • 14 pinos digitais • Alimentação simulada; comportamento depende do circuito/programa',
     category: 'components',
     block: B.ARDUINO_UNO,
   },
   programming_tablet: {
     name: 'Tablet de Programação',
-    description: 'Use na mão para abrir e editar a programação de componentes compatíveis.',
+    description: 'Tablet portátil para abrir e editar programas de componentes compatíveis.', physicalInfo: 'Ferramenta de interface • Não adiciona massa ao robô nem altera a física do conjunto',
     category: 'tools',
   },
   motor: {
     name: 'Motor CC Pequeno',
-    description: 'Motor CC polarizado: os dois terminais definem o sentido. Só move peças coladas e pode travar ao colidir.',
+    description: 'Motor CC com eixo rotativo. A polaridade define o sentido; ele movimenta peças fixadas com cola quente.', physicalInfo: 'Massa: 1,40 kg • Torque máximo simulado: 4,0 N·m por unidade de potência • Pode perder velocidade sob carga',
     category: 'motors',
     block: B.MOTOR,
   },
   wire: {
     name: 'Fio Amarelo',
-    description: 'Conecte terminais expostos. A polaridade e a condutividade do circuito determinam se haverá energia.',
+    description: 'Fio para ligar terminais expostos. A polaridade, a continuidade e as perdas do circuito afetam a alimentação.', physicalInfo: 'Elemento elétrico sem colisão própria • Resistência simplificada pelo modelo de condutividade',
     category: 'wiring',
     color: '#fdd835',
   },
   glue: {
     name: 'Cola Quente',
-    description: 'Botão direito numa face para colar blocos vizinhos.',
+    description: 'Aplique numa face para fixar blocos vizinhos e formar uma montagem física única.', physicalInfo: 'A cola cria conexões mecânicas rígidas no simulador; não acrescenta massa própria',
     category: 'tools',
   },
   resin_applicator: {
     name: 'Aplicador de Resina',
-    description: 'Clique uma vez em um bloco para revesti-lo com resina amarelada e proteger componentes contra água.',
+    description: 'Reveste um bloco com resina protetora amarelada para reduzir danos elétricos causados pela água.', physicalInfo: 'Revestimento visual/protetor • Não altera massa, volume ou atrito do bloco',
     category: 'tools',
   },
   paintbrush: {
     name: 'Pincel',
-    description: 'Pinte blocos com a cor escolhida. Shift + botão direito abre a paleta; botão direito pinta.',
+    description: 'Altera a aparência de um bloco sem substituir seu material físico. Shift + botão direito abre a paleta.', physicalInfo: 'A pintura é cosmética • Massa, atrito e condutividade permanecem os do material original',
     category: 'tools',
   },
   battery_box: {
     name: 'Compartimento de Pilha AAA',
-    description: '3 slots. Use pilhas nele; mão vazia retira.',
+    description: 'Compartimento para até três pilhas AAA. Com pilhas na mão, clique para inserir; mão vazia retira.', physicalInfo: 'Massa base: 0,65 kg • Cada pilha adiciona 0,12 kg • Capacidade: 3 pilhas',
     category: 'power',
     block: B.BATTERY_BOX,
   },
   battery: {
     name: 'Pilha AAA',
-    description: 'Botão direito no compartimento para inserir. 1,5 V.',
+    description: 'Pilha AAA de 1,5 V para alimentar circuitos através do compartimento de pilhas.', physicalInfo: 'Tensão nominal simulada: 1,5 V • A massa adicional é contabilizada pelo compartimento',
     category: 'power',
   },
   ...Object.fromEntries(COLOR_VARIANTS.flatMap((variant) => [
     [`colored_block_${variant.id}`, {
       name: `Bloco ${variant.name}`,
-      description: `Bloco decorativo na cor ${variant.name.toLowerCase()}.`,
+      description: `Bloco estrutural decorativo na cor ${variant.name.toLowerCase()}.`,
+      physicalInfo: 'Massa: 0,80 kg (valor padrão) • Atrito: 0,72 • A cor não altera as propriedades físicas',
       category: 'blocks',
       block: B.COLOR_BLOCK,
       color: variant.color,
     }],
     [`wire_${variant.id}`, {
       name: `Fio ${variant.name}`,
-      description: `Fio elétrico na cor ${variant.name.toLowerCase()}.`,
+      description: `Fio elétrico na cor ${variant.name.toLowerCase()} para conectar terminais expostos.`,
+      physicalInfo: 'Elemento elétrico sem colisão própria • A cor não altera a condutividade simulada',
       category: 'wiring',
       color: variant.color,
     }],
@@ -284,6 +291,7 @@ export const ITEM_ORDER: ItemId[] = [
   'glue',
   'resin_applicator',
   'programming_tablet',
+  'scanner_dws',
   'battery_box',
   'battery',
   'wheel',
