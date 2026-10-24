@@ -825,7 +825,7 @@ export class Mechanics {
     switch (entry.type) {
       case 'motor':
         entry.model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
-        setMotorFacing(entry.model, state?.facing ?? 2)
+        setMotorFacing(entry.model, state?.facing ?? 2, state?.motorRoll ?? 0)
         if (stopMotorShaft) entry.model.shaft.rotation.set(0, 0, 0)
         break
       case 'box':
