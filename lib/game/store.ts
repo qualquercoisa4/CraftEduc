@@ -3,7 +3,19 @@
 import { useSyncExternalStore } from 'react'
 import { type CategoryId, DEFAULT_HOTBAR, type ItemId } from './constants'
 
-export type Screen = 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'arduino_programming' | 'brush_color'
+export interface ScannerReport {
+  blockCount: number
+  massKg: number
+  dimensions: { x: number; y: number; z: number }
+  centerOfMass: { x: number; y: number; z: number }
+  inertia: { x: number; y: number; z: number }
+  averageFriction: number
+  averageConductivity: number
+  gluedConnections: number
+  composition: { name: string; count: number; massKg: number }[]
+}
+
+export type Screen = 'scanner' | 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'arduino_programming' | 'brush_color'
 
 export interface Settings {
   renderDistance: number
@@ -30,6 +42,7 @@ export interface GameState {
   sensorConfigKey: string | null
   servoConfigKey: string | null
   arduinoProgramKey: string | null
+  scannerReport: ScannerReport | null
   brushColor: string
 }
 
@@ -79,6 +92,7 @@ export const gameStore = createStore({
   sensorConfigKey: null,
   servoConfigKey: null,
   arduinoProgramKey: null,
+  scannerReport: null,
   brushColor: '#e53935',
 })
 
