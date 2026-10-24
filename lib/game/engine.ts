@@ -1658,6 +1658,37 @@ export class Engine {
     if (hint !== s.hint) gameStore.set({ hint })
   }
 
+  private updateHand(dt: number) {
+    const item = this.selectedItem()
+    if (item !== this.heldItem) {
+      const first = this.heldItem === undefined
+      this.heldItem = item
+      if (this.handObj) {
+        this.handRoot.remove(this.handObj)
+        this.handObj.traverse((o) => (o as THREE.Mesh).geometry?.dispose())
+      }
+      this.handObj = this.buildHandObject(item)
+      this.handRoot.add(this.handObj)
+      if (!first) {
+        this.equip = 0
+        showItemLabel(item ? ITEMS[item].name : 'Mão vazia')
+      }
+      if (item !== 'wire') this.wireStart = null
+    }
+    this.swing = Math.min(1, this.swing + dt / 0.25)
+    this.equip = Math.min(1, this.equip + dt / 0.18)
+    const sw = this.swing < 1 ? Math.sin(Math.sqrt(this.swing) * Math.PI) : 0
+    const sw2 = this.swing < 1 ? Math.sin(this.swing * Math.PI) : 0
+    const bob = this.player.bob
+    const w = this.player.walkDist * Math.PI
+    this.handRoot.position.set(
+      -sw * 0.18 + Math.sin(w) * 0.025 * bob,
+      sw * 0.06 - Math.abs(Math.cos(w)) * 0.03 * bob - (1 - this.equip) * 0.5,
+      -sw2 * 0.12,
+    )
+    this.handRoot.rotation.set(-sw2 * 0.6, sw2 * 0.25, 0)
+  }
+
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame)
     const dt = Math.min(0.05, (now - this.last) / 1000)
