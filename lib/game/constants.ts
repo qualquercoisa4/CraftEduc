@@ -217,6 +217,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     description: 'Tablet portátil para abrir e editar programas de componentes compatíveis.', physicalInfo: 'Ferramenta de interface • Não adiciona massa ao robô nem altera a física do conjunto',
     category: 'tools',
   },
+  scanner_dws: {
+    name: 'Scanner DWS',
+    description: 'Aponte para um bloco de uma montagem colada e escaneie o conjunto inteiro. Os resultados aparecem em um tablet holográfico.',
+    physicalInfo: 'Ferramenta de análise • Lê massa, dimensões, centro de massa, inércia estimada e composição da montagem',
+    category: 'tools',
+  },
   motor: {
     name: 'Motor CC Pequeno',
     description: 'Motor CC com eixo rotativo. A polaridade define o sentido; ele movimenta peças fixadas com cola quente.', physicalInfo: 'Massa: 1,40 kg • Torque máximo simulado: 4,0 N·m por unidade de potência • Pode perder velocidade sob carga',
