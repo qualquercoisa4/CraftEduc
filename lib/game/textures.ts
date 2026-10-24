@@ -438,6 +438,20 @@ function drawItemPixels(item: ItemId, px: Px) {
       px(9, 4, [255, 255, 255])
       break
     }
+    case 'scanner_dws': {
+      // Cyan diagnostic tablet with a radar sweep and a highlighted target.
+      rect(1, 1, 14, 14, [20, 35, 48])
+      rect(2, 2, 12, 12, [46, 63, 78])
+      rect(3, 3, 10, 9, [4, 61, 83])
+      rect(4, 4, 8, 1, [36, 220, 255])
+      rect(4, 6, 8, 1, [24, 150, 194])
+      rect(4, 8, 6, 1, [36, 220, 255])
+      rect(8, 5, 1, 4, [185, 252, 255])
+      px(8, 7, [255, 255, 255])
+      rect(3, 12, 10, 1, [29, 186, 220])
+      rect(3, 0, 10, 1, [114, 230, 255])
+      break
+    }
     case 'programming_tablet': {
       // Compact tablet with a blue screen, code marks and a gold edge.
       rect(2, 1, 12, 14, [28, 34, 43])
