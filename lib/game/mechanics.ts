@@ -30,6 +30,7 @@ import {
   setBatteryCount,
   setMotorFacing,
   setSwitchState,
+  motorOrientationQuaternion,
   facingQuaternion,
   updateWireMesh,
 } from './models'
@@ -566,13 +567,36 @@ export class Mechanics {
 
   /* ---------------- Interactions ---------------- */
 
-  rotateMotor(x: number, y: number, z: number, rollAroundShaft = false) {
+  rotateMotor(x: number, y: number, z: number, rotateAroundX = false) {
     const key = posKey(x, y, z)
     const st = this.world.ensureState(x, y, z)
     st.facing ??= 2
     st.motorRoll ??= 0
-    if (rollAroundShaft) st.motorRoll = (st.motorRoll + 1) % 4
-    else st.facing = (st.facing + 1) % 6
+    if (rotateAroundX) {
+      // Apply a world-space quarter-turn around X. Find the equivalent
+      // (six-way facing + local quarter-turn) representation so the visual,
+      // terminals, collider and mechanical output axis stay in agreement.
+      const xTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)
+      const target = xTurn.multiply(motorOrientationQuaternion(st.facing, st.motorRoll))
+      let bestFacing = st.facing
+      let bestRoll = st.motorRoll
+      let bestScore = -1
+      for (let candidateFacing = 0; candidateFacing < 6; candidateFacing++) {
+        for (let candidateRoll = 0; candidateRoll < 4; candidateRoll++) {
+          const candidate = motorOrientationQuaternion(candidateFacing, candidateRoll)
+          const score = Math.abs(target.dot(candidate))
+          if (score > bestScore) {
+            bestScore = score
+            bestFacing = candidateFacing
+            bestRoll = candidateRoll
+          }
+        }
+      }
+      st.facing = bestFacing
+      st.motorRoll = bestRoll
+    } else {
+      st.facing = (st.facing + 1) % 6
+    }
 
     const entry = this.models.get(key)
     if (entry?.type === 'motor') {
@@ -585,7 +609,7 @@ export class Mechanics {
     this.mechDirty = true
     this.powerDirty = true
     this.powerCooldown = 0
-    return rollAroundShaft ? st.motorRoll : st.facing
+    return rotateAroundX ? st.motorRoll : st.facing
   }
 
   private refreshMotorTerminalWires(key: string) {
