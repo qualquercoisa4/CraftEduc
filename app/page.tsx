@@ -13,6 +13,7 @@ import { ServoConfig } from '@/components/game/servo-config'
 import { ArduinoProgramming } from '@/components/game/arduino-programming-loader'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 import { WorldManager } from '@/components/game/world-manager'
+import { ScannerResults } from '@/components/game/scanner-results'
 
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -126,6 +127,7 @@ export default function Page() {
         </>
       )}
 
+      {!bootError && screen === 'scanner' && <ScannerResults />}
       {!bootError && screen === 'inventory' && <Inventory />}
       {!bootError && screen === 'sensor_config' && <ProximitySensorConfig />}
       {!bootError && screen === 'brush_color' && <BrushColorPicker />}
