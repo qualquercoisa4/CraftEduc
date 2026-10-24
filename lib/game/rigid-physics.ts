@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { B, GROUND_LEVEL, WORLD_HEIGHT, isOpaque, parseKey, posKey } from './constants'
 import type { World } from './world'
+import { getMotorSpec } from './motor-specs'
 
 export interface PhysicsVoxel {
   x: number
@@ -9,7 +10,7 @@ export interface PhysicsVoxel {
   z: number
   id: number
   key?: string
-  state?: { batteries?: number; mountedWheel?: boolean }
+  state?: { batteries?: number; mountedWheel?: boolean; motorType?: string }
 }
 
 /**
@@ -28,14 +29,15 @@ export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.BATTERY_BOX]: 0.65,
   [B.ROBOTICS]: 0.9,
   [B.WOOD]: 1.2,
-  [B.MOTOR]: 1.4,
-  [B.SERVO]: 0.45,
+  [B.MOTOR]: 0.017,
+  [B.SERVO]: 0.009,
   [B.IRON]: 2.6,
   [B.PROXIMITY_SENSOR]: 0.18,
   [B.ARDUINO_UNO]: 0.08,
 }
 
 export function blockMass(id: number, state?: PhysicsVoxel['state']) {
+  if (id === B.MOTOR) return getMotorSpec(state?.motorType).massKg
   const base = BLOCK_MASS[id] ?? 0.8
   // Battery cells and the mounted wheel affect the centre of mass and inertia.
   if (id === B.BATTERY_BOX) return base + Math.max(0, Math.min(3, Math.floor(state?.batteries ?? 0))) * 0.12
