@@ -68,7 +68,7 @@ export interface MotorTerminal {
 export interface MotorModel {
   group: THREE.Group
   shaft: THREE.Group
-  terminals: MotorTerminal[]
+  terminals?: MotorTerminal[]
 }
 
 /** Local-space housing and exposed-lead envelope before orientation is applied. */
