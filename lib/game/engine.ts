@@ -1265,7 +1265,7 @@ export class Engine {
       const state = this.world.getState(hit.x, hit.y, hit.z)
       this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
       sfx.rotate()
-      showToast(rolling ? `Motor girado no eixo de saída (${(state?.motorRoll ?? 0) * 90}°)` : `Motor virado para: ${DIR_NAMES[orientation]}`)
+      showToast(rolling ? `Motor girado 90° no eixo X (eixo: ${DIR_NAMES[state?.facing ?? orientation]})` : `Motor virado para: ${DIR_NAMES[orientation]}`)
       return
     }
 
@@ -1651,7 +1651,7 @@ export class Engine {
       const state = this.world.getState(hit.x, hit.y, hit.z)
       const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
       const extra = status === 'stalled' ? '  •  TRAVADO!' : ''
-      hint = this.player.sneaking ? `${use} para girar o motor 90° ao redor do eixo de saída${extra}` : `${use} para mudar a direção do eixo do motor (${DIR_NAMES[state?.facing ?? 2]})${extra}`
+      hint = this.player.sneaking ? `${use} para girar o motor 90° ao redor do eixo X${extra}` : `${use} para mudar a direção do eixo do motor (${DIR_NAMES[state?.facing ?? 2]})${extra}`
     } else if (item === 'battery') {
       hint = 'Mire num compartimento de pilha AAA'
     }
