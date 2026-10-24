@@ -1363,9 +1363,52 @@ export class Engine {
 
   /* ---------------- Raycast ---------------- */
 
+  private motorBoundsForCell(x: number, y: number, z: number) {
+    const state = this.world.getState(x, y, z)
+    return motorWorldBounds(x, y, z, state?.motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0)
+  }
+
+  private boundsOverlapCell(bounds: { min: THREE.Vector3; max: THREE.Vector3 }, x: number, y: number, z: number, margin = 0.08) {
+    return Math.min(bounds.max.x, x + 1) - Math.max(bounds.min.x, x) > margin
+      && Math.min(bounds.max.y, y + 1) - Math.max(bounds.min.y, y) > margin
+      && Math.min(bounds.max.z, z + 1) - Math.max(bounds.min.z, z) > margin
+  }
+
+  /** True when an extended motor model physically occupies a cell with no voxel in it. */
+  private isMotorFootprintOccupied(x: number, y: number, z: number) {
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) {
+      const mx = x + dx, my = y + dy, mz = z + dz
+      if (my < 0 || my >= WORLD_HEIGHT || this.world.getBlock(mx, my, mz) !== B.MOTOR) continue
+      if (mx === x && my === y && mz === z) continue
+      if (this.boundsOverlapCell(this.motorBoundsForCell(mx, my, mz), x, y, z)) return true
+    }
+    return false
+  }
+
+  /** Check a newly placed motor's extended body against occupied cells. The clicked support block may touch its mount face. */
+  private motorModelOverlapsBlocks(
+    x: number, y: number, z: number, variant: string, facing: number, roll: number, supportKey?: string,
+  ) {
+    const bounds = motorWorldBounds(x, y, z, variant, facing, roll)
+    const minX = Math.floor(bounds.min.x), maxX = Math.floor(bounds.max.x)
+    const minY = Math.floor(bounds.min.y), maxY = Math.floor(bounds.max.y)
+    const minZ = Math.floor(bounds.min.z), maxZ = Math.floor(bounds.max.z)
+    const anchorKey = posKey(x, y, z)
+    for (let bx = minX; bx <= maxX; bx++) for (let by = minY; by <= maxY; by++) for (let bz = minZ; bz <= maxZ; bz++) {
+      if (by < 0 || by >= WORLD_HEIGHT) continue
+      const cellKey = posKey(bx, by, bz)
+      if (cellKey === anchorKey || cellKey === supportKey || this.world.getBlock(bx, by, bz) === B.AIR) continue
+      if (this.boundsOverlapCell(bounds, bx, by, bz, 0.08)) return true
+    }
+    return false
+  }
+
+  /* ---------------- Raycast ---------------- */
+
   raycast(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number): Hit | null {
-    // Dynamic body hits compete by distance with the static voxel DDA. This
-    // makes a moving rotor occlude blocks behind it instead of being ignored.
+    // Moving bodies and extended model bounds compete by distance with the
+    // voxel DDA. This lets the second half of a long TT/N20 be targeted even
+    // though its anchor voxel occupies only one grid cell.
     const moving = this.mech.raycastMoving(origin, dir, maxDist)
     const limit = moving ? moving.dist : maxDist
     let ix = Math.floor(origin.x)
@@ -1381,17 +1424,40 @@ export class Engine {
     let tmy = sy > 0 ? (iy + 1 - origin.y) * tdy : sy < 0 ? (origin.y - iy) * tdy : Number.POSITIVE_INFINITY
     let tmz = sz > 0 ? (iz + 1 - origin.z) * tdz : sz < 0 ? (origin.z - iz) * tdz : Number.POSITIVE_INFINITY
     let t = 0
+    let nearestExtendedMotor: Hit | null = null
+    const checkedMotors = new Set<string>()
+    const inspectNearbyMotorBounds = (cx: number, cy: number, cz: number) => {
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) {
+        const mx = cx + dx, my = cy + dy, mz = cz + dz
+        if (my < 0 || my >= WORLD_HEIGHT || this.world.getBlock(mx, my, mz) !== B.MOTOR) continue
+        const key = posKey(mx, my, mz)
+        if (checkedMotors.has(key)) continue
+        checkedMotors.add(key)
+        const bounds = this.motorBoundsForCell(mx, my, mz)
+        const hit = this.rayAabb(origin, dir, bounds.min, bounds.max, mx, my, mz, B.MOTOR, limit)
+        if (hit && (!moving || hit.dist <= moving.dist) && (!nearestExtendedMotor || hit.dist < nearestExtendedMotor.dist)) {
+          nearestExtendedMotor = hit
+        }
+      }
+    }
+
     for (let i = 0; i < 64 && t <= limit; i++) {
+      const nextBoundary = Math.min(tmx, tmy, tmz)
       if (iy >= 0 && iy < WORLD_HEIGHT) {
+        inspectNearbyMotorBounds(ix, iy, iz)
         const id = this.world.getBlock(ix, iy, iz)
         if (id !== B.AIR) {
-          const hit = this.rayBox(origin, dir, ix, iy, iz, id, limit)
-          if (hit && (!moving || hit.dist <= moving.dist)) return hit
+          const hit = id === B.MOTOR
+            ? this.rayMotorBox(origin, dir, ix, iy, iz, limit)
+            : this.rayBox(origin, dir, ix, iy, iz, id, limit)
+          if (hit && (!moving || hit.dist <= moving.dist)) {
+            if (nearestExtendedMotor && nearestExtendedMotor.dist < hit.dist - 1e-5) return nearestExtendedMotor
+            return hit
+          }
         }
 
         // The Arduino model is wider than its anchor voxel. Check nearby
-        // anchor cells while traversing the ray so the exposed pins remain
-        // targetable across the board's full 2x2 footprint.
+        // anchor cells while traversing the ray so the exposed pins remain targetable.
         for (let dx = -1; dx <= 1; dx++) {
           for (let dz = -1; dz <= 1; dz++) {
             if (dx === 0 && dz === 0) continue
@@ -1399,10 +1465,16 @@ export class Engine {
             const bz = iz + dz
             if (this.world.getBlock(bx, iy, bz) !== B.ARDUINO_UNO) continue
             const boardHit = this.rayBox(origin, dir, bx, iy, bz, B.ARDUINO_UNO, limit)
-            if (boardHit && boardHit.dist >= t - 1e-6 && boardHit.dist <= Math.min(tmx, tmy, tmz) + 1e-6 && (!moving || boardHit.dist <= moving.dist)) return boardHit
+            if (boardHit && boardHit.dist >= t - 1e-6 && boardHit.dist <= nextBoundary + 1e-6 && (!moving || boardHit.dist <= moving.dist)) {
+              if (nearestExtendedMotor && nearestExtendedMotor.dist < boardHit.dist - 1e-5) return nearestExtendedMotor
+              return boardHit
+            }
           }
         }
       }
+      // If the ray has reached the closest extended motor before entering the
+      // next voxel, it is the first visible object at this distance.
+      if (nearestExtendedMotor && nearestExtendedMotor.dist < nextBoundary - 1e-5) return nearestExtendedMotor
       if (tmx < tmy && tmx < tmz) {
         ix += sx
         t = tmx
@@ -1417,25 +1489,40 @@ export class Engine {
         tmz += tdz
       }
     }
-    return moving as Hit | null
+    return (nearestExtendedMotor ?? moving) as Hit | null
+  }
+
+  private rayMotorBox(o: THREE.Vector3, d: THREE.Vector3, x: number, y: number, z: number, maxDist: number): Hit | null {
+    const bounds = this.motorBoundsForCell(x, y, z)
+    return this.rayAabb(o, d, bounds.min, bounds.max, x, y, z, B.MOTOR, maxDist)
   }
 
   private rayBox(o: THREE.Vector3, d: THREE.Vector3, x: number, y: number, z: number, id: number, maxDist: number): Hit | null {
     const b = blockBounds(id)
-    const mins = [x + b[0], y + b[1], z + b[2]]
-    const maxs = [x + b[3], y + b[4], z + b[5]]
+    const mins = new THREE.Vector3(x + b[0], y + b[1], z + b[2])
+    const maxs = new THREE.Vector3(x + b[3], y + b[4], z + b[5])
+    return this.rayAabb(o, d, mins, maxs, x, y, z, id, maxDist)
+  }
+
+  private rayAabb(
+    o: THREE.Vector3, d: THREE.Vector3,
+    mins: THREE.Vector3, maxs: THREE.Vector3,
+    x: number, y: number, z: number, id: number, maxDist: number,
+  ): Hit | null {
     const oa = [o.x, o.y, o.z]
     const da = [d.x, d.y, d.z]
+    const min = [mins.x, mins.y, mins.z]
+    const max = [maxs.x, maxs.y, maxs.z]
     let tmin = Number.NEGATIVE_INFINITY
     let tmax = Number.POSITIVE_INFINITY
     let axis = 0
     for (let a = 0; a < 3; a++) {
       if (Math.abs(da[a]) < 1e-9) {
-        if (oa[a] < mins[a] || oa[a] > maxs[a]) return null
+        if (oa[a] < min[a] || oa[a] > max[a]) return null
         continue
       }
-      let t1 = (mins[a] - oa[a]) / da[a]
-      let t2 = (maxs[a] - oa[a]) / da[a]
+      let t1 = (min[a] - oa[a]) / da[a]
+      let t2 = (max[a] - oa[a]) / da[a]
       if (t1 > t2) [t1, t2] = [t2, t1]
       if (t1 > tmin) {
         tmin = t1
@@ -1448,286 +1535,6 @@ export class Engine {
     return { x, y, z, face, id, dist: tmin, point: o.clone().addScaledVector(d, tmin) }
   }
 
-  /* ---------------- Hand / viewmodel ---------------- */
-
-  private buildHandObject(item: ItemId | null): THREE.Object3D {
-    if (item === null) {
-      const tex = makePixelTexture(armCanvas())
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.75), new THREE.MeshLambertMaterial({ map: tex }))
-      arm.position.set(0.42, -0.42, -0.5)
-      arm.rotation.set(0.35, 0.25, 0.15)
-      return arm
-    }
-    const def = ITEMS[item]
-    if (def.block !== undefined && !isModelBlock(def.block)) {
-      const out = newBuffers()
-      emitCube(out, -0.5, -0.5, -0.5, def.block, false, () => false)
-      const mesh = new THREE.Mesh(buffersToGeometry(out), this.blockMaterial)
-      mesh.scale.setScalar(0.38)
-      mesh.position.set(0.5, -0.45, -0.8)
-      mesh.rotation.set(0, Math.PI / 4, 0)
-      return mesh
-    }
-    if (item === 'scanner_dws') {
-      const g = new THREE.Group()
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.72, 0.045), new THREE.MeshStandardMaterial({ color: 0x182b3d, metalness: 0.65, roughness: 0.32 }))
-      const screen = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.58), new THREE.MeshBasicMaterial({ color: 0x073d59 }))
-      screen.position.z = 0.026
-      const sweep = new THREE.Mesh(new THREE.PlaneGeometry(0.39, 0.025), new THREE.MeshBasicMaterial({ color: 0x59edff }))
-      sweep.position.set(0, 0.1, 0.03)
-      const target = new THREE.Mesh(new THREE.RingGeometry(0.055, 0.075, 20), new THREE.MeshBasicMaterial({ color: 0xb7fbff, side: THREE.DoubleSide }))
-      target.position.set(0.08, -0.06, 0.031)
-      g.add(body, screen, sweep, target)
-      g.scale.setScalar(0.72)
-      g.position.set(0.48, -0.43, -0.78)
-      g.rotation.set(0.12, 0.48, 0.06)
-      return g
-    }
-    if (isMotorItemId(item)) {
-      const m = createMotorModel(0, ITEMS[item].motorType ?? 'fa130').group
-      const g = new THREE.Group()
-      g.add(m)
-      g.scale.setScalar(0.5)
-      g.position.set(0.48, -0.42, -0.75)
-      g.rotation.set(0.1, 0.5, 0)
-      return g
-    }
-    if (item === 'arduino_uno') {
-      const m = createArduinoUnoModel().group
-      const g = new THREE.Group()
-      g.add(m)
-      g.scale.setScalar(0.48)
-      g.position.set(0.48, -0.46, -0.78)
-      g.rotation.set(0.16, 0.52, 0.12)
-      return g
-    }
-    if (item === 'proximity_sensor') {
-      const m = createProximitySensorModel(4, false).group
-      const g = new THREE.Group()
-      g.add(m)
-      g.scale.setScalar(0.62)
-      g.position.set(0.48, -0.45, -0.78)
-      g.rotation.set(0.2, 0.5, 0)
-      return g
-    }
-    if (item === 'wheel') {
-      const m = createArduinoWheelModel(0).group
-      const g = new THREE.Group()
-      g.add(m)
-      g.scale.setScalar(0.7)
-      g.position.set(0.48, -0.45, -0.78)
-      g.rotation.set(0.2, 0.5, 0)
-      return g
-    }
-    if (item === 'battery_box') {
-      const m = createBatteryBoxModel(3).group
-      const g = new THREE.Group()
-      g.add(m)
-      g.scale.setScalar(0.5)
-      g.position.set(0.48, -0.48, -0.75)
-      g.rotation.set(0.35, 0.6, 0)
-      return g
-    }
-    const mesh = new THREE.Mesh(this.extrudeSprite(item), new THREE.MeshBasicMaterial({ vertexColors: true }))
-    mesh.scale.setScalar(0.55)
-    mesh.position.set(0.5, -0.36, -0.7)
-    mesh.rotation.set(0, -Math.PI / 2 + 0.25, 0.3)
-    return mesh
-  }
-
-  private extrudeSprite(item: ItemId) {
-    const c = getItemSpriteCanvas(item)
-    const data = c.getContext('2d')!.getImageData(0, 0, 16, 16).data
-    const op = (x: number, y: number) => x >= 0 && y >= 0 && x < 16 && y < 16 && data[(y * 16 + x) * 4 + 3] > 20
-    const positions: number[] = []
-    const colors: number[] = []
-    const indices: number[] = []
-    const s = 1 / 16
-    const t = 1 / 16
-    const col = new THREE.Color()
-    const quad = (v: number[][], shade: number) => {
-      const base = positions.length / 3
-      for (const p of v) {
-        positions.push(p[0], p[1], p[2])
-        colors.push(col.r * shade, col.g * shade, col.b * shade)
-      }
-      indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
-    }
-    for (let y = 0; y < 16; y++)
-      for (let x = 0; x < 16; x++) {
-        if (!op(x, y)) continue
-        const i = (y * 16 + x) * 4
-        col.setRGB(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, THREE.SRGBColorSpace)
-        const x0 = x * s - 0.5
-        const x1 = x0 + s
-        const y1 = 0.5 - y * s
-        const y0 = y1 - s
-        const z0 = -t / 2
-        const z1 = t / 2
-        quad([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], 1)
-        quad([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], 0.7)
-        if (!op(x, y - 1)) quad([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], 0.9)
-        if (!op(x, y + 1)) quad([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], 0.5)
-        if (!op(x - 1, y)) quad([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], 0.6)
-        if (!op(x + 1, y)) quad([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], 0.6)
-      }
-    const g = new THREE.BufferGeometry()
-    g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
-    g.setIndex(indices)
-    return g
-  }
-
-  private updateHand(dt: number) {
-    const item = this.selectedItem()
-    if (item !== this.heldItem) {
-      const first = this.heldItem === undefined
-      this.heldItem = item
-      if (this.handObj) {
-        this.handRoot.remove(this.handObj)
-        this.handObj.traverse((o) => (o as THREE.Mesh).geometry?.dispose())
-      }
-      this.handObj = this.buildHandObject(item)
-      this.handRoot.add(this.handObj)
-      if (!first) {
-        this.equip = 0
-        showItemLabel(item ? ITEMS[item].name : 'Mão vazia')
-      }
-      if (item !== 'wire') this.wireStart = null
-    }
-    this.swing = Math.min(1, this.swing + dt / 0.25)
-    this.equip = Math.min(1, this.equip + dt / 0.18)
-    const sw = this.swing < 1 ? Math.sin(Math.sqrt(this.swing) * Math.PI) : 0
-    const sw2 = this.swing < 1 ? Math.sin(this.swing * Math.PI) : 0
-    const bob = this.player.bob
-    const w = this.player.walkDist * Math.PI
-    this.handRoot.position.set(
-      -sw * 0.18 + Math.sin(w) * 0.025 * bob,
-      sw * 0.06 - Math.abs(Math.cos(w)) * 0.03 * bob - (1 - this.equip) * 0.5,
-      -sw2 * 0.12,
-    )
-    this.handRoot.rotation.set(-sw2 * 0.6, sw2 * 0.25, 0)
-  }
-
-  /* ---------------- Main loop ---------------- */
-
-  private frame = (now: number) => {
-    this.raf = requestAnimationFrame(this.frame)
-    const dt = Math.min(0.05, (now - this.last) / 1000)
-    this.last = now
-    this.elapsed += dt
-    this.frames++
-    const s = gameStore.get()
-    const frozen = s.screen === 'paused' || ((s.screen === 'options' || s.screen === 'controls') && s.returnScreen === 'paused')
-
-    let centerX: number
-    let centerZ: number
-    if (s.screen === 'title' || ((s.screen === 'options' || s.screen === 'controls') && s.returnScreen === 'title')) {
-      const a = this.elapsed * 0.08
-      const cx = 4.5
-      const cz = -3.5
-      this.camera.position.set(cx + Math.sin(a) * 10, GROUND_LEVEL + 5, cz + Math.cos(a) * 10)
-      this.camera.lookAt(cx, GROUND_LEVEL + 1, cz)
-      centerX = this.camera.position.x
-      centerZ = this.camera.position.z
-      this.outline.visible = false
-      this.handRoot.visible = false
-      this.mech.update(dt)
-    } else {
-      this.handRoot.visible = true
-      if (!frozen) {
-        const playing = s.screen === 'playing'
-        const k = this.keys
-        const t = this.touch
-        const forward = playing ? (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) + t.moveY : 0
-        const strafe = playing ? (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0) + t.moveX : 0
-        if (forward <= 0) this.sprintLatch = false
-        const shift = playing && (k.has('ShiftLeft') || k.has('ShiftRight'))
-        const space = playing && k.has('Space')
-        this.player.update(dt, {
-          forward,
-          strafe,
-          jump: space || (playing && t.jump),
-          sneak: shift || (playing && t.sneak),
-          sprint: playing && (k.has('ControlLeft') || k.has('ControlRight') || this.sprintLatch || t.sprint),
-          flyUp: space || (playing && t.flyUp),
-          flyDown: shift || (playing && t.flyDown),
-        })
-        if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
-          gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
-        this.mech.update(dt)
-        // Player-vs-machine contacts use the latest host snapshot on every client.
-        // The client moves only its local player; it never advances the shared machine physics.
-        if (playing) this.mech.resolvePlayerCollision(this.player, dt)
-      }
-      this.updateCamera(dt)
-      centerX = this.player.pos.x
-      centerZ = this.player.pos.z
-      this.updateTarget()
-      if (s.screen === 'playing') this.updateHolds(dt)
-      this.updateHand(frozen ? 0 : dt)
-      this.updateHint()
-    }
-
-    this.updateRemoteAvatars(frozen ? 0 : dt)
-    this.sky.mesh.position.copy(this.camera.position)
-    this.sky.material.uniforms.uTime.value = this.elapsed
-    this.updateChunks(centerX, centerZ)
-    this.particles.update(frozen ? 0 : dt, this.camera)
-    if (this.physicsDebugLabel) {
-      const hit = this.target
-      const target = hit
-        ? `\nray target: id=${hit.id} cell=(${hit.x},${hit.y},${hit.z}) dist=${hit.dist.toFixed(2)} moving=${hit.moving?.kind ?? 'static'} source=${hit.moving?.key ?? '-'}`
-        : '\nray target: none'
-      this.physicsDebugLabel.textContent = this.mech.physicsDebugText() + target
-    }
-
-    this.renderer.clear()
-    this.renderer.render(this.scene, this.camera)
-    if (this.handRoot.visible) {
-      this.renderer.clearDepth()
-      this.renderer.render(this.handScene, this.handCamera)
-    }
-
-    this.debugTimer += dt
-    if (this.debugTimer > 0.5) {
-      this.fps = Math.round(this.frames / this.debugTimer)
-      this.frames = 0
-      this.debugTimer = 0
-      if (s.debug) {
-        const p = this.player.pos
-        const yawDeg = ((((-this.player.yaw * 180) / Math.PI) % 360) + 360) % 360
-        const facing = ['Norte (-Z)', 'Leste (+X)', 'Sul (+Z)', 'Oeste (-X)'][Math.round(yawDeg / 90) % 4]
-        gameStore.set({
-          debugInfo: [
-            `CraftEduc Robótica (${this.fps} fps)`,
-            `XYZ: ${p.x.toFixed(2)} / ${p.y.toFixed(2)} / ${p.z.toFixed(2)}`,
-            `Chunk: ${Math.floor(p.x / CHUNK_SIZE)}, ${Math.floor(p.z / CHUNK_SIZE)}  (${this.world.chunks.size} carregados)`,
-            `Olhando para: ${facing}`,
-            `Fios: ${this.mech.wires.length}  Mecanismos: ${this.mech.contraptions.size}`,
-          ].join('\n'),
-        })
-      }
-    }
-  }
-
-  private updateCamera(dt: number) {
-    const p = this.player
-    const s = gameStore.get()
-    const cam = this.camera
-    const w = p.walkDist * Math.PI
-    const bob = p.bob
-    cam.position.set(p.pos.x, p.pos.y + p.eye, p.pos.z)
-    const right = new THREE.Vector3(Math.cos(p.yaw), 0, -Math.sin(p.yaw))
-    cam.position.addScaledVector(right, Math.sin(w) * 0.045 * bob)
-    cam.position.y -= Math.abs(Math.cos(w)) * 0.06 * bob
-    cam.rotation.set(p.pitch, p.yaw, Math.sin(w) * 0.008 * bob)
-    const targetFov = s.settings.fov * (p.sprinting ? (p.flying ? 1.2 : 1.12) : 1)
-    cam.fov += (targetFov - cam.fov) * (1 - Math.exp(-10 * dt))
-    cam.updateProjectionMatrix()
-    cam.updateMatrixWorld()
-  }
-
   private updateTarget() {
     const dir = new THREE.Vector3()
     this.camera.getWorldDirection(dir)
@@ -1737,10 +1544,16 @@ export class Engine {
     const hit = this.raycast(origin, dir, REACH)
     this.target = hit
     if (hit) {
-      const b = blockBounds(hit.id)
       this.outline.visible = true
-      this.outline.position.set(hit.x + (b[0] + b[3]) / 2, hit.y + (b[1] + b[4]) / 2, hit.z + (b[2] + b[5]) / 2)
-      this.outline.scale.set(b[3] - b[0] + 0.004, b[4] - b[1] + 0.004, b[5] - b[2] + 0.004)
+      if (hit.id === B.MOTOR) {
+        const bounds = this.motorBoundsForCell(hit.x, hit.y, hit.z)
+        this.outline.position.copy(bounds.min.clone().add(bounds.max).multiplyScalar(0.5))
+        this.outline.scale.copy(bounds.max.clone().sub(bounds.min).addScalar(0.004))
+      } else {
+        const b = blockBounds(hit.id)
+        this.outline.position.set(hit.x + (b[0] + b[3]) / 2, hit.y + (b[1] + b[4]) / 2, hit.z + (b[2] + b[5]) / 2)
+        this.outline.scale.set(b[3] - b[0] + 0.004, b[4] - b[1] + 0.004, b[5] - b[2] + 0.004)
+      }
     } else this.outline.visible = false
 
     if (this.wireStart) {
