@@ -1440,7 +1440,7 @@ export class Engine {
     let tmy = sy > 0 ? (iy + 1 - origin.y) * tdy : sy < 0 ? (origin.y - iy) * tdy : Number.POSITIVE_INFINITY
     let tmz = sz > 0 ? (iz + 1 - origin.z) * tdz : sz < 0 ? (origin.z - iz) * tdz : Number.POSITIVE_INFINITY
     let t = 0
-    let nearestExtendedMotor: Hit | null = null
+    const nearestExtendedMotor: { value: Hit | null } = { value: null }
     const checkedMotors = new Set<string>()
     const inspectNearbyMotorBounds = (cx: number, cy: number, cz: number) => {
       for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) {
@@ -1451,8 +1451,8 @@ export class Engine {
         checkedMotors.add(key)
         const bounds = this.motorBoundsForCell(mx, my, mz)
         const hit = this.rayAabb(origin, dir, bounds.min, bounds.max, mx, my, mz, B.MOTOR, limit)
-        if (hit && (!moving || hit.dist <= moving.dist) && (!nearestExtendedMotor || hit.dist < nearestExtendedMotor.dist)) {
-          nearestExtendedMotor = hit
+        if (hit && (!moving || hit.dist <= moving.dist) && (!nearestExtendedMotor.value || hit.dist < nearestExtendedMotor.value.dist)) {
+          nearestExtendedMotor.value = hit
         }
       }
     }
@@ -1467,7 +1467,7 @@ export class Engine {
             ? this.rayMotorBox(origin, dir, ix, iy, iz, limit)
             : this.rayBox(origin, dir, ix, iy, iz, id, limit)
           if (hit && (!moving || hit.dist <= moving.dist)) {
-            if (nearestExtendedMotor && nearestExtendedMotor.dist < hit.dist - 1e-5) return nearestExtendedMotor
+            if (nearestExtendedMotor.value && nearestExtendedMotor.value.dist < hit.dist - 1e-5) return nearestExtendedMotor.value
             return hit
           }
         }
@@ -1482,7 +1482,7 @@ export class Engine {
             if (this.world.getBlock(bx, iy, bz) !== B.ARDUINO_UNO) continue
             const boardHit = this.rayBox(origin, dir, bx, iy, bz, B.ARDUINO_UNO, limit)
             if (boardHit && boardHit.dist >= t - 1e-6 && boardHit.dist <= nextBoundary + 1e-6 && (!moving || boardHit.dist <= moving.dist)) {
-              if (nearestExtendedMotor && nearestExtendedMotor.dist < boardHit.dist - 1e-5) return nearestExtendedMotor
+              if (nearestExtendedMotor.value && nearestExtendedMotor.value.dist < boardHit.dist - 1e-5) return nearestExtendedMotor.value
               return boardHit
             }
           }
@@ -1490,7 +1490,7 @@ export class Engine {
       }
       // If the ray has reached the closest extended motor before entering the
       // next voxel, it is the first visible object at this distance.
-      if (nearestExtendedMotor && nearestExtendedMotor.dist < nextBoundary - 1e-5) return nearestExtendedMotor
+      if (nearestExtendedMotor.value && nearestExtendedMotor.value.dist < nextBoundary - 1e-5) return nearestExtendedMotor.value
       if (tmx < tmy && tmx < tmz) {
         ix += sx
         t = tmx
@@ -1505,7 +1505,7 @@ export class Engine {
         tmz += tdz
       }
     }
-    return (nearestExtendedMotor ?? moving) as Hit | null
+    return (nearestExtendedMotor.value ?? moving) as Hit | null
   }
 
   private rayMotorBox(o: THREE.Vector3, d: THREE.Vector3, x: number, y: number, z: number, maxDist: number): Hit | null {
