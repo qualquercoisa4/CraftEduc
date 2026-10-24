@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
+import { getMotorSpec } from './motor-specs'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -3067,6 +3068,7 @@ export class Mechanics {
       // Every secondary motor drives its own rotor against the same chassis.
       const chassisRotation = c.chassisBody.rotation()
       const chassisQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
+      const chassisAngularVelocity = c.chassisBody.angvel()
       for (const extra of c.extraRotors ?? []) {
         const extraPower = this.motorPower.get(extra.motorKey) ?? 0
         const extraMotor = this.models.get(extra.motorKey)
@@ -3077,9 +3079,9 @@ export class Mechanics {
           const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
           const rotorOmega = extra.rotorBody.angvel()
           const relativeOmega = Math.hypot(
-            rotorOmega.x - chassisOmega.x,
-            rotorOmega.y - chassisOmega.y,
-            rotorOmega.z - chassisOmega.z,
+            rotorOmega.x - chassisAngularVelocity.x,
+            rotorOmega.y - chassisAngularVelocity.y,
+            rotorOmega.z - chassisAngularVelocity.z,
           )
           const torqueRatio = targetOmega > 1e-5
             ? Math.max(0.03, Math.min(1, 1 - relativeOmega / targetOmega))
