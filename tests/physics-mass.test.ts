@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { B, DEFAULT_HOTBAR } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
-import { Mechanics } from '../lib/game/mechanics'
+import { Mechanics, motorTorqueFactorForSpeed } from '../lib/game/mechanics'
 import { posKey } from '../lib/game/constants'
 import type { World } from '../lib/game/world'
 
@@ -11,6 +11,20 @@ async function main() {
   assert.ok(blockMass(B.ALUMINUM) < blockMass(B.WOOD), 'aluminum must be lighter than wood')
   assert.ok(blockMass(B.WOOD) < blockMass(B.IRON), 'wood must be lighter than iron')
   assert.ok(blockMass(B.MOTOR) > blockMass(B.ALUMINUM), 'a motor must weigh more than aluminum')
+
+  // The approximate DC-motor curve should keep full starting torque and reduce
+  // available torque near the commanded no-load speed without removing control.
+  assert.equal(motorTorqueFactorForSpeed(10, 0), 1, 'motor must have full torque at standstill')
+  assert.ok(Math.abs(motorTorqueFactorForSpeed(10, 5) - 0.575) < 1e-9,
+    'motor torque should fall progressively as rotor speed increases')
+  assert.equal(motorTorqueFactorForSpeed(10, 10), 0.15,
+    'motor must preserve a small torque floor near target speed')
+  assert.equal(motorTorqueFactorForSpeed(10, -5), 1,
+    'motor must retain starting torque when rotating against the requested direction')
+  assert.ok(Math.abs(motorTorqueFactorForSpeed(-10, -5) - 0.575) < 1e-9,
+    'reverse rotation should use the same torque-speed curve')
+  assert.equal(motorTorqueFactorForSpeed(0, 1), 0,
+    'zero target speed has no powered torque curve')
 
   // Use the production rigid-body factory and its actual per-material collider
   // densities; no mocked physics response is used in the collision experiment.
@@ -21,6 +35,34 @@ async function main() {
   const physics = new RigidPhysics(mockWorld)
   await physics.waitUntilReady()
   assert.equal(physics.ready, true, 'Rapier must initialize for the test')
+
+  // Component mass must remain stable when the collision shape is intentionally
+  // smaller than a voxel, as with the motor housing used for a mounted wheel.
+  const mountedMotorMass = blockMass(B.MOTOR, { mountedWheel: true })
+  const mountedMotor = physics.createRigidBody(
+    [{ x: 30, y: 12, z: 30, id: B.MOTOR, state: { mountedWheel: true } }],
+    new THREE.Vector3(30.5, 12.5, 30.5),
+    { canSleep: false, linearDamping: 0, angularDamping: 0 },
+  )
+  assert.ok(mountedMotor, 'mounted motor body must be created')
+  assert.ok(Math.abs(mountedMotor.mass() - mountedMotorMass) < 1e-3,
+    `mounted motor mass must not shrink with its collision shape (expected ${mountedMotorMass}, got ${mountedMotor.mass()})`)
+  physics.removeRigidBody(mountedMotor)
+
+  // Calibrate the free-fall baseline against gravity using the same fixed-step
+  // production solver; the cube is high enough not to hit the floor.
+  const fallingTestBody = physics.createRigidBody(
+    [{ x: 40, y: 24, z: 40, id: B.IRON }],
+    new THREE.Vector3(40.5, 24.5, 40.5),
+    { canSleep: false, linearDamping: 0, angularDamping: 0 },
+  )
+  assert.ok(fallingTestBody, 'free-fall test body must be created')
+  const initialFallY = fallingTestBody.translation().y
+  for (let step = 0; step < 60; step++) physics.step(1 / 60)
+  const fallDistance = initialFallY - fallingTestBody.translation().y
+  assert.ok(fallDistance > 4.8 && fallDistance < 5.1,
+    `free fall over one second should be close to 4.9 m (measured ${fallDistance.toFixed(3)} m)`)
+  physics.removeRigidBody(fallingTestBody)
 
   const runLift = (targetMaterial: number) => {
     const arm = physics.createRigidBody(
