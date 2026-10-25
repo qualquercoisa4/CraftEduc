@@ -1292,6 +1292,34 @@ export class Engine {
       this.target = hit
     }
 
+    if (item === 'multimeter') {
+      if (!hit) return
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
+      const terminal = this.mech.resolveTerminal(
+        key, hit.point, hit.face, this.targetRayOrigin, this.targetRayDirection,
+      )
+      if (!terminal) {
+        showToast('Encoste uma ponta de prova em um terminal elétrico exposto.')
+        return
+      }
+      const currentMeter = gameStore.get()
+      const probe = { key, terminal: terminal.terminal }
+      if (!currentMeter.multimeterFirstProbe) {
+        gameStore.set({
+          multimeterFirstProbe: probe,
+          multimeterReading: `Ponta vermelha: ${terminal.terminal} em ${key}. Selecione o segundo terminal.`,
+        })
+        sfx.click()
+        return
+      }
+      const first = currentMeter.multimeterFirstProbe
+      const reading = this.mech.measureMultimeter(currentMeter.multimeterMode, first, probe)
+      gameStore.set({ multimeterFirstProbe: null, multimeterReading: reading })
+      showToast(reading)
+      sfx.click()
+      return
+    }
+
     if (isWireItem(item)) {
       if (!hit) return
       const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
