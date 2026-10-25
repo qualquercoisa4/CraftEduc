@@ -359,7 +359,8 @@ function mysteryStructureBlock(x: number, y: number, z: number, seed: number) {
 }
 
 function robotCityBlock(x: number, y: number, z: number, seed: number) {
-  if (y < GROUND_LEVEL || y > GROUND_LEVEL+30 || Math.abs(x)>80 || Math.abs(z)>80) return B.AIR
+  if (y < 0 || y > GROUND_LEVEL+30 || Math.abs(x)>80 || Math.abs(z)>80) return B.AIR
+  if (y < GROUND_LEVEL) return B.ROBOTICS
   const roadX=((x%16)+16)%16<4, roadZ=((z%16)+16)%16<4
   if (y===GROUND_LEVEL && (roadX || roadZ)) return B.ROBOTICS
   if (Math.abs(x)<=10 && Math.abs(z)<=10) return y===GROUND_LEVEL ? B.ROBOTICS : B.AIR
