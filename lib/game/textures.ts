@@ -26,6 +26,15 @@ export function tileFor(id: number, powered: boolean): number {
       return T.WOOD
     case B.COMPONENT:
     case B.ARDUINO_UNO:
+    // Specialized models should never fall back to the iron texture if a
+    // generic voxel renderer encounters them during a physics transition.
+    case B.MOTOR:
+    case B.BATTERY_BOX:
+    case B.WHEEL:
+    case B.SWITCH:
+    case B.PROXIMITY_SENSOR:
+    case B.SERVO:
+    case B.RESISTOR:
       return T.COMPONENT
     case B.LED:
       return powered ? T.LED_ON : T.LED_OFF
