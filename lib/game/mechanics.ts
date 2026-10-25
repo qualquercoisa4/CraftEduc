@@ -1390,226 +1390,298 @@ export class Mechanics {
   }
 
   private recomputePower() {
-    // Each terminal is a separate node. Wires connect only the two terminals
-    // explicitly selected by the player; conductive materials bridge their faces.
-    const parent = new Map<string, string>()
-    const find = (k: string): string => {
-      let p = parent.get(k) ?? k
-      if (p !== k) {
-        p = find(p)
-        parent.set(k, p)
-      }
-      return p
-    }
-    const union = (a: string, b: string) => {
-      const ra = find(a)
-      const rb = find(b)
-      if (ra !== rb) parent.set(ra, rb)
-    }
+    // Build a circuit from the actual terminals, then solve node voltages and
+    // branch currents with MNA instead of treating every connected net as a
+    // full-strength battery rail.
     const node = (key: string, terminal: string) => `${key}|${terminal}`
-    const allNodes = new Set<string>()
-    for (const w of this.wires) {
-      const a = node(w.a, w.ta)
-      const b = node(w.b, w.tb)
-      allNodes.add(a)
-      allNodes.add(b)
-      union(a, b)
-    }
-
-    // Build one logical electrical view from the static grid and every active
-    // contraption. Rigid assemblies are removed from World while simulated, but
-    // their original voxel keys remain the stable identities used by wires.
-    // Omitting these blocks here makes their battery source and conductors vanish
-    // as soon as the motor assembles, cutting its power and causing an
-    // assemble/disassemble loop that can gradually snap the machine upward.
+    const nodes = new Set<string>()
+    const resistors: ElectricalResistor[] = []
+    const diodes: ElectricalDiode[] = []
+    const sources: ElectricalVoltageSource[] = []
     const electricalBlocks = new Map<string, { id: number; state?: BlockState }>()
+
     for (const chunk of this.world.chunks.values()) {
-      const minX = chunk.cx * 16
-      const minZ = chunk.cz * 16
+      const minX = chunk.cx * CHUNK_SIZE
+      const minZ = chunk.cz * CHUNK_SIZE
       for (let y = GROUND_LEVEL; y <= Math.min(chunk.maxY, WORLD_HEIGHT - 1); y++) {
-        for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
-          const id = this.world.getBlock(x, y, z)
-          if (id === B.AIR) continue
-          const key = posKey(x, y, z)
-          electricalBlocks.set(key, { id, state: this.world.getState(x, y, z) })
+        for (let z = minZ; z < minZ + CHUNK_SIZE; z++) {
+          for (let x = minX; x < minX + CHUNK_SIZE; x++) {
+            const id = this.world.getBlock(x, y, z)
+            if (id === B.AIR) continue
+            electricalBlocks.set(posKey(x, y, z), { id, state: this.world.getState(x, y, z) })
+          }
         }
       }
     }
+    // Assemblies are temporarily removed from World while Rapier simulates
+    // them. Keep their original keys in the electrical model.
     for (const c of this.contraptions.values()) {
       for (const block of c.blocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
       for (const block of c.chassisBlocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
       for (const extra of c.extraRotors ?? []) {
         for (const block of extra.blocks) electricalBlocks.set(block.origKey, { id: block.id, state: block.state })
       }
-      // The motor itself is the joint between the moving electrical assembly
-      // and the rotating rotor, and is no longer a voxel in World.
       electricalBlocks.set(c.motorKey, { id: c.actuatorId, state: c.motorState })
     }
 
-    // Conductive blocks connect their six face terminals internally. This
-    // includes aluminum/iron/component blocks inside moving chassis or rotors.
-    for (const [key, block] of electricalBlocks) {
-      if (block.id === B.ARDUINO_UNO) {
-        for (const terminal of [...Array.from({ length: 14 }, (_, index) => `D${index}`), '5V', 'GND', 'GND_2', 'VIN']) {
-          allNodes.add(node(key, terminal))
-        }
-      }
-      if (block.id === B.SERVO) {
-        for (const terminal of ['gnd', 'vcc', 'signal']) allNodes.add(node(key, terminal))
-      }
-      if (block.id === B.PROXIMITY_SENSOR) {
-        for (const terminal of ['VCC', 'TRIG', 'ECHO', 'GND']) allNodes.add(node(key, terminal))
-      }
-      if (block.id === B.SWITCH) {
-        for (const terminal of ['in1', 'out1', 'in2', 'out2']) allNodes.add(node(key, terminal))
-        if (block.state?.switchOn) {
-          // Each pole closes independently; the switch itself does not bridge the two poles.
-          union(node(key, 'in1'), node(key, 'out1'))
-          union(node(key, 'in2'), node(key, 'out2'))
-        }
-      }
-      if ((BLOCK_CONDUCTIVITY[block.id] ?? 0) <= 0) continue
-      const faces = DIRS.map((_, i) => node(key, `face:${i}`))
-      for (const face of faces) allNodes.add(face)
-      for (let i = 1; i < faces.length; i++) union(faces[0], faces[i])
-    }
-
-    const terminalRoot = (key: string, terminal: string) => find(node(key, terminal))
-    const boxes: { key: string; positive: string; negative: string; batteries: number }[] = []
-    const servos: { key: string; gnd: string; vcc: string; signal: string }[] = []
-    const devices: { key: string; id: number; a: string; b: string }[] = []
-    for (const [key, block] of electricalBlocks) {
-      if (block.id === B.BATTERY_BOX) {
-        const count = block.state?.batteries ?? 0
-        if (count > 0) {
-          const positive = node(key, '+')
-          const negative = node(key, '-')
-          allNodes.add(positive); allNodes.add(negative)
-          boxes.push({ key, positive, negative, batteries: count })
-        }
-      } else if (block.id === B.SERVO) {
-        const gnd = node(key, 'gnd')
-        const vcc = node(key, 'vcc')
-        const signal = node(key, 'signal')
-        allNodes.add(gnd); allNodes.add(vcc); allNodes.add(signal)
-        servos.push({ key, gnd, vcc, signal })
-      } else if (block.id === B.LED || block.id === B.MOTOR) {
-        const a = node(key, block.id === B.LED ? 'anode' : 'A')
-        const b = node(key, block.id === B.LED ? 'cathode' : 'B')
-        allNodes.add(a); allNodes.add(b)
-        devices.push({ key, id: block.id, a, b })
-      }
-    }
-
-    // Create roots for terminals that have not yet been connected by a wire.
-    for (const n of allNodes) find(n)
-    const positiveRoots = new Set(boxes.map((b) => find(b.positive)))
-    const negativeRoots = new Set(boxes.map((b) => find(b.negative)))
-    const activeBoxes = boxes.filter((b) => find(b.positive) !== find(b.negative))
-    const nextPoweredArduinoBoards = new Set<string>()
-    for (const [key, block] of electricalBlocks) {
-      if (block.id !== B.ARDUINO_UNO) continue
-      const positiveTerminals = ['VIN', '5V'].map((terminal) => find(node(key, terminal)))
-      const groundTerminals = ['GND', 'GND_2'].map((terminal) => find(node(key, terminal)))
-      const hasSupply = activeBoxes.some((box) => {
-        const positive = find(box.positive)
-        const negative = find(box.negative)
-        return positive !== negative
-          && positiveTerminals.includes(positive)
-          && groundTerminals.includes(negative)
+    // A wire has a small, length-dependent copper resistance (~84 mΩ per
+    // metre as a practical thin-wire approximation). Material blocks bridge
+    // their faces through a finite resistance rather than perfect continuity.
+    for (const wire of this.wires) {
+      const a = node(wire.a, wire.ta)
+      const b = node(wire.b, wire.tb)
+      nodes.add(a); nodes.add(b)
+      resistors.push({
+        id: `wire:${wire.id}`, a, b,
+        resistanceOhms: Math.max(0.001, wire.pa.distanceTo(wire.pb) * 0.084),
       })
-      if (hasSupply) nextPoweredArduinoBoards.add(key)
+    }
+
+    const materialResistance = new Map<number, number>([
+      [B.ROBOTICS, 0.08],
+      [B.IRON, 0.035],
+      [B.COMPONENT, 0.12],
+      [B.ALUMINUM, 0.025],
+      [B.GEAR, 0.04],
+    ])
+    const batteryBoxes: { key: string; count: number }[] = []
+    const ledKeys: string[] = []
+    const motorKeys: string[] = []
+    const servoKeys: string[] = []
+    const arduinoKeys: string[] = []
+
+    const addResistor = (id: string, a: string, b: string, resistanceOhms: number) => {
+      nodes.add(a); nodes.add(b)
+      resistors.push({ id, a, b, resistanceOhms: Math.max(0.001, resistanceOhms) })
+    }
+    const addTerminals = (key: string, terminals: string[]) => {
+      terminals.forEach((terminal) => nodes.add(node(key, terminal)))
+    }
+
+    for (const [key, block] of electricalBlocks) {
+      const state = block.state ?? {}
+      if (block.id === B.BATTERY_BOX) {
+        const count = Math.max(0, Math.min(3, Math.floor(state.batteries ?? 0)))
+        if (count > 0) {
+          addTerminals(key, ['+', '-'])
+          batteryBoxes.push({ key, count })
+          sources.push({
+            id: `battery-pack:${key}`,
+            positive: node(key, '+'), negative: node(key, '-'),
+            voltageVolts: 1.5 * count,
+            internalResistanceOhms: 0.15 * count,
+          })
+        }
+      } else if (block.id === B.RESISTOR) {
+        addTerminals(key, ['A', 'B'])
+        addResistor(
+          `resistor:${key}`, node(key, 'A'), node(key, 'B'),
+          resistorValueOhms(state.resistorDigit1 ?? 1, state.resistorDigit2 ?? 0, state.resistorMultiplier ?? 1),
+        )
+      } else if (block.id === B.LED) {
+        addTerminals(key, ['anode', 'cathode'])
+        ledKeys.push(key)
+        if (!state.ledBurnedOut) {
+          const color = (state.color ?? '#e53935').toLowerCase()
+          const forwardVoltageVolts = color.includes('00e5ff') || color.includes('29b6f6') || color.includes('ffffff')
+            ? 3.0
+            : color.includes('ff4fd8') || color.includes('d81b60') ? 2.8
+            : color.includes('7cb342') || color.includes('43a047') ? 2.2
+            : color.includes('fdd835') || color.includes('f2ca36') || color.includes('fb8c00') ? 2.05
+            : 1.85
+          diodes.push({
+            id: `led:${key}`,
+            anode: node(key, 'anode'), cathode: node(key, 'cathode'),
+            forwardVoltageVolts, dynamicResistanceOhms: 8,
+          })
+        }
+      } else if (block.id === B.MOTOR) {
+        addTerminals(key, ['A', 'B'])
+        motorKeys.push(key)
+        const spec = getMotorSpec(state.motorType)
+        const motorResistance = spec.nominalVoltageV / (spec.stallCurrentA ?? 1.5)
+        const mechanism = this.contraptions.get(key)
+        const extra = this.findExtraRotor(key)
+        const angularSpeed = mechanism?.speed ?? extra?.rotor.speed ?? 0
+        const noLoadAngularSpeed = spec.noLoadRpm * Math.PI * 2 / 60
+        const speedRatio = Math.min(0.95, Math.abs(angularSpeed) / Math.max(0.01, noLoadAngularSpeed))
+        const lastDirection = this.motorDirection.get(key) ?? 1
+        addResistor(
+          `motor:${key}`, node(key, 'A'), node(key, 'B'), motorResistance,
+        )
+        const branch = resistors[resistors.length - 1]
+        branch.offsetVoltageVolts = speedRatio * spec.nominalVoltageV * lastDirection
+      } else if (block.id === B.SERVO) {
+        addTerminals(key, ['gnd', 'vcc', 'signal'])
+        servoKeys.push(key)
+        // Representative load while the servo is powered, not a zero-current
+        // control pin. Its stall transient is simplified in this first model.
+        addResistor(`servo-load:${key}`, node(key, 'vcc'), node(key, 'gnd'), 24)
+      } else if (block.id === B.SWITCH) {
+        addTerminals(key, ['in1', 'out1', 'in2', 'out2'])
+        if (state.switchOn) {
+          addResistor(`switch-pole1:${key}`, node(key, 'in1'), node(key, 'out1'), 0.01)
+          addResistor(`switch-pole2:${key}`, node(key, 'in2'), node(key, 'out2'), 0.01)
+        }
+      } else if (block.id === B.ARDUINO_UNO) {
+        const terminals = [...Array.from({ length: 14 }, (_, index) => `D${index}`), '5V', 'GND', 'GND_2', 'VIN']
+        addTerminals(key, terminals)
+        arduinoKeys.push(key)
+        addResistor(`arduino-gnd-bond:${key}`, node(key, 'GND'), node(key, 'GND_2'), 0.005)
+        addResistor(`arduino-base-load:${key}`, node(key, '5V'), node(key, 'GND'), 1000)
+      } else if (block.id === B.PROXIMITY_SENSOR) {
+        addTerminals(key, ['VCC', 'TRIG', 'ECHO', 'GND'])
+        addResistor(`sensor-load:${key}`, node(key, 'VCC'), node(key, 'GND'), 1000)
+      }
+
+      const conductivity = BLOCK_CONDUCTIVITY[block.id] ?? 0
+      const faceResistance = materialResistance.get(block.id)
+      if (conductivity > 0 && faceResistance !== undefined) {
+        const faces = DIRS.map((_, i) => node(key, `face:${i}`))
+        faces.forEach((face) => nodes.add(face))
+        for (let i = 1; i < faces.length; i++) {
+          addResistor(`material:${key}:${i}`, faces[0], faces[i], faceResistance)
+        }
+      }
+    }
+
+    // First solve estimates the unloaded rails. An Arduino regulator only
+    // starts when VIN is in its practical 6.5–12 V input range; powering the
+    // 5V pin directly bypasses the regulator and needs a 4.4–5.5 V rail.
+    const baseInput = { nodes: [...nodes], resistors, voltageSources: sources, diodes }
+    const baseSolution = solveDcCircuit(baseInput)
+    const boardCanRun = new Map<string, boolean>()
+    for (const key of arduinoKeys) {
+      const ground = node(key, 'GND')
+      const vin = (baseSolution.nodeVoltages.get(node(key, 'VIN')) ?? 0) - (baseSolution.nodeVoltages.get(ground) ?? 0)
+      const five = (baseSolution.nodeVoltages.get(node(key, '5V')) ?? 0) - (baseSolution.nodeVoltages.get(ground) ?? 0)
+      if (vin >= 6.5 && vin <= 12) {
+        sources.push({
+          id: `arduino-regulator:${key}`,
+          positive: node(key, '5V'), negative: ground,
+          voltageVolts: 5, internalResistanceOhms: 1.2,
+        })
+      }
+      boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.4 && five <= 5.5))
+    }
+
+    // Digital outputs have finite drive strength. A direct pin-to-motor load
+    // therefore cannot behave like an ideal motor driver; use an H-bridge or
+    // transistor stage in a future extension when such parts are added.
+    for (const key of arduinoKeys) {
+      if (!boardCanRun.get(key)) continue
+      const ground = node(key, 'GND')
+      for (let index = 0; index < 14; index++) {
+        const pin = `D${index}`
+        const level = this.arduinoPinLevels.get(`${key}|${pin}`)
+        if (level === undefined) continue
+        if (level) {
+          const driveNode = `@arduino-output:${key}:${pin}`
+          nodes.add(driveNode)
+          sources.push({
+            id: `arduino-high:${key}:${pin}`,
+            positive: driveNode, negative: ground,
+            voltageVolts: 5, internalResistanceOhms: 0.25,
+          })
+          addResistor(`arduino-pin-resistance:${key}:${pin}`, driveNode, node(key, pin), 100)
+        } else {
+          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 1)
+        }
+      }
+    }
+
+    let solution = solveDcCircuit({ nodes: [...nodes], resistors, voltageSources: sources, diodes })
+    const burnedNow: string[] = []
+    for (const ledKey of ledKeys) {
+      const block = electricalBlocks.get(ledKey)
+      if (!block || block.state?.ledBurnedOut) continue
+      const current = solution.diodeCurrents.get(`led:${ledKey}`) ?? 0
+      if (current <= 0.03) continue
+      // Excess forward current permanently opens the LED. Save and replicate
+      // the damage once; the next solve treats the diode as an open circuit.
+      const [x, y, z] = parseKey(ledKey)
+      if (this.world.getBlock(x, y, z) !== B.LED) continue
+      const state = { ...(this.world.getState(x, y, z) ?? {}), ledBurnedOut: true }
+      this.world.states.set(ledKey, state)
+      this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
+      this.world.markBlockDirty(x, y, z)
+      block.state = state
+      burnedNow.push(ledKey)
+      if (this.networkAuthority) {
+        this.networkBlockPublisher?.(x, y, z, B.LED, state, this.networkBlockOwner?.(x, y, z))
+      }
+    }
+    if (burnedNow.length) {
+      const burned = new Set(burnedNow.map((key) => `led:${key}`))
+      solution = solveDcCircuit({
+        nodes: [...nodes], resistors, voltageSources: sources,
+        diodes: diodes.filter((diode) => !burned.has(diode.id)),
+      })
+    }
+
+    this.electricalNodeVoltages = solution.nodeVoltages
+    this.electricalBranchCurrents = new Map<string, number>([
+      ...solution.resistorCurrents.entries(),
+      ...solution.diodeCurrents.entries(),
+      ...solution.sourceCurrents.entries(),
+    ])
+
+    this.motorPower.clear()
+    this.motorDirection.clear()
+    for (const key of motorKeys) {
+      const voltage = (solution.nodeVoltages.get(node(key, 'A')) ?? 0)
+        - (solution.nodeVoltages.get(node(key, 'B')) ?? 0)
+      if (Math.abs(voltage) >= 0.4) {
+        this.motorPower.set(key, Math.abs(voltage) / 1.5)
+        this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
+      }
+    }
+
+    this.servoPowered.clear()
+    for (const key of servoKeys) {
+      const ground = solution.nodeVoltages.get(node(key, 'gnd')) ?? 0
+      const vcc = (solution.nodeVoltages.get(node(key, 'vcc')) ?? 0) - ground
+      const signal = (solution.nodeVoltages.get(node(key, 'signal')) ?? 0) - ground
+      if (vcc >= 4 && signal >= 2.4) this.servoPowered.add(key)
+    }
+
+    const nextPoweredArduinoBoards = new Set<string>()
+    for (const key of arduinoKeys) {
+      const ground = solution.nodeVoltages.get(node(key, 'GND')) ?? 0
+      const vin = (solution.nodeVoltages.get(node(key, 'VIN')) ?? 0) - ground
+      const five = (solution.nodeVoltages.get(node(key, '5V')) ?? 0) - ground
+      if ((vin >= 6.5 && vin <= 12) || (five >= 4.4 && five <= 5.5)) nextPoweredArduinoBoards.add(key)
     }
     this.poweredArduinoBoards = nextPoweredArduinoBoards
 
-    // Include every conductive block exactly once, including those temporarily
-    // removed from the static voxel grid for rigid-body simulation.
-    const efficiencyByRoot = new Map<string, number>()
-    for (const [key, block] of electricalBlocks) {
-      const conductivity = BLOCK_CONDUCTIVITY[block.id] ?? 0
-      if (conductivity <= 0) continue
-      const root = find(node(key, 'face:0'))
-      efficiencyByRoot.set(root, (efficiencyByRoot.get(root) ?? 1) * conductivity)
-    }
-    const efficiency = (terminal: string) => efficiencyByRoot.get(find(terminal)) ?? 1
     const leds = new Set<string>()
-    this.motorPower.clear()
-    this.motorDirection.clear()
-    this.servoPowered.clear()
-    for (const d of devices) {
-      const plusA = positiveRoots.has(find(d.a)) && negativeRoots.has(find(d.b))
-      const plusB = positiveRoots.has(find(d.b)) && negativeRoots.has(find(d.a))
-      const source = activeBoxes.reduce((max, b) => Math.max(max, b.batteries), 0)
-      const transmission = efficiency(d.a) * efficiency(d.b)
-      const deliveredPower = source * transmission
-      if (source <= 0 || deliveredPower < 0.15 || (!plusA && !(d.id === B.MOTOR && plusB))) continue
-      if (d.id === B.LED && plusA) leds.add(d.key)
-      if (d.id === B.MOTOR) {
-        this.motorPower.set(d.key, deliveredPower)
-        this.motorDirection.set(d.key, plusA ? 1 : -1)
-      }
+    for (const key of ledKeys) {
+      if (electricalBlocks.get(key)?.state?.ledBurnedOut) continue
+      const current = solution.diodeCurrents.get(`led:${key}`) ?? 0
+      const voltage = (solution.nodeVoltages.get(node(key, 'anode')) ?? 0)
+        - (solution.nodeVoltages.get(node(key, 'cathode')) ?? 0)
+      if (current > 0.001 && voltage >= 1.5) leds.add(key)
     }
 
-    for (const servo of servos) {
-      const groundRoot = find(servo.gnd)
-      const voltageRoot = find(servo.vcc)
-      const signalRoot = find(servo.signal)
-      const source = activeBoxes.reduce((max, box) => Math.max(max, box.batteries), 0)
-      // VCC and signal may share the same positive net/source. GND must remain
-      // connected to a negative source and separate from both positive inputs.
-      const vccHasPositiveSupply = positiveRoots.has(voltageRoot)
-      const signalIsHigh = signalRoot === voltageRoot || positiveRoots.has(signalRoot)
-      const groundIsNegative = negativeRoots.has(groundRoot)
-      const groundIsNotShorted = groundRoot !== voltageRoot && groundRoot !== signalRoot
-      if (source > 0 && groundIsNegative && groundIsNotShorted && vccHasPositiveSupply && signalIsHigh) {
-        this.servoPowered.add(servo.key)
+    const previousLeds = this.world.poweredLeds
+    for (const key of previousLeds) {
+      if (leds.has(key)) continue
+      const [x, y, z] = parseKey(key)
+      this.world.markBlockDirty(x, y, z)
+      const glow = this.glows.get(key)
+      if (glow) {
+        glow.parent?.remove(glow)
+        this.glows.delete(key)
       }
     }
-
-    // Digital Arduino outputs may drive two-terminal LEDs and DC motors directly
-    // in the educational simulation. HIGH/LOW states only apply to explicit pin wires.
-    for (const device of devices) {
-      const terminalA = device.id === B.LED ? 'anode' : 'A'
-      const terminalB = device.id === B.LED ? 'cathode' : 'B'
-      const levelA = this.getArduinoDrivenLevel(device.key, terminalA)
-      const levelB = this.getArduinoDrivenLevel(device.key, terminalB)
-      if (levelA === undefined && levelB === undefined) continue
-      if (device.id === B.LED) {
-        if (levelA === true && levelB === false) leds.add(device.key)
-        else if (levelA !== undefined && levelB !== undefined) leds.delete(device.key)
-      } else if (device.id === B.MOTOR && levelA !== undefined && levelB !== undefined) {
-        if (levelA === levelB) {
-          this.motorPower.delete(device.key)
-          this.motorDirection.delete(device.key)
-        } else {
-          // Arduino HIGH is a 5 V logic output, not a 1.5 V battery cell.
-          // motorPower is expressed in 1.5 V cell-equivalents for the motor model.
-          this.motorPower.set(device.key, 5 / 1.5)
-          this.motorDirection.set(device.key, levelA ? 1 : -1)
-        }
-      }
-    }
-
-    const prev = this.world.poweredLeds
-    for (const k of prev) {
-      if (!leds.has(k)) {
-        const [x, y, z] = parseKey(k)
-        this.world.markBlockDirty(x, y, z)
-        const g = this.glows.get(k)
-        if (g) {
-          g.parent?.remove(g)
-          this.glows.delete(k)
-        }
-      }
-    }
-    for (const k of leds) {
-      const [x, y, z] = parseKey(k)
-      if (!prev.has(k)) this.world.markBlockDirty(x, y, z)
-      if (!this.glows.has(k) && this.world.getBlock(x, y, z) === B.LED) {
+    for (const key of leds) {
+      const [x, y, z] = parseKey(key)
+      if (!previousLeds.has(key)) this.world.markBlockDirty(x, y, z)
+      if (!this.glows.has(key) && this.world.getBlock(x, y, z) === B.LED) {
         const glow = createGlowSprite()
         glow.position.set(x + 0.5, y + 0.5, z + 0.5)
         this.scene.add(glow)
-        this.glows.set(k, glow)
+        this.glows.set(key, glow)
       }
     }
     this.world.poweredLeds = leds
