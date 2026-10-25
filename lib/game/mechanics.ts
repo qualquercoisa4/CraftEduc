@@ -1824,7 +1824,9 @@ export class Mechanics {
       // Do not let terminal voltage alone turn that generated voltage into a
       // fictional drive command. Use P = V × I to distinguish motoring from
       // generating, and apply electromagnetic braking in the latter case.
-      const motorState = this.lookup(key).state
+      // Assemblies temporarily remove their motor voxel from World; use the
+      // canonical electrical-block snapshot so variant-specific ratings survive.
+      const motorState = electricalBlocks.get(key)?.state
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
       const voltageRatio = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
