@@ -127,6 +127,9 @@ export function Hud() {
   const isTouch = useGame((s) => s.isTouch)
   const flying = useGame((s) => s.flying)
   const selectedItem = useGame((s) => s.hotbar[s.selected])
+  const meterMode = useGame((s) => s.multimeterMode)
+  const meterReading = useGame((s) => s.multimeterReading)
+  const meterFirstProbe = useGame((s) => s.multimeterFirstProbe)
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
       <Crosshair />
@@ -135,6 +138,41 @@ export function Hud() {
         <p className="mc-shadow absolute left-1/2 top-3 -translate-x-1/2 text-sm text-[#55ffff] md:text-base" aria-live="polite">
           Voando
         </p>
+      )}
+      {selectedItem === 'multimeter' && (
+        <div className="pointer-events-auto absolute left-1/2 top-3 z-30 w-[min(94vw,360px)] -translate-x-1/2 border-2 border-black bg-[#252a30] p-2 text-white" style={{ boxShadow: 'inset 0 0 0 2px #737b82' }}>
+          <div className="flex items-center justify-between gap-2">
+            <strong className="text-xs tracking-wide">MULTÍMETRO DIGITAL</strong>
+            <button
+              type="button"
+              onPointerDown={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                const modes = ['dc_voltage', 'dc_current', 'resistance', 'continuity', 'diode'] as const
+                const next = modes[(modes.indexOf(meterMode) + 1) % modes.length]
+                gameStore.set({ multimeterMode: next, multimeterFirstProbe: null, multimeterReading: 'Selecione o primeiro terminal.' })
+              }}
+              className="border border-white/50 bg-[#3c444b] px-2 py-1 text-xs"
+            >
+              {({ dc_voltage: 'V⎓ TENSÃO', dc_current: 'A⎓ CORRENTE', resistance: 'Ω RESISTÊNCIA', continuity: 'CONTINUIDADE', diode: 'TESTE DE DIODO' } as const)[meterMode]} ▾
+            </button>
+          </div>
+          <p className="mt-1 min-h-9 border border-[#172c2a] bg-[#b9d8ca] px-2 py-1 font-mono text-xs text-[#17342e]">
+            {meterFirstProbe ? 'PONTA 1 OK • selecione o segundo terminal' : meterReading}
+          </p>
+          <p className="mt-1 text-[10px] text-white/75">Toque em dois terminais expostos. Corrente exige ligação em série; Ω/continuidade exigem fonte desligada.</p>
+          <button
+            type="button"
+            onPointerDown={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              gameStore.set({ multimeterFirstProbe: null, multimeterReading: 'Selecione o primeiro terminal.' })
+            }}
+            className="mt-1 border border-white/30 px-2 py-1 text-xs"
+          >
+            Limpar pontas
+          </button>
+        </div>
       )}
       {isTouch && selectedItem === 'paintbrush' && (
         <button
