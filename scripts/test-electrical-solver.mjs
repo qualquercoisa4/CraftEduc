@@ -100,10 +100,12 @@ const near = (actual, expected, tolerance, label) => {
   near(halfVoltage.maxTorqueNm, 0, 1e-8, 'no-load current should not create useful torque')
   near(overVoltage.targetOmega, nominalOmega * 1.5, 1e-8, 'over-voltage no-load speed')
   near(overVoltage.maxTorqueNm, motor.stallTorqueNm, 1e-8, 'stall current should produce rated stall torque')
-  near(estimateMotorBackEmfVolts(motor, nominalOmega), motor.nominalVoltageV, 1e-8, 'nominal-speed back-EMF')
-  near(estimateMotorBackEmfVolts(motor, -nominalOmega), -motor.nominalVoltageV, 1e-8, 'reverse back-EMF')
-  near(estimateMotorBackEmfVolts(motor, nominalOmega * 1.5), motor.nominalVoltageV * 1.5, 1e-8, 'over-speed back-EMF')
-  near(estimateMotorBackEmfVolts(motor, nominalOmega * 10), motor.nominalVoltageV * MAX_MOTOR_MODEL_RATIO, 1e-8, 'numerical back-EMF safety bound')
+  const windingResistance = motor.nominalVoltageV / (motor.stallCurrentA ?? 1.5)
+  const backEmfAtNoLoadSpeed = motor.nominalVoltageV - (motor.noLoadCurrentA ?? 0) * windingResistance
+  near(estimateMotorBackEmfVolts(motor, nominalOmega), backEmfAtNoLoadSpeed, 1e-8, 'nominal-speed back-EMF includes no-load current')
+  near(estimateMotorBackEmfVolts(motor, -nominalOmega), -backEmfAtNoLoadSpeed, 1e-8, 'reverse back-EMF')
+  near(estimateMotorBackEmfVolts(motor, nominalOmega * 1.5), backEmfAtNoLoadSpeed * 1.5, 1e-8, 'over-speed back-EMF')
+  near(estimateMotorBackEmfVolts(motor, nominalOmega * 10), backEmfAtNoLoadSpeed * MAX_MOTOR_MODEL_RATIO, 1e-8, 'numerical back-EMF safety bound')
   assert.ok(overVoltage.maxTorqueNm <= motor.stallTorqueNm * MAX_MOTOR_MODEL_RATIO, 'overcurrent torque must remain bounded')
 }
 
