@@ -41,6 +41,11 @@ const HALF_PI = Math.PI / 2
 // Approximate electromechanical limits in SI units.
 const MOTOR_VELOCITY_DAMPING = 2.0
 const MOTOR_COAST_TORQUE_NM = 0.001
+// The voxel world uses metre-sized blocks, while the referenced toy motors are
+// specified for centimetre-scale mechanisms. Scale drive torque for this game
+// world so realistic motor rankings remain meaningful without making multi-voxel
+// educational robots effectively immovable.
+const MOTOR_SIMULATION_TORQUE_SCALE = 24
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
 const SERVO_MAX_TORQUE_NM = 0.176
@@ -3121,12 +3126,12 @@ export class Mechanics {
           rotorOmega.z - chassisOmega.z,
         )
         const torqueRatio = targetOmega > 1e-5
-          ? Math.max(0.03, Math.min(1, 1 - relativeOmega / targetOmega))
+          ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
           : 0
         c.speed = targetOmega * direction
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio))
+        c.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE))
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
@@ -3168,11 +3173,11 @@ export class Mechanics {
             rotorOmega.z - chassisAngularVelocity.z,
           )
           const torqueRatio = targetOmega > 1e-5
-            ? Math.max(0.03, Math.min(1, 1 - relativeOmega / targetOmega))
+            ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
             : 0
           extra.speed = targetOmega * extraDirection
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio))
+          extra.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
