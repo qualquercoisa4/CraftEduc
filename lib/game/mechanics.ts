@@ -1494,7 +1494,9 @@ export class Mechanics {
           this.motorPower.delete(device.key)
           this.motorDirection.delete(device.key)
         } else {
-          this.motorPower.set(device.key, 1)
+          // Arduino HIGH is a 5 V logic output, not a 1.5 V battery cell.
+          // motorPower is expressed in 1.5 V cell-equivalents for the motor model.
+          this.motorPower.set(device.key, 5 / 1.5)
           this.motorDirection.set(device.key, levelA ? 1 : -1)
         }
       }
@@ -4101,6 +4103,10 @@ export class Mechanics {
 
   isMotorDriving(key: string) {
     return this.contraptions.has(key)
+  }
+
+  motorPowerLevel(key: string) {
+    return this.motorPower.get(key) ?? 0
   }
 
   motorStatus(key: string) {
