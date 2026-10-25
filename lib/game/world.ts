@@ -45,6 +45,7 @@ export class Chunk {
     public cx: number,
     public cz: number,
     terrainAt?: (x: number, y: number, z: number) => number,
+    terrainMaxY = WORLD_HEIGHT - 1,
   ) {
     if (!terrainAt) {
       for (let y = 0; y < GROUND_LEVEL; y++)
@@ -53,7 +54,8 @@ export class Chunk {
     }
 
     this.maxY = 0
-    for (let y = 0; y < WORLD_HEIGHT; y++)
+    const lastGeneratedY = Math.min(WORLD_HEIGHT - 1, Math.max(0, terrainMaxY))
+    for (let y = 0; y <= lastGeneratedY; y++)
       for (let z = 0; z < CS; z++)
         for (let x = 0; x < CS; x++) {
           const id = terrainAt(cx * CS + x, y, cz * CS + z)
@@ -165,6 +167,7 @@ export class World {
         cx,
         cz,
         this.type === 'flat' ? undefined : (x, y, z) => this.terrainBlockAt(x, y, z),
+        this.type === 'test_lab' ? GROUND_LEVEL + 10 : WORLD_HEIGHT - 1,
       )
       this.chunks.set(k, c)
       // Generated Mars structures need face-glue metadata so roofs and walls
