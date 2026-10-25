@@ -463,7 +463,7 @@ export class Mechanics {
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.GEAR || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
     if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
     if (newId !== B.AIR && this.world.getState(x, y, z)?.resinCoated) this.syncResinVisual(x, y, z)
@@ -608,7 +608,7 @@ export class Mechanics {
       disposeObject(mounted.model.group)
       this.mountedWheels.delete(key)
     }
-    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT || id === B.SERVO || id === B.ARDUINO_UNO) {
+    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON || id === B.ALUMINUM || id === B.GEAR || id === B.ROBOTICS || id === B.COMPONENT || id === B.SERVO || id === B.ARDUINO_UNO) {
       this.powerDirty = true
       this.mechDirty = true
     }
