@@ -7,6 +7,9 @@ export type WorldType =
   | 'mega_maze'
   | 'line_following'
   | 'mars_colony'
+  | 'venus_colony'
+  | 'mystery_planet'
+  | 'robot_city'
   | 'beach'
 
 export const WORLD_TYPE_OPTIONS: { id: WorldType; name: string; description: string }[] = [
@@ -16,6 +19,9 @@ export const WORLD_TYPE_OPTIONS: { id: WorldType; name: string; description: str
   { id: 'mega_maze', name: 'Mega labirinto', description: 'Um labirinto enorme com rotas alternativas, cruzamentos largos e corredores de passagem para robôs.' },
   { id: 'line_following', name: 'Pista de seguir linha', description: 'Pista escura no piso branco, com curvas, cruzamentos e ramificações para testar robôs seguidores de linha.' },
   { id: 'mars_colony', name: 'Colônia de Marte', description: 'Terreno avermelhado, crateras, módulos de pesquisa, painéis solares e área de pouso.' },
+  { id: 'venus_colony', name: 'Colônia de Vênus', description: 'Planície vulcânica sob nuvens douradas, habitats pressurizados e plataformas elevadas.' },
+  { id: 'mystery_planet', name: 'Planeta misterioso', description: 'Um mundo alienígena com florestas estranhas, cristais luminosos e vales procedurais.' },
+  { id: 'robot_city', name: 'Cidade dos robôs', description: 'Metrópole tecnológica com avenidas, torres, painéis luminosos e robôs assistentes.' },
   { id: 'beach', name: 'Praia', description: 'Uma ilha de areia 20×20 cercada por água; objetos flutuam ou afundam e componentes desprotegidos queimam.' },
 ]
 
@@ -281,16 +287,92 @@ function marsStructureBlock(x: number, y: number, z: number) {
 // Glue every neighbouring face in a generated habitat so roofs, walls and
 // structural ribs stay attached when physics converts the structure to bodies.
 export function getTerrainGlueMask(type: WorldType, seed: number, x: number, y: number, z: number) {
-  if (type !== 'mars_colony') return 0
-  const id = marsStructureBlock(x, y, z)
+  if (!['mars_colony','venus_colony','mystery_planet','robot_city'].includes(type)) return 0
+  const structure = type==='mars_colony' ? marsStructureBlock(x,y,z)
+    : type==='venus_colony' ? venusStructureBlock(x,y,z)
+    : type==='mystery_planet' ? mysteryStructureBlock(x,y,z,seed)
+    : robotCityBlock(x,y,z,seed)
+  const id = structure
   if (id === B.AIR) return 0
   let mask = 0
   for (let face = 0; face < 6; face++) {
     const [dx, dy, dz] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]][face]
-    if (marsStructureBlock(x + dx, y + dy, z + dz) !== B.AIR) mask |= 1 << face
+    const adjacent = type==='mars_colony' ? marsStructureBlock(x+dx,y+dy,z+dz)
+      : type==='venus_colony' ? venusStructureBlock(x+dx,y+dy,z+dz)
+      : type==='mystery_planet' ? mysteryStructureBlock(x+dx,y+dy,z+dz,seed)
+      : robotCityBlock(x+dx,y+dy,z+dz,seed)
+    if (adjacent !== B.AIR) mask |= 1 << face
   }
   void seed
   return mask
+}
+
+
+function venusSurfaceHeight(seed: number, x: number, z: number) {
+  if (Math.abs(x) <= 23 && Math.abs(z) <= 23) return GROUND_LEVEL
+  const broad = hash2(seed ^ 0x6c8e9cf5, Math.floor(x / 11), Math.floor(z / 11))
+  const fine = hash2(seed ^ 0x1b873593, Math.floor(x / 3), Math.floor(z / 3))
+  let h = GROUND_LEVEL - 2 + Math.floor(broad * 4) + Math.floor(fine * 2)
+  const vent = Math.hypot(x - 38, z + 30)
+  if (vent < 7) h = Math.min(h, GROUND_LEVEL - 3)
+  else if (vent < 11) h = Math.max(h, GROUND_LEVEL + 2)
+  return Math.max(1, Math.min(12, h))
+}
+
+function alienSurfaceHeight(seed: number, x: number, z: number) {
+  if (Math.abs(x) <= 21 && Math.abs(z) <= 21) return GROUND_LEVEL
+  const broad = hash2(seed ^ 0x3c6ef372, Math.floor(x / 9), Math.floor(z / 9))
+  const medium = hash2(seed ^ 0xa54ff53a, Math.floor(x / 3), Math.floor(z / 3))
+  let h = GROUND_LEVEL - 2 + Math.floor(broad * 5) + Math.floor(medium * 2)
+  if (Math.abs(z - Math.sin(x * 0.095) * 13) < 3.2) h = Math.min(h, GROUND_LEVEL - 2)
+  if (hash2(seed ^ 0x510e527f, Math.floor(x / 7), Math.floor(z / 7)) > 0.94 && Math.abs(x)>23 && Math.abs(z)>23) h += 2
+  return Math.max(1, Math.min(14, h))
+}
+
+function venusStructureBlock(x: number, y: number, z: number) {
+  if (y < GROUND_LEVEL || y > GROUND_LEVEL + 14) return B.AIR
+  for (const dome of [{x:-12,z:-11,r:5,h:5},{x:12,z:-10,r:6,h:6},{x:0,z:15,r:4,h:4}]) {
+    const dx=x-dome.x, dz=z-dome.z, dist=Math.hypot(dx,dz), level=y-GROUND_LEVEL
+    if (dist <= dome.r && level >= 0 && level <= dome.h && (dist >= dome.r-1 || level===dome.h)) {
+      if (level===2 && (Math.abs(dx)===dome.r || Math.abs(dz)===dome.r)) return B.COLOR_BLOCK
+      return B.ALUMINUM
+    }
+  }
+  if (y===GROUND_LEVEL && x>=-23 && x<=-16 && z>=3 && z<=12) return (x+z)%2 ? B.COLOR_BLOCK : B.ALUMINUM
+  if (x===21 && z===5 && y>=GROUND_LEVEL && y<=GROUND_LEVEL+10) return y===GROUND_LEVEL+10 ? B.COLOR_BLOCK : B.IRON
+  if (x>=17 && x<=22 && z>=13 && z<=18 && y>=GROUND_LEVEL && y<=GROUND_LEVEL+2) return y===GROUND_LEVEL+2 ? B.ALUMINUM : B.IRON
+  return B.AIR
+}
+
+function mysteryStructureBlock(x: number, y: number, z: number, seed: number) {
+  if (y < GROUND_LEVEL || y > GROUND_LEVEL + 15) return B.AIR
+  const sites=[{x:29,z:18,h:10},{x:-31,z:27,h:8},{x:35,z:-30,h:12},{x:-28,z:-34,h:9},{x:10,z:39,h:7},{x:-43,z:5,h:8}]
+  for (let i=0;i<sites.length;i++) {
+    const p=sites[i], dx=x-p.x, dz=z-p.z
+    const radius=1+Math.floor(hash2(seed+i,p.x,p.z)*2)
+    const height=p.h+Math.floor(hash2(seed^i,p.x,p.z)*3)
+    if (Math.abs(dx)<=radius && Math.abs(dz)<=radius && y<GROUND_LEVEL+height-Math.max(Math.abs(dx),Math.abs(dz))*2) return (Math.abs(dx)+Math.abs(dz))%2===0 ? B.COLOR_BLOCK : B.ALUMINUM
+  }
+  if (Math.abs(Math.hypot(x+18,z-19)-9)<1.1 && y>=GROUND_LEVEL && y<=GROUND_LEVEL+2) return B.IRON
+  if (y===GROUND_LEVEL && Math.abs(x)<=8 && Math.abs(z)<=8 && (Math.abs(x)===8 || Math.abs(z)===8)) return B.COLOR_BLOCK
+  return B.AIR
+}
+
+function robotCityBlock(x: number, y: number, z: number, seed: number) {
+  if (y < GROUND_LEVEL || y > GROUND_LEVEL+30 || Math.abs(x)>80 || Math.abs(z)>80) return B.AIR
+  const roadX=((x%16)+16)%16<4, roadZ=((z%16)+16)%16<4
+  if (y===GROUND_LEVEL && (roadX || roadZ)) return B.ROBOTICS
+  if (Math.abs(x)<=10 && Math.abs(z)<=10) return y===GROUND_LEVEL ? B.ROBOTICS : B.AIR
+  const lotX=Math.floor(x/16), lotZ=Math.floor(z/16), roll=hash2(seed,lotX,lotZ)
+  if (roadX || roadZ || roll<0.2) return B.AIR
+  const centerX=lotX*16+9, centerZ=lotZ*16+9, dx=Math.abs(x-centerX), dz=Math.abs(z-centerZ)
+  const footprint=roll>0.83?5:roll>0.55?4:3
+  const height=5+Math.floor(hash2(seed^0x45d9f3b,lotX,lotZ)*20)
+  if (dx>footprint || dz>footprint || y>GROUND_LEVEL+height) return B.AIR
+  const edge=dx===footprint || dz===footprint, floor=(y-GROUND_LEVEL)%4===0
+  if (y===GROUND_LEVEL+height || edge && floor) return B.ALUMINUM
+  if (edge && (y-GROUND_LEVEL)%3===1) return B.COLOR_BLOCK
+  return edge ? B.IRON : B.AIR
 }
 
 export function getTerrainBlock(type: WorldType, seed: number, x: number, y: number, z: number): number {
@@ -320,6 +402,20 @@ export function getTerrainBlock(type: WorldType, seed: number, x: number, y: num
     if (onBeach) return y < GROUND_LEVEL ? B.COLOR_BLOCK : B.AIR
     return y === 0 ? B.COLOR_BLOCK : B.AIR
   }
+
+  if (type === 'venus_colony') {
+    if (x < -72 || x >= 72 || z < -72 || z >= 72) return B.AIR
+    const structure=venusStructureBlock(x,y,z)
+    if (structure!==B.AIR) return structure
+    return y<venusSurfaceHeight(seed,x,z) ? B.COLOR_BLOCK : B.AIR
+  }
+  if (type === 'mystery_planet') {
+    if (x < -72 || x >= 72 || z < -72 || z >= 72) return B.AIR
+    const structure=mysteryStructureBlock(x,y,z,seed)
+    if (structure!==B.AIR) return structure
+    return y<alienSurfaceHeight(seed,x,z) ? (hash2(seed,Math.floor(x/4),Math.floor(z/4))>0.82 ? B.ROBOTICS : B.COLOR_BLOCK) : B.AIR
+  }
+  if (type === 'robot_city') return robotCityBlock(x,y,z,seed)
 
   if (type === 'mars_colony') {
     if (x < -64 || x >= 64 || z < -64 || z >= 64) return B.AIR
@@ -358,7 +454,21 @@ export function getTerrainColor(type: WorldType, seed: number, x: number, y: num
       return palette[Math.floor(hash2(seed, Math.floor(x / 4), Math.floor(z / 4)) * palette.length)]
     }
   }
-
+  if (type === 'venus_colony') {
+    const id=venusStructureBlock(x,y,z)
+    if (y>=GROUND_LEVEL && id!==B.AIR) return id===B.COLOR_BLOCK ? '#ffd36a' : id===B.ALUMINUM ? '#d9c7a2' : '#756b5f'
+    if (y<venusSurfaceHeight(seed,x,z) && Math.abs(x)<72 && Math.abs(z)<72) return ['#b87a42','#d39b55','#8f5737','#c9a66a'][Math.floor(hash2(seed,Math.floor(x/4),Math.floor(z/4))*4)]
+  }
+  if (type === 'mystery_planet') {
+    const id=mysteryStructureBlock(x,y,z,seed)
+    if (y>=GROUND_LEVEL && id!==B.AIR) return id===B.COLOR_BLOCK ? '#70f5e8' : '#9474c9'
+    if (y<alienSurfaceHeight(seed,x,z) && Math.abs(x)<72 && Math.abs(z)<72) return ['#526b61','#6b7b72','#465c71','#8270a3'][Math.floor(hash2(seed,Math.floor(x/4),Math.floor(z/4))*4)]
+  }
+  if (type === 'robot_city') {
+    const id=robotCityBlock(x,y,z,seed)
+    if (y>=GROUND_LEVEL && id!==B.AIR) return id===B.COLOR_BLOCK ? (Math.floor(hash2(seed,x,z)*2) ? '#00e5ff' : '#ff4fd8') : id===B.ALUMINUM ? '#697987' : '#283746'
+    if (y===GROUND_LEVEL && id===B.ROBOTICS) return '#303e4c'
+  }
   return undefined
 }
 
@@ -369,6 +479,9 @@ export function getWorldSpawn(type: WorldType): [number, number, number] {
     case 'prototypes': return [0.5, GROUND_LEVEL, 0.5]
     case 'line_following': return [0.5, GROUND_LEVEL, -33.5]
     case 'mars_colony': return [0.5, GROUND_LEVEL, 0.5]
+    case 'venus_colony': return [0.5, GROUND_LEVEL, 0.5]
+    case 'mystery_planet': return [0.5, GROUND_LEVEL, 0.5]
+    case 'robot_city': return [0.5, GROUND_LEVEL, 0.5]
     case 'beach': return [0.5, GROUND_LEVEL, 0.5]
     case 'flat':
     default: return [4.5, GROUND_LEVEL, 5.5]
