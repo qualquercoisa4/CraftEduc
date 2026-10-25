@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
 import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from './motor-model'
-import { formatCurrentReading, formatVoltageReading, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
+import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -1530,6 +1530,7 @@ export class Mechanics {
     const motorKeys: string[] = []
     const servoKeys: string[] = []
     const arduinoKeys: string[] = []
+    const arduinoPinOutputBranches = new Set<string>()
 
     const addResistor = (id: string, a: string, b: string, resistanceOhms: number) => {
       nodes.add(a); nodes.add(b)
@@ -1680,10 +1681,10 @@ export class Mechanics {
       boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.5 && five <= 5.5))
     }
 
-    // Digital outputs are not motor drivers. Use a conservative 250 Ω Thevenin
-    // approximation for HIGH and LOW: it keeps a directly connected motor from
-    // receiving a fictitious full-strength rail and makes current limitation
-    // explicit. A transistor or H-bridge is needed for useful motor current.
+    // Digital outputs are not motor drivers. Start with a realistic low output
+    // impedance, then enforce the recommended 20 mA limit after the first solve.
+    // Ordinary loads retain a healthy logic level; a motor cannot draw unlimited
+    // current from a GPIO pin and needs a transistor or H-bridge.
     for (const key of arduinoKeys) {
       if (!boardCanRun.get(key)) continue
       const ground = node(key, 'GND')
@@ -1692,14 +1693,20 @@ export class Mechanics {
         const level = this.arduinoPinLevels.get(`${key}|${pin}`)
         if (level === undefined) continue
         if (level) {
-          addResistor(`arduino-pin-high:${key}:${pin}`, node(key, '5V'), node(key, pin), 250)
+          const outputBranch = `arduino-pin-high:${key}:${pin}`
+          addResistor(outputBranch, node(key, '5V'), node(key, pin), 25)
+          arduinoPinOutputBranches.add(outputBranch)
         } else {
-          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 250)
+          const outputBranch = `arduino-low:${key}:${pin}`
+          addResistor(outputBranch, node(key, pin), ground, 25)
+          arduinoPinOutputBranches.add(outputBranch)
         }
       }
     }
 
-    let solution = solveDcCircuit({ nodes: [...nodes], resistors, voltageSources: sources, diodes })
+    const circuitInput = { nodes: [...nodes], resistors, voltageSources: sources, diodes }
+    let solution = solveDcCircuit(circuitInput)
+    solution = limitResistorBranchCurrent(circuitInput, solution, arduinoPinOutputBranches, 0.02)
 
     // Determine whether each LED has a complete external return path without
     // using the LED itself. This prevents a floating, disconnected LED from
@@ -1780,10 +1787,12 @@ export class Mechanics {
     }
     if (burnedNow.length) {
       const burned = new Set(burnedNow.map((key) => `led:${key}`))
-      solution = solveDcCircuit({
+      const circuitInputWithoutBurnedLeds = {
         nodes: [...nodes], resistors, voltageSources: sources,
         diodes: diodes.filter((diode) => !burned.has(diode.id)),
-      })
+      }
+      solution = solveDcCircuit(circuitInputWithoutBurnedLeds)
+      solution = limitResistorBranchCurrent(circuitInputWithoutBurnedLeds, solution, arduinoPinOutputBranches, 0.02)
     }
 
     this.electricalNodeVoltages = solution.nodeVoltages
