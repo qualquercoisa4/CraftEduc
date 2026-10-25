@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { formatCurrentReading, formatVoltageReading, solveDcCircuit } from '../lib/game/electrical.ts'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from '../lib/game/motor-model.ts'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
 const near = (actual, expected, tolerance, label) => {
@@ -111,6 +111,9 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(classifyMotorPowerFlow(3, -0.18), 'generating', 'reverse current under positive voltage means generation')
   assert.equal(classifyMotorPowerFlow(-3, -0.18), 'motoring', 'reversed voltage and current still consume power')
   assert.equal(classifyMotorPowerFlow(3, 0), 'idle', 'open-circuit back-EMF must not become a drive command')
+  near(motorGeneratingTorqueNm(motor, 0), 0, 1e-8, 'zero generated current gives zero braking torque')
+  near(motorGeneratingTorqueNm(motor, motor.stallCurrentA ?? 1.5), motor.stallTorqueNm, 1e-8, 'stall current sets generating torque scale')
+  near(motorGeneratingTorqueNm(motor, (motor.stallCurrentA ?? 1.5) * 0.1), motor.stallTorqueNm * 0.1, 1e-8, 'small generated current still produces braking torque')
 }
 
 // A back-driven DC motor with a load must deliver current to the load and
