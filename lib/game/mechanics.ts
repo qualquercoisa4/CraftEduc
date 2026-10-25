@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from './motor-model'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -1834,10 +1834,10 @@ export class Mechanics {
         this.motorPower.set(key, voltageRatio)
         this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
       } else if (powerFlow === 'generating' && usableTerminalVoltage) {
-        const generatorDrive = motorDriveCommandForVoltageRatio(spec, voltageRatio, windingCurrent)
+        const generatorTorqueNm = motorGeneratingTorqueNm(spec, windingCurrent)
         this.motorPower.set(key, 0)
         this.motorDirection.set(key, 1)
-        this.motorBrakeTorqueNm.set(key, generatorDrive.maxTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE)
+        this.motorBrakeTorqueNm.set(key, generatorTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE)
       } else {
         this.motorPower.set(key, 0)
         this.motorDirection.set(key, 1)
