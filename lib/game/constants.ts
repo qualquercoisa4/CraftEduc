@@ -138,6 +138,7 @@ export type ItemId =
   | 'servo'
   | 'arduino_uno'
   | 'resistor'
+  | 'multimeter'
   | 'programming_tablet'
   | 'scanner_dws'
   | 'paintbrush'
@@ -215,6 +216,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     description: 'Microservo posicional com engrenagens plásticas. Conecte GND, alimentação e sinal PWM; não é um motor de rotação contínua.', physicalInfo: 'TowerPro SG90 • 4,8 V • 9 g • Curso aproximado: 0°–180° • Torque de bloqueio: 0,176 N·m (1,8 kg·cm)',
     category: 'motors',
     block: B.SERVO,
+  },
+  multimeter: {
+    name: 'Multímetro digital',
+    description: 'Instrumento de medição com seletor de tensão DC, corrente DC, resistência, continuidade e teste de diodo. Selecione dois terminais com as pontas de prova.',
+    physicalInfo: 'Tensão em paralelo • Corrente exige medição em série • Resistência e continuidade somente com circuito desenergizado',
+    category: 'tools',
   },
   resistor: {
     name: 'Resistor de 4 faixas',
@@ -336,6 +343,7 @@ export const ITEM_ORDER: ItemId[] = [
   'servo',
   'arduino_uno',
   'resistor',
+  'multimeter',
   'motor',
   'motor_tt',
   'motor_n20',
