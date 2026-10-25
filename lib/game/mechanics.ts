@@ -749,6 +749,13 @@ export class Mechanics {
         return machine.motorState
       }
     }
+    const nestedRotor = this.findExtraRotor(key)?.rotor
+    if (nestedRotor?.actuatorId === B.SERVO) {
+      nestedRotor.motorState ??= { facing: nestedRotor.facing, servoOffAngle: 0, servoOnAngle: 90 }
+      nestedRotor.motorState.servoOffAngle ??= 0
+      nestedRotor.motorState.servoOnAngle ??= 90
+      return nestedRotor.motorState
+    }
     const moving = this.findMovingBlock(key)
     if (moving?.id === B.SERVO) {
       moving.state ??= { servoOffAngle: 0, servoOnAngle: 90 }
@@ -799,7 +806,9 @@ export class Mechanics {
       // During articulated simulation, the servo is temporarily absent from the
       // voxel grid. Store changes directly on the active assembly/block state.
       const machine = this.contraptions.get(key)
+      const extra = this.findExtraRotor(key)?.rotor
       if (machine?.actuatorId === B.SERVO) machine.motorState = { ...state }
+      else if (extra?.actuatorId === B.SERVO) extra.motorState = { ...state }
       else {
         const moving = this.findMovingBlock(key)
         if (moving?.id === B.SERVO) moving.state = { ...state }
@@ -2410,9 +2419,13 @@ export class Mechanics {
     const placements: { x: number; y: number; z: number; id: number; state?: BlockState; orig: string }[] = []
     const extraPoses = (c.extraRotors ?? []).map((extra) => {
       const t = extra.rotorBody.translation()
-      const pivot = new THREE.Vector3(t.x, t.y, t.z)
       const turns = ((Math.round(extra.angle / HALF_PI) % 4) + 4) % 4
-      const rotation = chassisQ.clone().multiply(
+      // A nested elbow snaps relative to the primary arm, not to the base.
+      const parentRotation = extra.parent === 'rotor' ? q : chassisQ
+      const pivot = extra.parent === 'rotor'
+        ? new THREE.Vector3(...extra.motorOffset).applyQuaternion(q).add(rotorPivot)
+        : new THREE.Vector3(t.x, t.y, t.z)
+      const rotation = parentRotation.clone().multiply(
         new THREE.Quaternion().setFromAxisAngle(extra.axis, turns * HALF_PI),
       )
       return { extra, pivot, rotation }
@@ -3519,7 +3532,11 @@ export class Mechanics {
         continue
       }
       if (e.type === 'servo') {
-        if (!this.contraptions.has(key)) {
+        const extraServo = this.findExtraRotor(key)?.rotor
+        if (extraServo?.actuatorId === B.SERVO) {
+          // Keep the visual shaft in sync with the physics hinge driving this elbow.
+          e.model.shaft.rotation.z = extraServo.angle
+        } else if (!this.contraptions.has(key)) {
           const state = this.getServoState(key)
           const programmed = this.programmedServoAngles.get(key)?.degrees
           const degrees = programmed ?? (this.servoPowered.has(key) ? state?.servoOnAngle ?? 90 : state?.servoOffAngle ?? 0)
@@ -3620,7 +3637,9 @@ export class Mechanics {
         const angular = c.rotorBody.angvel()
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
-        const otherMotorPowered = (c.extraRotors ?? []).some((extra) => (this.motorPower.get(extra.motorKey) ?? 0) > 0)
+        const otherMotorPowered = (c.extraRotors ?? []).some((extra) =>
+          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0,
+        )
         if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered && c.disassemblyRetryCooldown <= 0) {
           // disassemble() removes the rigid bodies from Rapier. Immediately skip
           // the rest of this contraption's update on success; touching its body
@@ -3637,24 +3656,47 @@ export class Mechanics {
       const chassisRotation = c.chassisBody.rotation()
       const chassisQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
       for (const extra of c.extraRotors ?? []) {
-        const extraPower = this.motorPower.get(extra.motorKey) ?? 0
         const extraMotor = this.models.get(extra.motorKey)
-        if (extraPower > 0) {
-          const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-          const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
-          const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
-          const requestedSpeed = drive.targetOmega * extraDirection
-          const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
-          extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)
+        if (extra.actuatorId === B.SERVO) {
+          const programmed = this.programmedServoAngles.get(extra.motorKey)?.degrees
+          const targetDegrees = programmed ?? (this.servoPowered.has(extra.motorKey)
+            ? extra.motorState?.servoOnAngle ?? 90
+            : extra.motorState?.servoOffAngle ?? 0)
+          const target = THREE.MathUtils.clamp(targetDegrees, 0, 180) * Math.PI / 180
+          const currentAngle = THREE.MathUtils.clamp(extra.angle, 0, SERVO_MAX_ANGLE_RAD)
+          const previousCommand = THREE.MathUtils.clamp(extra.servoCommandAngle ?? currentAngle, 0, SERVO_MAX_ANGLE_RAD)
+          const maxStep = SERVO_TARGET_SPEED_RAD * Math.max(0, Math.min(dt, 1 / 30))
+          const steppedTarget = previousCommand + THREE.MathUtils.clamp(target - previousCommand, -maxStep, maxStep)
+          const commandedTarget = THREE.MathUtils.clamp(
+            steppedTarget,
+            Math.max(0, currentAngle - SERVO_MAX_TRACK_ERROR_RAD),
+            Math.min(SERVO_MAX_ANGLE_RAD, currentAngle + SERVO_MAX_TRACK_ERROR_RAD),
+          )
+          extra.servoCommandAngle = commandedTarget
+          extra.speed = Math.max(-3.2, Math.min(3.2, (target - currentAngle) * 4.2))
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
-          extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
-          if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
+          extra.joint.setMotorMaxForce(SERVO_MAX_TORQUE_NM)
+          extra.joint.configureMotorPosition(commandedTarget, 18, 3)
+          if (extraMotor?.type === 'servo') extraMotor.status = Math.abs(target - currentAngle) > 0.025 ? 'driving' : 'idle'
         } else {
-          extra.unpoweredTime += dt
-          extra.joint.setMotorMaxForce(MOTOR_COAST_TORQUE_NM)
-          extra.joint.configureMotorVelocity(0, MOTOR_COAST_DAMPING)
-          if (extraMotor?.type === 'motor') extraMotor.status = 'idle'
+          const extraPower = this.motorPower.get(extra.motorKey) ?? 0
+          if (extraPower > 0) {
+            const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
+            const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
+            const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
+            const requestedSpeed = drive.targetOmega * extraDirection
+            const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
+            extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)
+            extra.unpoweredTime = 0
+            extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
+            extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
+            if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
+          } else {
+            extra.unpoweredTime += dt
+            extra.joint.setMotorMaxForce(MOTOR_COAST_TORQUE_NM)
+            extra.joint.configureMotorVelocity(0, MOTOR_COAST_DAMPING)
+            if (extraMotor?.type === 'motor') extraMotor.status = 'idle'
+          }
         }
       }
     }
@@ -4145,12 +4187,21 @@ export class Mechanics {
       for (const extra of c.extraRotors ?? []) {
         syncGroup(extra.group, extra.rotorBody)
         const rr = extra.rotorBody.rotation()
-        const relative = chassisQ.clone().invert().multiply(new THREE.Quaternion(rr.x, rr.y, rr.z, rr.w))
+        const parentRawRotation = extra.parent === 'rotor' ? rotation : chassisR
+        const parentQ = new THREE.Quaternion(
+          parentRawRotation.x, parentRawRotation.y, parentRawRotation.z, parentRawRotation.w,
+        )
+        const relative = parentQ.clone().invert().multiply(new THREE.Quaternion(rr.x, rr.y, rr.z, rr.w))
         const projectedExtra = relative.x * extra.axis.x + relative.y * extra.axis.y + relative.z * extra.axis.z
-        extra.angle = 2 * Math.atan2(projectedExtra, relative.w)
-        if (extra.angle < 0) extra.angle += Math.PI * 2
+        const signedExtraAngle = 2 * Math.atan2(projectedExtra, relative.w)
+        if (extra.actuatorId === B.SERVO) {
+          extra.angle = THREE.MathUtils.clamp(signedExtraAngle, 0, SERVO_MAX_ANGLE_RAD)
+        } else {
+          extra.angle = signedExtraAngle
+          if (extra.angle < 0) extra.angle += Math.PI * 2
+        }
         const extraMotor = this.models.get(extra.motorKey)
-        if (extraMotor?.type === 'motor') extraMotor.model.shaft.rotation.z = extra.angle
+        if (extraMotor?.type === 'motor' || extraMotor?.type === 'servo') extraMotor.model.shaft.rotation.z = extra.angle
         for (const end of extra.wireEnds) {
           const point = extra.group.localToWorld(end.local.clone())
           if (end.end === 'a') end.wire.pa.copy(point)
