@@ -525,6 +525,19 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(14, 7, 2, 2, [231, 233, 237])
       break
     }
+    case 'resistor': {
+      // Compact four-band axial resistor icon, viewed from the side.
+      rect(0, 7, 4, 2, [177, 180, 184])
+      rect(12, 7, 4, 2, [177, 180, 184])
+      rect(3, 5, 10, 6, [216, 198, 162])
+      rect(4, 5, 1, 6, [93, 54, 34])
+      rect(6, 5, 1, 6, [188, 43, 35])
+      rect(8, 5, 1, 6, [238, 126, 36])
+      rect(11, 5, 1, 6, [220, 178, 70])
+      px(3, 6, [245, 229, 196])
+      px(12, 6, [245, 229, 196])
+      break
+    }
     case 'wire': {
       rect(2, 2, 2, 12, [74, 74, 80])
       rect(12, 2, 2, 12, [74, 74, 80])
