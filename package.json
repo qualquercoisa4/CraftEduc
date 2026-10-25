@@ -5,8 +5,9 @@
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
+    "build": "pnpm test:electrical && next build",
+    "start": "next start",
+    "test:electrical": "node --experimental-strip-types scripts/test-electrical-solver.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
