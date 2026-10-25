@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, motorTorqueFromCurrent } from './motor-model'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorTorqueFromCurrent } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -49,12 +49,13 @@ const MOTOR_COAST_TORQUE_NM = 0.001
 // actual rigid-body inertia. A moderate scale avoids the old velocity-servo
 // behavior flinging large payloads toward a motor's no-load RPM.
 const MOTOR_SIMULATION_TORQUE_SCALE = 5
+const SERVO_SIMULATION_TORQUE_SCALE = 120
 const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
 // SG90 rated torque is about 0.176 N·m. Voxel blocks are metre-scale game units,
 // so scale the actuator torque to the same virtual-world units as the DC motors.
-const SERVO_MAX_TORQUE_NM = 0.176 * MOTOR_SIMULATION_TORQUE_SCALE
+const SERVO_MAX_TORQUE_NM = 0.176 * SERVO_SIMULATION_TORQUE_SCALE
 
 function motorDriveCommand(
   variant: string | undefined,
@@ -1844,9 +1845,7 @@ export class Mechanics {
         ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
         : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
         : 0
-      if (motorState?.motorType) {
-        this.motorTorqueNm.set(key, motorTorqueFromCurrent(spec, windingCurrent, angularSpeed))
-      }
+      this.motorTorqueNm.set(key, motorTorqueFromCurrent(spec, windingCurrent, angularSpeed))
 
       if (powerFlow === 'motoring' && usableTerminalVoltage) {
         this.motorPower.set(key, voltageRatio)
