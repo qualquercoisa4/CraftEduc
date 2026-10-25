@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
+import { estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -58,39 +59,25 @@ const SERVO_MAX_TORQUE_NM = 0.176 * MOTOR_SIMULATION_TORQUE_SCALE
 
 function motorDriveCommand(
   variant: string | undefined,
-  power: number,
+  voltageRatio: number,
   windingCurrentA: number,
 ): { targetOmega: number; maxTorqueNm: number } {
-  if (power <= 0) return { targetOmega: 0, maxTorqueNm: 0 }
+  if (voltageRatio <= 0) return { targetOmega: 0, maxTorqueNm: 0 }
 
-  // Pre-catalogue motor blocks saved in existing worlds have no motorType.
-  // Preserve their former drive strength instead of silently downgrading them
-  // to the tiny un-geared FA-130 when users continue an existing robot.
+  // Old saved worlds have no motorType; preserve their established movement.
   if (!variant) {
     return {
-      targetOmega: power * 1.05,
-      maxTorqueNm: LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM * power,
+      targetOmega: voltageRatio * 1.05,
+      maxTorqueNm: LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM * voltageRatio,
     }
   }
 
-  const spec = getMotorSpec(variant)
-  // "power" is already the measured motor-terminal voltage divided by rated
-  // voltage. Multiplying it by 1.5 V had wrongly limited 6 V and 12 V motors
-  // to 25% and 12.5% of their rated no-load speed, respectively.
-  const voltageRatio = Math.max(0, Math.min(1, power))
-  const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
-
-  // DC motor torque is proportional to armature current. Subtract estimated
-  // no-load current to keep bearing/brush losses from creating useful shaft
-  // torque when the motor is only spinning freely.
-  const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
-  const noLoadCurrentA = Math.min(stallCurrentA * 0.9, spec.noLoadCurrentA ?? stallCurrentA * 0.08)
-  const torqueCurrentRatio = Math.max(0, Math.min(1,
-    (Math.abs(windingCurrentA) - noLoadCurrentA) / Math.max(0.01, stallCurrentA - noLoadCurrentA),
-  ))
+  const drive = motorDriveCommandForVoltageRatio(getMotorSpec(variant), voltageRatio, windingCurrentA)
+  // The block world is metre-scale while real toy motor dimensions are cm-scale.
+  // Keep that explicit gameplay conversion separate from electrical values.
   return {
-    targetOmega,
-    maxTorqueNm: spec.stallTorqueNm * torqueCurrentRatio * MOTOR_SIMULATION_TORQUE_SCALE,
+    targetOmega: drive.targetOmega,
+    maxTorqueNm: drive.maxTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE,
   }
 }
 // Avoid the exact PI boundary in revolute-joint limits.
@@ -1603,15 +1590,15 @@ export class Mechanics {
           ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
           : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
           : 0
-        const noLoadAngularSpeed = spec.noLoadRpm * Math.PI * 2 / 60
-        // Back-EMF is signed and proportional to measured rotor speed. A hard
-        // 92% cap prevented realistic reverse-current braking and overspeed response.
-        const speedRatio = Math.max(-1.25, Math.min(1.25, angularSpeed / Math.max(0.01, noLoadAngularSpeed)))
+        // Back-EMF follows the measured shaft speed and can exceed nominal voltage
+        // when the motor is over-volted or externally driven. Bound only extreme
+        // speeds to keep malformed contraptions from destabilizing the circuit solver.
+        const backEmfVolts = estimateMotorBackEmfVolts(spec, angularSpeed)
         addResistor(
           `motor:${key}`, node(key, 'A'), node(key, 'B'), motorResistance,
         )
         const branch = resistors[resistors.length - 1]
-        branch.offsetVoltageVolts = speedRatio * spec.nominalVoltageV
+        branch.offsetVoltageVolts = backEmfVolts
       } else if (block.id === B.SERVO) {
         addTerminals(key, ['gnd', 'vcc', 'signal'])
         servoKeys.push(key)
@@ -1670,9 +1657,9 @@ export class Mechanics {
       }
     }
 
-    // First solve estimates the unloaded rails. An Arduino regulator only
-    // starts when VIN is in its practical 6.5–12 V input range; powering the
-    // 5V pin directly bypasses the regulator and needs a 4.4–5.5 V rail.
+    // First solve estimates the unloaded rails. The regulator needs about
+    // 6.5–12 V at VIN; feeding the 5V pin bypasses it and must keep the MCU rail
+    // within the 4.5–5.5 V operating range for a 16 MHz ATmega328P.
     const baseInput = { nodes: [...nodes], resistors, voltageSources: sources, diodes }
     const baseSolution = solveDcCircuit(baseInput)
     const boardCanRun = new Map<string, boolean>()
@@ -1687,13 +1674,14 @@ export class Mechanics {
           voltageVolts: 5, internalResistanceOhms: 1.2,
         })
       }
-      // Match the loaded-rail threshold below: a 3-cell 4.5 V pack may sag under load.
-      boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.0 && five <= 5.5))
+      // Apply the same brownout threshold to the loaded rail below.
+      boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.5 && five <= 5.5))
     }
 
-    // Digital outputs have finite drive strength. A direct pin-to-motor load
-    // therefore cannot behave like an ideal motor driver; use an H-bridge or
-    // transistor stage in a future extension when such parts are added.
+    // Digital outputs are not motor drivers. Use a conservative 250 Ω Thevenin
+    // approximation for HIGH and LOW: it keeps a directly connected motor from
+    // receiving a fictitious full-strength rail and makes current limitation
+    // explicit. A transistor or H-bridge is needed for useful motor current.
     for (const key of arduinoKeys) {
       if (!boardCanRun.get(key)) continue
       const ground = node(key, 'GND')
@@ -1704,9 +1692,9 @@ export class Mechanics {
         if (level) {
           const driveNode = `@arduino-output:${key}:${pin}`
           nodes.add(driveNode)
-          addResistor(`arduino-pin-high:${key}:${pin}`, node(key, '5V'), node(key, pin), 150)
+          addResistor(`arduino-pin-high:${key}:${pin}`, node(key, '5V'), node(key, pin), 250)
         } else {
-          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 20)
+          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 250)
         }
       }
     }
@@ -1835,7 +1823,7 @@ export class Mechanics {
       const motorState = this.lookup(key).state
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
-      const normalized = Math.max(0, Math.min(1, Math.abs(voltage) / ratedVoltage))
+      const normalized = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
       if (Math.abs(voltage) >= Math.max(0.4, ratedVoltage * 0.08)) {
         this.motorPower.set(key, normalized)
         this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
@@ -1858,10 +1846,9 @@ export class Mechanics {
       const ground = solution.nodeVoltages.get(node(key, 'GND')) ?? 0
       const vin = (solution.nodeVoltages.get(node(key, 'VIN')) ?? 0) - ground
       const five = (solution.nodeVoltages.get(node(key, '5V')) ?? 0) - ground
-      // A three-cell battery box has 4.5 V open-circuit and the servo load plus wire
-      // resistance can pull the 5 V rail below 4.4 V. The simulated UNO must keep
-      // running through that realistic sag instead of repeatedly stopping its sketch.
-      if ((vin >= 6.5 && vin <= 12) || (five >= 4.0 && five <= 5.5)) nextPoweredArduinoBoards.add(key)
+      // A rail below 4.5 V is outside the intended 16 MHz operating range; battery
+      // sag under motor/servo load must be allowed to stop the simulated sketch.
+      if ((vin >= 6.5 && vin <= 12) || (five >= 4.5 && five <= 5.5)) nextPoweredArduinoBoards.add(key)
     }
     this.poweredArduinoBoards = nextPoweredArduinoBoards
 
