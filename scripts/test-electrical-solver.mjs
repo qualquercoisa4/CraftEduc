@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { formatCurrentReading, formatVoltageReading, solveDcCircuit } from '../lib/game/electrical.ts'
+import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, solveDcCircuit } from '../lib/game/electrical.ts'
 import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
@@ -72,9 +72,9 @@ const near = (actual, expected, tolerance, label) => {
 {
   const motor = getMotorSpec('fa130')
   const windingResistance = motor.nominalVoltageV / motor.stallCurrentA
-  const solution = solveDcCircuit({
+  const input = {
     resistors: [
-      { id: 'output-impedance', a: 'rail+', b: 'pin', resistanceOhms: 250 },
+      { id: 'output-impedance', a: 'rail+', b: 'pin', resistanceOhms: 25 },
       { id: 'motor-winding', a: 'pin', b: 'gnd', resistanceOhms: windingResistance },
     ],
     voltageSources: [{
@@ -82,10 +82,13 @@ const near = (actual, expected, tolerance, label) => {
       voltageVolts: 5, internalResistanceOhms: 0.1,
     }],
     diodes: [],
-  })
+  }
+  const solution = limitResistorBranchCurrent(
+    input, solveDcCircuit(input), new Set(['output-impedance']), 0.02,
+  )
   const current = solution.resistorCurrents.get('motor-winding') ?? NaN
   const motorVoltage = current * windingResistance
-  assert.ok(current < 0.025, 'direct digital output current should remain near/below 20 mA')
+  assert.ok(current <= 0.0201, 'direct digital output current should be limited to about 20 mA')
   assert.ok(motorVoltage < 0.1, 'motor connected to a digital output should not receive a usable rail')
 }
 
@@ -159,6 +162,29 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(Math.abs(voltage) > 1, 'spinning open-circuit motor should show back-EMF')
   assert.ok(Math.abs(current) < 1e-6, 'open-circuit motor current should be essentially zero')
   assert.equal(classifyMotorPowerFlow(voltage, current), 'idle', 'back-EMF with no current is not drive power')
+}
+
+// A normal logic output load below the recommended current limit should keep
+// a realistic logic-high voltage instead of behaving like a permanent 250 Ω resistor.
+{
+  const input = {
+    resistors: [
+      { id: 'gpio-output', a: 'rail+', b: 'pin', resistanceOhms: 25 },
+      { id: 'logic-load', a: 'pin', b: 'gnd', resistanceOhms: 330 },
+    ],
+    voltageSources: [{
+      id: 'arduino-rail', positive: 'rail+', negative: 'gnd',
+      voltageVolts: 5, internalResistanceOhms: 0.1,
+    }],
+    diodes: [],
+  }
+  const solution = limitResistorBranchCurrent(
+    input, solveDcCircuit(input), new Set(['gpio-output']), 0.02,
+  )
+  const outputCurrent = solution.resistorCurrents.get('gpio-output') ?? NaN
+  const pinVoltage = (solution.nodeVoltages.get('pin') ?? 0) - (solution.nodeVoltages.get('gnd') ?? 0)
+  assert.ok(outputCurrent < 0.02, 'ordinary GPIO load should remain below the current limit')
+  assert.ok(pinVoltage > 4.4, 'ordinary GPIO load should retain a healthy logic-high voltage')
 }
 
 // Unit formatting is shared by the simulation and multimeter; a 4.5 V source
@@ -241,4 +267,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical and motor-model regression checks passed (10 circuits plus motor checks).')
+console.log('Electrical and motor-model regression checks passed (11 circuits plus motor checks).')
