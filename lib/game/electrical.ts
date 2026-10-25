@@ -52,6 +52,24 @@ export interface DcCircuitSolution {
 const MIN_RESISTANCE = 1e-6
 const GMIN = 1e-9
 
+/** Format a solved voltage expressed in SI volts; never reinterpret volts as millivolts. */
+export function formatVoltageReading(voltageVolts: number): string {
+  if (!Number.isFinite(voltageVolts)) return 'OL'
+  const magnitude = Math.abs(voltageVolts)
+  return magnitude > 0 && magnitude < 1
+    ? `${(voltageVolts * 1000).toFixed(1)} mV`
+    : `${voltageVolts.toFixed(3)} V`
+}
+
+/** Format a solved current expressed in SI amperes. */
+export function formatCurrentReading(currentAmps: number): string {
+  if (!Number.isFinite(currentAmps)) return 'OL'
+  const magnitude = Math.abs(currentAmps)
+  return magnitude > 0 && magnitude < 1
+    ? `${(magnitude * 1000).toFixed(1)} mA`
+    : `${magnitude.toFixed(3)} A`
+}
+
 function clampResistance(value: number) {
   return Number.isFinite(value) ? Math.max(MIN_RESISTANCE, value) : 1e12
 }
