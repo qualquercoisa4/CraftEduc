@@ -48,6 +48,10 @@ void main() {
   float gridFade = smoothstep(0.01, 0.12, h);
   float grid = max(meridians, parallels) * gridFade;
   col += vec3(0.55, 0.88, 1.0) * grid * 0.16;
+  vec3 starCell=floor(d*380.0);
+  float starHash=fract(sin(dot(starCell,vec3(12.9898,78.233,37.719)))*43758.5453);
+  float stars=step(0.9985,starHash);
+  col += vec3(0.72,0.86,1.0)*stars*planetTheme*(0.55+0.45*sin(uTime*1.8+starHash*90.0));
 
   // nodes where lines cross
   vec2 cell = vec2(fract(az * 64.0), fract(el * 18.0));
