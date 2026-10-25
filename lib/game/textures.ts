@@ -13,7 +13,8 @@ export const T = {
   ALUMINUM: 6,
   GEAR: 7,
   COLOR_BLOCK: 8,
-  COUNT: 9,
+  WINDOW: 9,
+  COUNT: 10,
 } as const
 
 export function tileFor(id: number, powered: boolean): number {
@@ -44,6 +45,8 @@ export function tileFor(id: number, powered: boolean): number {
       return T.GEAR
     case B.COLOR_BLOCK:
       return T.COLOR_BLOCK
+    case B.WINDOW:
+      return T.WINDOW
     default:
       return T.IRON
   }
@@ -234,6 +237,15 @@ const tileDrawers: Record<number, (px: Px, r: () => number) => void> = {
         if (d < 1.6) c = [40, 40, 44]
         px(x, y, c)
       }
+  },
+  [T.WINDOW]: (px, r) => {
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      let c: RGBA = jitter([75, 190, 231, 210], r, 7)
+      if (x === 0 || y === 0 || x === 15 || y === 15) c = [35, 113, 157, 235]
+      else if ((x === 3 && y >= 3 && y <= 12) || (y === 3 && x >= 3 && x <= 12)) c = [200, 245, 255, 235]
+      else if (x === y || x + y === 15) c = [132, 222, 248, 200]
+      px(x, y, c)
+    }
   },
   [T.COLOR_BLOCK]: (px, r) => {
     for (let y = 0; y < 16; y++) {
@@ -693,6 +705,7 @@ export function getItemIcon(item: ItemId): string {
     led: T.LED_OFF,
     aluminum: T.ALUMINUM,
     gear: T.GEAR,
+    window: T.WINDOW,
   }
   let url: string
   const tile = tileMap[item]

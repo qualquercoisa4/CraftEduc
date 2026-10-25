@@ -94,13 +94,15 @@ export class RigidPhysics {
   private readonly maxSubsteps = 5
   private initializing: Promise<void>
   private disposed = false
+  private superBounce = false
+  private gravityY = -9.81
 
   constructor(private readonly voxelWorld: World) {
     this.initializing = RAPIER.init().then(() => {
       if (this.disposed) return
       // One world unit is treated as roughly one metre. Keep gravity physical
       // and integrate at a fixed rate so contacts don't depend on device FPS.
-      const physics = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
+      const physics = new RAPIER.World({ x: 0, y: this.gravityY, z: 0 })
       physics.timestep = this.fixedStep
       this.rapierWorld = physics
       this.fixedBody = physics.createRigidBody(RAPIER.RigidBodyDesc.fixed())
@@ -113,7 +115,7 @@ export class RigidPhysics {
           RAPIER.ColliderDesc.cuboid(10, 0.5, 10)
             .setTranslation(0, GROUND_LEVEL - 0.5, 0)
             .setFriction(0.88)
-            .setRestitution(0.005),
+            .setRestitution(this.superBounce ? 0.92 : 0.005),
           this.fixedBody,
         )
         // Match the four ocean regions used by the water surface meshes.
@@ -212,6 +214,18 @@ export class RigidPhysics {
     if (!collider || !this.rapierWorld) return
     this.rapierWorld.removeCollider(collider, true)
     this.staticColliders.delete(key)
+  }
+
+  setWorldGravity(y: number) {
+    this.gravityY = Number.isFinite(y) ? y : -9.81
+    if (this.rapierWorld) this.rapierWorld.gravity = { x: 0, y: this.gravityY, z: 0 }
+  }
+
+  setSuperBounce(enabled: boolean) {
+    this.superBounce = enabled
+    this.rapierWorld?.forEachCollider((collider) => {
+      collider.setRestitution(this.superBounce ? 0.92 : 0.005)
+    })
   }
 
   private rebuildStaticColliders() {

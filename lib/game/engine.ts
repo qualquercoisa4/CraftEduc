@@ -147,6 +147,12 @@ export class Engine {
   private multiplayerRules: MultiplayerRules | null = null
   private remoteAvatars = new Map<string, RemoteAvatar>()
   private assistantRobots: AssistantRobot[] = []
+  private labModifiers = { gravityScale: 1, reverseGravity: false, noShortCircuit: false, superSpeed: false, superJump: false, turboMotors: false, superBounce: false }
+  private labScreenCanvas: HTMLCanvasElement | null = null
+  private labScreenTexture: THREE.CanvasTexture | null = null
+  private labScreenMesh: THREE.Mesh | null = null
+  private readonly labPanelZ = -15
+  private readonly labButtonXs = [-5, -3, -1, 1, 3, 5]
   private worldConfig: WorldConfig
   private singlePlayerWorldPlayed = false
 
@@ -193,6 +199,7 @@ export class Engine {
     const skyThemes: Record<string, {theme:number;horizon:string}> = {
       mars_colony:{theme:1,horizon:'#bd715a'}, venus_colony:{theme:2,horizon:'#d4a35f'},
       mystery_planet:{theme:3,horizon:'#537b91'}, robot_city:{theme:4,horizon:'#273b65'},
+      test_lab:{theme:0,horizon:'#657b8b'},
     }
     const skyTheme=skyThemes[this.worldConfig.type]
     this.scene.background=new THREE.Color(skyTheme?.horizon ?? HORIZON_COLOR)
@@ -268,8 +275,9 @@ export class Engine {
     } else if (this.worldConfig.type === 'mars_colony') {
       this.buildMarsHoverRobot()
     }
-    if (['mars_colony','venus_colony','mystery_planet','robot_city'].includes(this.worldConfig.type)) this.buildWorldAssistants()
+    if (['mars_colony','venus_colony','mystery_planet','robot_city','test_lab'].includes(this.worldConfig.type)) this.buildWorldAssistants()
     if (this.worldConfig.type === 'robot_city' && !startup.save) this.buildRobotCityControlPanel()
+    if (this.worldConfig.type === 'test_lab') this.buildTestLabPanel()
     // Include procedurally generated habitat glue in the visible glue overlay.
     this.mech.rebuildGlue()
 
@@ -303,8 +311,81 @@ export class Engine {
   /* ---------------- Setup ---------------- */
 
 
+  private buildTestLabPanel() {
+    for (const x of this.labButtonXs) {
+      this.world.setBlock(x, GROUND_LEVEL + 2, this.labPanelZ, B.COLOR_BLOCK, { color: '#607d8b' })
+      this.world.setBlock(x, GROUND_LEVEL + 1, this.labPanelZ, B.COLOR_BLOCK, { color: '#607d8b' })
+    }
+    const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 360
+    this.labScreenCanvas = canvas
+    this.labScreenTexture = new THREE.CanvasTexture(canvas)
+    this.labScreenTexture.colorSpace = THREE.SRGBColorSpace
+    const mat = new THREE.MeshBasicMaterial({ map: this.labScreenTexture, side: THREE.DoubleSide })
+    this.labScreenMesh = new THREE.Mesh(new THREE.PlaneGeometry(13.6, 4.35), mat)
+    this.labScreenMesh.name = 'Telão físico do Laboratório de Testes'
+    this.labScreenMesh.position.set(0.5, GROUND_LEVEL + 7, this.labPanelZ + 1.015)
+    this.scene.add(this.labScreenMesh)
+    this.applyLabModifiers(false)
+  }
+
+  private updateLabScreen() {
+    const canvas = this.labScreenCanvas, texture = this.labScreenTexture
+    if (!canvas || !texture) return
+    const c = canvas.getContext('2d'); if (!c) return
+    c.fillStyle = '#071522'; c.fillRect(0, 0, 1024, 360)
+    c.fillStyle = '#102b3b'; c.fillRect(18, 18, 988, 324)
+    c.strokeStyle = '#27c8ef'; c.lineWidth = 4; c.strokeRect(18, 18, 988, 324)
+    c.fillStyle = '#e9fbff'; c.font = 'bold 34px monospace'; c.fillText('LABORATÓRIO DE TESTES', 42, 60)
+    c.font = '20px monospace'; c.fillStyle = '#66d8f2'; c.fillText('GRAVIDADE', 42, 110)
+    for (let i = 0; i < 6; i++) {
+      const x = 120 + i * 150, v = 5 - i
+      c.fillStyle = this.labModifiers.gravityScale === v ? '#24d6aa' : '#274b5d'; c.fillRect(x, 78, 72, 48)
+      c.fillStyle = '#f4fbff'; c.font = 'bold 22px monospace'; c.fillText(v + 'x', x + 20, 109)
+    }
+    const labels = ['GRAVIDADE REVERSA','SEM CURTO-CIRCUITO','SUPER VELOCIDADE','SALTO TURBINADO','MOTORES TURBO','BLOCOS ELÁSTICOS']
+    const flags = [this.labModifiers.reverseGravity,this.labModifiers.noShortCircuit,this.labModifiers.superSpeed,this.labModifiers.superJump,this.labModifiers.turboMotors,this.labModifiers.superBounce]
+    for (let i = 0; i < labels.length; i++) {
+      const x = 50 + i * 155; c.fillStyle = flags[i] ? '#24d6aa' : '#274b5d'; c.fillRect(x, 175, 140, 80)
+      c.fillStyle = '#f4fbff'; c.font = 'bold 14px monospace'; c.fillText(labels[i], x + 4, 208)
+      c.fillText(flags[i] ? 'ATIVADO' : 'DESLIGADO', x + 4, 235)
+    }
+    c.fillStyle = '#91aebb'; c.font = '15px monospace'; c.fillText('MIRE NOS BLOCOS PARA ALTERAR AS REGRAS', 42, 310)
+    texture.needsUpdate = true
+  }
+
+  private applyLabModifiers(showMessage = true) {
+    const m = this.labModifiers
+    this.player.gravityScale = m.gravityScale; this.player.reverseGravity = m.reverseGravity
+    this.player.superSpeed = m.superSpeed; this.player.superJump = m.superJump
+    this.mech.setLabGravity((m.reverseGravity ? 1 : -1) * 9.81 * m.gravityScale)
+    this.mech.setNoShortCircuit(m.noShortCircuit); this.mech.setTurboMotors(m.turboMotors); this.mech.setSuperBounce(m.superBounce)
+    for (let i = 0; i < this.labButtonXs.length; i++) {
+      const x = this.labButtonXs[i], value = 5 - i
+      this.world.setBlock(x, GROUND_LEVEL + 2, this.labPanelZ, B.COLOR_BLOCK, { color: m.gravityScale === value ? '#34d399' : '#607d8b' })
+      const flags = [m.reverseGravity,m.noShortCircuit,m.superSpeed,m.superJump,m.turboMotors,m.superBounce]
+      this.world.setBlock(x, GROUND_LEVEL + 1, this.labPanelZ, B.COLOR_BLOCK, { color: flags[i] ? '#34d399' : '#607d8b' })
+    }
+    this.updateLabScreen()
+    if (showMessage) showToast(m.gravityScale === 0 ? 'Gravidade desligada' : 'Gravidade em ' + m.gravityScale + 'x' + (m.reverseGravity ? ' • reversa' : ''))
+  }
+
+  private handleLabPanelPress(hit: Hit | null) {
+    if (this.worldConfig.type !== 'test_lab' || !hit || hit.z !== this.labPanelZ) return false
+    const i = this.labButtonXs.indexOf(hit.x)
+    if (i < 0 || (hit.y !== GROUND_LEVEL + 1 && hit.y !== GROUND_LEVEL + 2)) return false
+    if (this.multiplayerBridge) { showToast('Os modificadores do laboratório estão disponíveis no modo solo'); return true }
+    if (hit.y === GROUND_LEVEL + 2) this.labModifiers.gravityScale = 5 - i
+    else if (i === 0) this.labModifiers.reverseGravity = !this.labModifiers.reverseGravity
+    else if (i === 1) this.labModifiers.noShortCircuit = !this.labModifiers.noShortCircuit
+    else if (i === 2) this.labModifiers.superSpeed = !this.labModifiers.superSpeed
+    else if (i === 3) this.labModifiers.superJump = !this.labModifiers.superJump
+    else if (i === 4) this.labModifiers.turboMotors = !this.labModifiers.turboMotors
+    else if (i === 5) this.labModifiers.superBounce = !this.labModifiers.superBounce
+    this.applyLabModifiers(); sfx.click(); return true
+  }
   private buildWorldAssistants() {
-    const city=this.worldConfig.type==='robot_city', count=city?9:3, radius=city?11:8
+    const city=this.worldConfig.type==='robot_city', lab=this.worldConfig.type==='test_lab'
+    const count=city?9:lab?6:3, radius=city?11:lab?10:8
     const cyan=new THREE.MeshStandardMaterial({color:0x08d9ef,emissive:0x087b91,emissiveIntensity:1.2})
     const shell=new THREE.MeshStandardMaterial({color:0xcbd3d8,metalness:0.72,roughness:0.3})
     const dark=new THREE.MeshStandardMaterial({color:0x202a34,metalness:0.3,roughness:0.45})
@@ -992,6 +1073,8 @@ export class Engine {
     for (const avatar of this.remoteAvatars.values()) this.scene.remove(avatar.group)
     this.remoteAvatars.clear()
     this.world.dispose()
+    if (this.labScreenMesh) { this.scene.remove(this.labScreenMesh); this.labScreenMesh.geometry.dispose(); const m = this.labScreenMesh.material; if (Array.isArray(m)) m.forEach((item) => item.dispose()); else m.dispose() }
+    this.labScreenTexture?.dispose()
     this.renderer.dispose()
     if (current === this) current = null
   }
@@ -1235,6 +1318,7 @@ export class Engine {
     let hit = this.target
     this.swing = 0
     this.lastUseWasPlace = false
+    if (this.handleLabPanelPress(hit)) return
 
     // Resolve the block from the voxel grid as well as the raycast payload:
     // custom 3D models can report their mesh hit separately from the block id.
@@ -1506,6 +1590,7 @@ export class Engine {
       return
     }
     if (!hit) return
+    if (this.handleLabPanelPress(hit)) return
     if (hit.moving && this.multiplayerBridge && !this.multiplayerBridge.isHost) {
       const [x, y, z] = parseKey(hit.moving.key)
       if (!this.multiplayerBridge.canBreakBlock(x, y, z)) {

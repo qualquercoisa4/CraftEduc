@@ -321,6 +321,8 @@ export class Mechanics {
   electricalBranchCurrents = new Map<string, number>()
   private electricalSolverConverged = true
   private activeShortSources = new Set<string>()
+  private noShortCircuit = false
+  private turboMotors = false
   private shortCircuitEventQueue: string[] = []
   motorDirection = new Map<string, number>()
   servoPowered = new Set<string>()
@@ -1443,6 +1445,29 @@ export class Mechanics {
     return { id: this.world.getBlock(x, y, z), state: this.world.getState(x, y, z) }
   }
 
+  setNoShortCircuit(enabled: boolean) {
+    this.noShortCircuit = enabled
+    if (enabled) {
+      this.activeShortSources.clear()
+      this.shortCircuitEventQueue = []
+    }
+    this.powerDirty = true
+    this.powerCooldown = 0
+  }
+
+  setTurboMotors(enabled: boolean) {
+    this.turboMotors = enabled
+    this.mechDirty = true
+  }
+
+  setLabGravity(y: number) {
+    this.rigidPhysics.setWorldGravity(y)
+  }
+
+  setSuperBounce(enabled: boolean) {
+    this.rigidPhysics.setSuperBounce(enabled)
+  }
+
   /** Drain one-shot short-circuit events for the renderer/audio layer. */
   drainShortCircuitEvents() {
     const events = this.shortCircuitEventQueue
@@ -1716,6 +1741,7 @@ export class Mechanics {
 
     const burnedNow: string[] = []
     for (const ledKey of ledKeys) {
+      if (this.noShortCircuit) break
       const block = electricalBlocks.get(ledKey)
       if (!block || block.state?.ledBurnedOut) continue
       const diodeId = `led:${ledKey}`
@@ -1783,7 +1809,7 @@ export class Mechanics {
     for (const source of sources) {
       if (!source.id.startsWith('battery-pack:')) continue
       const current = Math.abs(solution.sourceCurrents.get(source.id) ?? 0)
-      if (current >= shortThresholdAmps) {
+      if (!this.noShortCircuit && current >= shortThresholdAmps) {
         currentShortSources.add(source.id)
         if (!this.activeShortSources.has(source.id)) {
           this.shortCircuitEventQueue.push(source.id.slice('battery-pack:'.length))
@@ -3623,6 +3649,7 @@ export class Mechanics {
       } else if (power > 0) {
         const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
         const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
+        if (this.turboMotors) { drive.maxTorqueNm *= 1.8; drive.targetOmega *= 1.35 }
         const requestedSpeed = drive.targetOmega * direction
         // Slew-limit the velocity target. A moved/re-keyed block can change
         // the solved voltage in one tick; the real rotor cannot instantly jump
@@ -3688,6 +3715,7 @@ export class Mechanics {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
           const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
           const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
+          if (this.turboMotors) { drive.maxTorqueNm *= 1.8; drive.targetOmega *= 1.35 }
           const requestedSpeed = drive.targetOmega * extraDirection
           const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
           extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)

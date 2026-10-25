@@ -23,6 +23,7 @@ export const B = {
   SERVO: 14,
   ARDUINO_UNO: 15,
   RESISTOR: 16,
+  WINDOW: 17,
 } as const
 
 export const ARDUINO_UNO_TERMINAL_IDS = [
@@ -72,6 +73,7 @@ export const BLOCK_CONDUCTIVITY: Readonly<Record<number, number>> = {
   [B.SWITCH]: 0,
   [B.PROXIMITY_SENSOR]: 0,
   [B.SERVO]: 0,
+  [B.WINDOW]: 0,
 }
 
 export function blockConductivity(id: number) {
@@ -138,6 +140,7 @@ export type ItemId =
   | 'servo'
   | 'arduino_uno'
   | 'resistor'
+  | 'window'
   | 'multimeter'
   | 'programming_tablet'
   | 'scanner_dws'
@@ -191,6 +194,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'blocks',
     block: B.ALUMINUM,
   },
+  window: { name: 'Bloco Janela', description: 'Bloco sólido azul-claro translúcido, ideal para paredes, divisórias e janelas de laboratórios.', physicalInfo: 'Bloco estrutural sólido • Transmissão visual parcial • Isolante elétrico', category: 'blocks', block: B.WINDOW },
   gear: { name: 'Bloco de Engrenagem', description: 'Bloco de engrenagem metálica para montagens mecânicas e transmissão de movimento.', physicalInfo: 'Massa: 0,42 kg • Condutividade: 90% • Atrito: 0,58 • Volume: 1 m³', category: 'blocks', block: B.GEAR },
   wheel: { name: 'Roda de Arduino', description: 'Roda de borracha com aro de cinco raios, feita para tração em veículos robóticos.', physicalInfo: 'Massa: 0,32 kg • Atrito: 1,05 • Peça móvel; aderência depende da carga normal', category: 'motors', block: B.WHEEL },
   led: {
@@ -337,6 +341,7 @@ export const ITEM_ORDER: ItemId[] = [
   'component',
   'aluminum',
   'gear',
+  'window',
   'led',
   'switch',
   'proximity_sensor',
@@ -370,6 +375,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.COMPONENT]: 'component',
   [B.ALUMINUM]: 'aluminum',
   [B.GEAR]: 'gear',
+  [B.WINDOW]: 'window',
   [B.LED]: 'led',
   [B.SWITCH]: 'switch',
   [B.PROXIMITY_SENSOR]: 'proximity_sensor',

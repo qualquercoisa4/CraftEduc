@@ -28,6 +28,11 @@ export class Player {
   walkDist = 0
   bob = 0
   horizontalCollision = false
+  gravityScale = 1
+  reverseGravity = false
+  superSpeed = false
+  superJump = false
+  onCeiling = false
 
   constructor(private world: World) {}
 
@@ -111,7 +116,7 @@ export class Player {
       ? THREE.MathUtils.clamp((this.world.waterSurfaceY - this.pos.y) / this.height, 0, 1)
       : 0
 
-    const speed = this.flying
+    const speed = (this.flying
       ? this.sprinting
         ? 21.6
         : 10.9
@@ -119,7 +124,7 @@ export class Player {
         ? 1.31
         : this.sprinting
           ? 5.61
-          : 4.317
+          : 4.317) * (this.superSpeed ? 1.8 : 1)
 
     let f = input.forward
     let s = input.strafe
@@ -142,7 +147,7 @@ export class Player {
       const ty = ((input.flyUp ? 1 : 0) - (input.flyDown ? 1 : 0)) * (this.sprinting ? 12 : 7.5)
       this.vel.y += (ty - this.vel.y) * (1 - Math.exp(-12 * dt))
     } else {
-      this.vel.y -= 32 * dt
+      this.vel.y += (this.reverseGravity ? 1 : -1) * 32 * this.gravityScale * dt
       if (inWater) {
         // Approximate buoyancy keeps the avatar near the surface; water drag
         // limits sudden movement, while jump can be used to swim upward.
@@ -150,8 +155,9 @@ export class Player {
         this.vel.y *= Math.exp(-2.2 * dt)
         if (input.jump) this.vel.y = Math.max(this.vel.y, 4.2)
       } else {
-        if (this.vel.y < -78) this.vel.y = -78
-        if (input.jump && this.onGround) this.vel.y = 9
+        if (this.gravityScale > 0 && Math.abs(this.vel.y) > 78) this.vel.y = Math.sign(this.vel.y) * 78
+        const supported = this.reverseGravity ? this.onCeiling : this.onGround
+        if (input.jump && supported) this.vel.y = (this.reverseGravity ? -1 : 1) * (this.superJump ? 18 : 9)
       }
     }
 
@@ -192,9 +198,17 @@ export class Player {
     if (Math.abs(realDz - dz) > 1e-5) this.vel.z = 0
 
     const realDy = this.pos.y - start.y
-    this.onGround = dy < 0 && realDy > dy + 1e-6
-    if (Math.abs(realDy - dy) > 1e-6 && !(realDy > 0 && dy <= 0)) this.vel.y = 0
-    if (this.onGround) this.vel.y = 0
+    const verticalCollision = Math.abs(realDy - dy) > 1e-6 && !(realDy > 0 && dy <= 0)
+    this.onGround = !this.reverseGravity && (
+      (dy < 0 && realDy > dy + 1e-6) ||
+      (this.gravityScale === 0 && this.collidesAt(new THREE.Vector3(this.pos.x, this.pos.y - 0.03, this.pos.z)))
+    )
+    this.onCeiling = this.reverseGravity && (
+      (dy > 0 && realDy < dy - 1e-6) ||
+      (this.gravityScale === 0 && this.collidesAt(new THREE.Vector3(this.pos.x, this.pos.y + 0.03, this.pos.z)))
+    )
+    if (verticalCollision) this.vel.y = 0
+    if (this.onGround || this.onCeiling) this.vel.y = 0
     if (this.flying && this.onGround) this.flying = false
     if (this.pos.y < -20) {
       this.pos.y = 10

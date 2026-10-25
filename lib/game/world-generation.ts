@@ -11,6 +11,7 @@ export type WorldType =
   | 'mystery_planet'
   | 'robot_city'
   | 'beach'
+  | 'test_lab'
 
 export const WORLD_TYPE_OPTIONS: { id: WorldType; name: string; description: string }[] = [
   { id: 'flat', name: 'Mundo plano', description: 'O mundo atual, com chão de blocos de robótica.' },
@@ -23,6 +24,7 @@ export const WORLD_TYPE_OPTIONS: { id: WorldType; name: string; description: str
   { id: 'mystery_planet', name: 'Planeta misterioso', description: 'Um mundo alienígena com florestas estranhas, cristais luminosos e vales procedurais.' },
   { id: 'robot_city', name: 'Cidade dos robôs', description: 'Metrópole tecnológica com avenidas, torres, painéis luminosos e robôs assistentes.' },
   { id: 'beach', name: 'Praia', description: 'Uma ilha de areia 20×20 cercada por água; objetos flutuam ou afundam e componentes desprotegidos queimam.' },
+  { id: 'test_lab', name: 'Laboratório de testes', description: 'Um laboratório fechado de robótica, com salas amplas, corredores, janelas azuis, robôs assistentes e um painel físico de modificadores.' },
 ]
 
 const MAZE_CELLS = 20
@@ -376,11 +378,61 @@ function robotCityBlock(x: number, y: number, z: number, seed: number) {
   return edge ? B.IRON : B.AIR
 }
 
+/** A multi-room indoor test facility with a central hall and side labs. */
+function laboratoryBlock(x: number, y: number, z: number) {
+  const half = 32
+  if (Math.abs(x) > half || Math.abs(z) > half) return B.AIR
+  if (y < GROUND_LEVEL) return B.ROBOTICS
+  const roofY = GROUND_LEVEL + 10
+  if (y > roofY) return B.AIR
+  if (y === roofY) return B.ALUMINUM
+  if (y === roofY - 1 && ((Math.abs(x) % 8 === 0) && (Math.abs(z) % 8 === 0))) return B.COLOR_BLOCK
+
+  const door = (wall: 'x' | 'z', coordinate: number) => {
+    if (y > GROUND_LEVEL + 4) return false
+    if (wall === 'z') {
+      if (coordinate === -15 && x >= 10 && x <= 13) return true
+      if (coordinate === -20 && x >= 10 && x <= 13) return true
+      if (coordinate === 15 && x >= -2 && x <= 2) return true
+      if (coordinate === 20 && x >= -8 && x <= -4) return true
+      if (coordinate === -half && x >= 10 && x <= 13) return true
+      if (coordinate === half && x >= -2 && x <= 2) return true
+      if ((coordinate === -12 || coordinate === 12) && Math.abs(x) >= 18 && Math.abs(x) <= 29 && x % 16 >= -2 && x % 16 <= 2) return true
+    } else {
+      if ((coordinate === -15 || coordinate === 15) && z >= -2 && z <= 2) return true
+      if ((coordinate === -18 || coordinate === 18) && z >= -2 && z <= 2) return true
+      if ((coordinate === -half || coordinate === half) && z >= -2 && z <= 2) return true
+    }
+    return false
+  }
+
+  const outerWall = Math.abs(x) === half || Math.abs(z) === half
+  const hallWall = Math.abs(x) === 15 || Math.abs(z) === 15
+  const sideLabWall = (Math.abs(x) === 18 && Math.abs(z) <= 12) ||
+    (Math.abs(z) === 12 && Math.abs(x) >= 18 && Math.abs(x) <= 30)
+  const northLabWall = (z === -20 && x >= 6 && x <= 18) ||
+    (x === 6 && z >= -30 && z <= -20) || (x === 18 && z >= -30 && z <= -20)
+  const southLabWall = (z === 20 && x >= -14 && x <= -2) ||
+    (x === -14 && z >= 20 && z <= 30) || (x === -2 && z >= 20 && z <= 30)
+  const zWall = z === -half || z === half || z === -15 || z === 15 || z === -12 || z === 12 || z === -20 || z === 20
+  const xWall = x === -half || x === half || x === -15 || x === 15 || x === -18 || x === 18 || x === 6 || x === -14 || x === -2
+  let wall = outerWall || hallWall || sideLabWall || northLabWall || southLabWall
+  if (wall && ((zWall && door('z', z)) || (xWall && door('x', x)))) wall = false
+  if (wall) {
+    const verticalWindow = y >= GROUND_LEVEL + 2 && y <= GROUND_LEVEL + 5 &&
+      ((zWall && Math.abs(x) % 8 === 0) || (xWall && Math.abs(z) % 8 === 0))
+    if (verticalWindow) return B.WINDOW
+    return B.IRON
+  }
+  return B.AIR
+}
+
 export function getTerrainBlock(type: WorldType, seed: number, x: number, y: number, z: number): number {
   if (y < 0) return B.AIR
 
   if (type === 'flat') return y < GROUND_LEVEL ? B.ROBOTICS : B.AIR
   if (type === 'prototypes') return y < GROUND_LEVEL ? B.COLOR_BLOCK : B.AIR
+  if (type === 'test_lab') return laboratoryBlock(x, y, z)
 
   if (type === 'deep_pits') {
     return y < GROUND_LEVEL && hasPitFloor(x, z) ? B.ROBOTICS : B.AIR
@@ -435,6 +487,14 @@ export function getTerrainBlock(type: WorldType, seed: number, x: number, y: num
 }
 
 export function getTerrainColor(type: WorldType, seed: number, x: number, y: number, z: number) {
+  if (type === 'test_lab') {
+    const block = laboratoryBlock(x, y, z)
+    if (block === B.WINDOW) return '#63c9ee'
+    if (block === B.ALUMINUM) return y >= GROUND_LEVEL + 10 ? '#718493' : '#c2cbd3'
+    if (block === B.IRON) return '#8998a5'
+    if (block === B.COLOR_BLOCK) return '#f6d768'
+    if (y < GROUND_LEVEL) return '#d5dce2'
+  }
   if (type === 'prototypes' && y < GROUND_LEVEL) return '#f5f5f5'
 
   if (type === 'line_following' && y < GROUND_LEVEL) {
@@ -483,6 +543,7 @@ export function getWorldSpawn(type: WorldType): [number, number, number] {
     case 'venus_colony': return [0.5, GROUND_LEVEL, 0.5]
     case 'mystery_planet': return [0.5, GROUND_LEVEL, 0.5]
     case 'robot_city': return [0.5, GROUND_LEVEL, 0.5]
+    case 'test_lab': return [0.5, GROUND_LEVEL, 0.5]
     case 'beach': return [0.5, GROUND_LEVEL, 0.5]
     case 'flat':
     default: return [4.5, GROUND_LEVEL, 5.5]

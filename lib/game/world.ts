@@ -38,6 +38,7 @@ export class Chunk {
   data = new Uint8Array(CS * CS * WORLD_HEIGHT)
   maxY = GROUND_LEVEL - 1
   mesh: THREE.Mesh | null = null
+  windowMesh: THREE.Mesh | null = null
   dirty = true
   modified = false
   constructor(
@@ -70,6 +71,7 @@ export class World {
   poweredLeds = new Set<string>()
   private waterMeshes: THREE.Mesh[] = []
   private waterMaterial: THREE.MeshBasicMaterial | null = null
+  private windowMaterial: THREE.MeshBasicMaterial
   readonly waterSurfaceY = GROUND_LEVEL
   readonly waterBottomY = 1
   onBlockChange: (x: number, y: number, z: number, oldId: number, newId: number, oldHadGlue: boolean, newHasGlue: boolean) => void = () => {}
@@ -80,6 +82,11 @@ export class World {
     public readonly type: WorldType = 'flat',
     public readonly seed = 20261023,
   ) {
+    const atlas = (material as THREE.MeshBasicMaterial).map ?? null
+    this.windowMaterial = new THREE.MeshBasicMaterial({
+      map: atlas, vertexColors: true, transparent: true, opacity: 0.58,
+      depthWrite: false, side: THREE.DoubleSide,
+    })
     if (type === 'beach') this.createBeachWater()
   }
 
@@ -135,6 +142,7 @@ export class World {
     this.waterMeshes = []
     this.waterMaterial?.dispose()
     this.waterMaterial = null
+    this.windowMaterial.dispose()
   }
 
   terrainBlockAt(x: number, y: number, z: number) {
@@ -258,6 +266,7 @@ export class World {
 
   buildChunkMesh(c: Chunk) {
     const out = newBuffers()
+    const windowOut = newBuffers()
     const bx = c.cx * CS
     const bz = c.cz * CS
     const maxY = Math.min(WORLD_HEIGHT - 1, c.maxY)
@@ -269,7 +278,9 @@ export class World {
           const wx = bx + x
           const wz = bz + z
           const powered = id === B.LED && this.poweredLeds.has(posKey(wx, y, wz))
-          emitCube(out, wx, y, wz, id, powered, (dx, dy, dz) => {
+          const state = this.getState(wx, y, wz)
+          const tint = state?.resinCoated ? '#e5c46a' : state?.ledBurnedOut ? '#212121' : state?.color ?? this.terrainColorAt(y, wx, wz)
+          emitCube(id === B.WINDOW ? windowOut : out, wx, y, wz, id, powered, (dx, dy, dz) => {
             const nx = x + dx
             const nz = z + dz
             const ny = y + dy
@@ -277,12 +288,17 @@ export class World {
             if (ny >= WORLD_HEIGHT) return false
             if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
-          }, this.getState(wx, y, wz)?.resinCoated ? '#e5c46a' : this.getState(wx, y, wz)?.ledBurnedOut ? '#212121' : this.getState(wx, y, wz)?.color ?? this.terrainColorAt(y, wx, wz))
+          }, tint)
         }
     if (c.mesh) {
       c.mesh.geometry.dispose()
       this.scene.remove(c.mesh)
       c.mesh = null
+    }
+    if (c.windowMesh) {
+      c.windowMesh.geometry.dispose()
+      this.scene.remove(c.windowMesh)
+      c.windowMesh = null
     }
     if (out.indices.length > 0) {
       const m = new THREE.Mesh(buffersToGeometry(out), this.material)
@@ -290,6 +306,14 @@ export class World {
       m.updateMatrix()
       this.scene.add(m)
       c.mesh = m
+    }
+    if (windowOut.indices.length > 0) {
+      const m = new THREE.Mesh(buffersToGeometry(windowOut), this.windowMaterial)
+      m.matrixAutoUpdate = false
+      m.updateMatrix()
+      m.renderOrder = 2
+      this.scene.add(m)
+      c.windowMesh = m
     }
     c.dirty = false
   }
@@ -299,6 +323,11 @@ export class World {
       c.mesh.geometry.dispose()
       this.scene.remove(c.mesh)
       c.mesh = null
+    }
+    if (c.windowMesh) {
+      c.windowMesh.geometry.dispose()
+      this.scene.remove(c.windowMesh)
+      c.windowMesh = null
     }
     c.dirty = true
     if (!c.modified) this.chunks.delete(chunkKey(c.cx, c.cz))
