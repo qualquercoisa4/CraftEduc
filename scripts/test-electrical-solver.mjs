@@ -88,4 +88,40 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok((solution.diodeCurrents.get('led') ?? 0) > 0.005, 'forward LED current should be positive')
 }
 
-console.log('Electrical solver regression checks passed (4 circuits).')
+// A large unpowered conductive structure must not allocate a dense matrix.
+// This models the metallic walls/roof that previously froze the test laboratory.
+{
+  const count = 1600
+  const nodes = Array.from({ length: count }, (_, i) => `passive-${i}`)
+  const resistors = Array.from({ length: count - 1 }, (_, i) => ({
+    id: `passive-link-${i}`, a: nodes[i], b: nodes[i + 1], resistanceOhms: 0.05,
+  }))
+  const started = performance.now()
+  const solution = solveDcCircuit({ nodes, resistors, voltageSources: [], diodes: [] })
+  assert.equal(solution.converged, true, 'large passive structure should return a valid zero-volt solution')
+  assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'large passive structure should resolve without a matrix')
+  assert.ok(performance.now() - started < 1500, 'large passive structure must not stall the solver')
+}
+
+// A source-driven component beyond the dense-solver safety limit must fail
+// closed quickly instead of attempting an unbounded cubic-time matrix solve.
+{
+  const count = 300
+  const nodes = Array.from({ length: count }, (_, i) => `driven-${i}`)
+  const resistors = Array.from({ length: count - 1 }, (_, i) => ({
+    id: `driven-link-${i}`, a: nodes[i], b: nodes[i + 1], resistanceOhms: 10,
+  }))
+  const solution = solveDcCircuit({
+    nodes,
+    resistors,
+    voltageSources: [{
+      id: 'large-network-source', positive: nodes[0], negative: nodes[count - 1],
+      voltageVolts: 5, internalResistanceOhms: 0.5,
+    }],
+    diodes: [],
+  })
+  assert.equal(solution.converged, false, 'oversized source-driven component should fail safe')
+  assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
+}
+
+console.log('Electrical solver regression checks passed (6 circuits).')
