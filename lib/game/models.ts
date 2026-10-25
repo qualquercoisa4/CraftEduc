@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { ARDUINO_UNO_TERMINAL_IDS, DIRS, type ArduinoUnoTerminalId } from './constants'
+import { RESISTOR_DIGIT_COLORS, RESISTOR_MULTIPLIER_COLORS, RESISTOR_TOLERANCE_COLORS } from './electrical'
 import type { MotorVariantId } from './motor-specs'
 import { makePixelTexture, metalCanvas } from './textures'
 
@@ -572,6 +573,70 @@ export function setBatteryCount(model: BatteryBoxModel, count: number) {
   model.batteries.forEach((b, i) => {
     b.visible = i < count
   })
+}
+
+/**
+ * Configurable through-hole axial resistor. The scene model uses the four
+ * standard bands in reading order: first digit, second digit, multiplier,
+ * tolerance. Terminal IDs stay stable when the user changes the value.
+ */
+export interface ResistorTerminal {
+  id: 'A' | 'B'
+  localPosition: THREE.Vector3
+}
+
+export interface ResistorModel {
+  group: THREE.Group
+  terminals: ResistorTerminal[]
+}
+
+export function createResistorModel(
+  digit1 = 1,
+  digit2 = 0,
+  multiplier = 1,
+  tolerance = 5,
+): ResistorModel {
+  const group = new THREE.Group()
+  const bodyMaterial = new THREE.MeshStandardMaterial({ color: '#d8c5a0', roughness: 0.72, metalness: 0.05 })
+  const leadMaterial = new THREE.MeshStandardMaterial({ color: '#b6b9bd', metalness: 0.75, roughness: 0.32 })
+  const makeAxial = (radius: number, length: number, x: number, material: THREE.Material) => {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, length, 12), material)
+    mesh.rotation.z = Math.PI / 2
+    mesh.position.set(x, 0.5, 0.5)
+    group.add(mesh)
+    return mesh
+  }
+
+  // Metal leads extend slightly beyond the voxel so both ends can be targeted.
+  makeAxial(0.014, 0.34, 0.18, leadMaterial)
+  makeAxial(0.014, 0.34, 0.82, leadMaterial)
+  makeAxial(0.075, 0.48, 0.5, bodyMaterial)
+
+  const safeDigit1 = Math.max(0, Math.min(9, Math.floor(digit1)))
+  const safeDigit2 = Math.max(0, Math.min(9, Math.floor(digit2)))
+  const safeMultiplier = Math.max(-2, Math.min(9, Math.floor(multiplier)))
+  const toleranceKey = Number.isFinite(tolerance) ? tolerance : 5
+  const bandColors = [
+    RESISTOR_DIGIT_COLORS[safeDigit1],
+    RESISTOR_DIGIT_COLORS[safeDigit2],
+    RESISTOR_MULTIPLIER_COLORS[safeMultiplier] ?? RESISTOR_DIGIT_COLORS[0],
+    RESISTOR_TOLERANCE_COLORS[toleranceKey] ?? RESISTOR_TOLERANCE_COLORS[5],
+  ]
+  const positions = [0.365, 0.435, 0.565, 0.675]
+  for (let i = 0; i < bandColors.length; i++) {
+    const bandMaterial = new THREE.MeshStandardMaterial({
+      color: bandColors[i], metalness: i === 3 && toleranceKey === 5 ? 0.28 : 0.05, roughness: 0.48,
+    })
+    makeAxial(0.078, 0.027, positions[i], bandMaterial)
+  }
+
+  return {
+    group,
+    terminals: [
+      { id: 'A', localPosition: new THREE.Vector3(0.01, 0.5, 0.5) },
+      { id: 'B', localPosition: new THREE.Vector3(0.99, 0.5, 0.5) },
+    ],
+  }
 }
 
 /** Visible polarity markers on the two exposed LED terminals. */
