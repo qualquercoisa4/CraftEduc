@@ -311,6 +311,7 @@ export class Mechanics {
   private wireId = 0
   private gravityTimer = 0
   private physicsDirty = true
+  private physicsDirtyKeys = new Set<string>()
   private mountedWheels = new Map<string, { model: WheelModel; spin: number }>()
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
@@ -358,6 +359,7 @@ export class Mechanics {
     // including edits made internally while assembling or landing rigid bodies.
     this.rigidPhysics.syncStaticBlock(x, y, z)
     const key = posKey(x, y, z)
+    if (!this.suppress) this.physicsDirtyKeys.add(key)
     this.removeResinVisual(key)
     if (this.suppress) return
     if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
@@ -782,6 +784,8 @@ export class Mechanics {
     const st = this.world.ensureState(x, y, z)
     st.glue = (st.glue ?? 0) ^ (1 << face)
     this.rebuildGlue()
+    this.physicsDirtyKeys.add(posKey(x, y, z))
+    this.physicsDirty = true
     this.mechDirty = true
     return Boolean(st.glue & (1 << face))
   }
@@ -2532,7 +2536,12 @@ export class Mechanics {
     if (this.physicsDirty && this.physicsScanCooldown <= 0) {
       this.physicsScanCooldown = 0.25
       this.physicsDirty = false
-      this.detectUnsupportedBodies()
+      const changedKeys = new Set(this.physicsDirtyKeys)
+      this.physicsDirtyKeys.clear()
+      // A block edit only affects its vertical support column and any
+      // glue-connected assembly touching that column. Avoid re-scanning every
+      // loaded terrain voxel after each ordinary placement.
+      this.detectUnsupportedBodies(undefined, changedKeys.size ? changedKeys : undefined)
     }
 
     // Rapier resolves motion and contacts. A body is written back to the voxel
@@ -2557,26 +2566,87 @@ export class Mechanics {
     }
   }
 
-  private detectUnsupportedBodies(forceKeys?: ReadonlySet<string>) {
+  private detectUnsupportedBodies(forceKeys?: ReadonlySet<string>, changedKeys?: ReadonlySet<string>) {
     if (!this.rigidPhysics.ready) { this.physicsDirty = true; return }
     const blocks: { key: string; x: number; y: number; z: number; id: number; state?: BlockState }[] = []
     const occupied = new Set<string>()
+    const staticTerrain = new Set<string>()
     const firstY = this.world.type === 'beach'
       ? Math.floor(this.world.waterBottomY)
       : GROUND_LEVEL
-    for (const chunk of this.world.chunks.values()) {
-      const minX = chunk.cx * 16, minZ = chunk.cz * 16
-      for (let y = firstY; y <= Math.min(63, chunk.maxY); y++) {
-        for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
-          // The island's lower sand layers are fixed terrain, not candidate
-          // falling voxels. Scan below GROUND_LEVEL only in the actual sea.
-          if (y < GROUND_LEVEL && this.world.type === 'beach' &&
-            !this.world.isWaterColumnAt(x + 0.5, z + 0.5)) continue
-          const id = this.world.getBlock(x, y, z)
-          if (id === B.AIR) continue
-          const key = posKey(x, y, z)
-          occupied.add(key)
-          blocks.push({ key, x, y, z, id, state: this.world.getState(x, y, z) })
+
+    // Expand edits to the affected column, immediate neighbours, and their
+    // complete glue-connected assemblies. This keeps the scan local while
+    // still finding roofs, towers, and loads that lose their support.
+    let scanKeys: Set<string> | null = null
+    if (changedKeys?.size) {
+      scanKeys = new Set<string>()
+      const queue: string[] = []
+      const enqueue = (x: number, y: number, z: number) => {
+        if (y < firstY || y >= WORLD_HEIGHT) return
+        const key = posKey(x, y, z)
+        if (scanKeys!.has(key) || this.world.getBlock(x, y, z) === B.AIR) return
+        scanKeys!.add(key)
+        queue.push(key)
+      }
+      for (const key of changedKeys) {
+        const [x, y, z] = parseKey(key)
+        enqueue(x, y, z)
+        const chunk = this.world.getChunk(Math.floor(x / 16), Math.floor(z / 16))
+        const topY = Math.min(WORLD_HEIGHT - 1, chunk?.maxY ?? WORLD_HEIGHT - 1)
+        for (let scanY = Math.max(firstY, y); scanY <= topY; scanY++) enqueue(x, scanY, z)
+        for (const [dx, dy, dz] of DIRS) enqueue(x + dx, y + dy, z + dz)
+      }
+      for (let index = 0; index < queue.length; index++) {
+        const key = queue[index]
+        const [x, y, z] = parseKey(key)
+        for (let face = 0; face < 6; face++) {
+          if (!this.isGlued(x, y, z, face)) continue
+          const [dx, dy, dz] = DIRS[face]
+          enqueue(x + dx, y + dy, z + dz)
+        }
+      }
+    }
+
+    const collect = (x: number, y: number, z: number) => {
+      // The beach's lower sand layers are fixed seabed, not falling voxels.
+      if (y < GROUND_LEVEL && this.world.type === 'beach' &&
+        !this.world.isWaterColumnAt(x + 0.5, z + 0.5)) return
+      const id = this.world.getBlock(x, y, z)
+      if (id === B.AIR) return
+      const key = posKey(x, y, z)
+      occupied.add(key)
+      const state = this.world.getState(x, y, z)
+      const generatedId = this.world.terrainBlockAt(x, y, z)
+      // Procedural ground, roads and seabed are static supports. They do not
+      // need independent Rapier bodies and must not become thousands of
+      // single-block groups in the gravity solver.
+      if (id === generatedId && y <= GROUND_LEVEL && !state?.glue) {
+        staticTerrain.add(key)
+        return
+      }
+      blocks.push({ key, x, y, z, id, state })
+    }
+
+    if (scanKeys) {
+      for (const key of scanKeys) {
+        const [x, y, z] = parseKey(key)
+        collect(x, y, z)
+      }
+      // Include the immediate support layer beneath every candidate. This is
+      // for support tests only; unchanged support blocks aren't rescanned as
+      // falling candidates unless they are in the affected column or assembly.
+      for (const block of blocks) {
+        const belowKey = posKey(block.x, block.y - 1, block.z)
+        if (this.world.getBlock(block.x, block.y - 1, block.z) !== B.AIR) occupied.add(belowKey)
+      }
+    } else {
+      for (const chunk of this.world.chunks.values()) {
+        const minX = chunk.cx * 16, minZ = chunk.cz * 16
+        for (let y = firstY; y <= Math.min(WORLD_HEIGHT - 1, chunk.maxY); y++) {
+          for (let z = minZ; z < minZ + 16; z++) for (let x = minX; x < minX + 16; x++) {
+            collect(x, y, z)
+          }
         }
       }
     }
@@ -2627,9 +2697,14 @@ export class Mechanics {
             continue
           }
           const belowKey = posKey(item.x, item.y - 1, item.z)
-          if (!occupied.has(belowKey) || keys.has(belowKey)) continue
+          if (keys.has(belowKey)) continue
+          const belowId = this.world.getBlock(item.x, item.y - 1, item.z)
+          if (belowId === B.AIR) continue
           const belowGroup = groupByKey.get(belowKey)
-          if (belowGroup !== undefined && stableGroups.has(belowGroup)) {
+          // Blocks outside a targeted scan (and static procedural terrain)
+          // are unchanged supports. A scanned neighbouring assembly must first
+          // be proven stable before it can support this group.
+          if (belowGroup === undefined || stableGroups.has(belowGroup)) {
             supportPoints.push({ x: item.x + 0.5, z: item.z + 0.5 })
           }
         }
