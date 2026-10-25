@@ -253,6 +253,8 @@ export class Engine {
     } else if (this.worldConfig.type === 'mars_colony') {
       this.buildMarsHoverRobot()
     }
+    // Include procedurally generated habitat glue in the visible glue overlay.
+    this.mech.rebuildGlue()
 
     const spawn = getWorldSpawn(this.worldConfig.type)
     this.player.pos.set(spawn[0], spawn[1], spawn[2])
