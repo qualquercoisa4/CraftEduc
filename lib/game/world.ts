@@ -25,6 +25,8 @@ export interface BlockState {
   /** Base-10 exponent for the resistor's multiplier band. */
   resistorMultiplier?: number
   resistorTolerance?: number
+  /** Fixed simulated deviation from nominal resistance, in percent. */
+  resistorActualOffsetPct?: number
   /** Set when excessive forward current permanently damages an LED. */
   ledBurnedOut?: boolean
 }
