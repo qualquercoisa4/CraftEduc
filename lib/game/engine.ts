@@ -586,6 +586,10 @@ export class Engine {
       this.mech.rotateMotor(cell.x, cell.y, cell.z, intent.sneaking)
       const state = this.world.getState(cell.x, cell.y, cell.z)
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
+      const motorKey = posKey(cell.x, cell.y, cell.z)
+      const power = this.mech.motorPowerLevel(motorKey)
+      if (power <= 0) showToast('Motor girado, mas sem energia: conecte +/− da bateria aos terminais A/B')
+      else if (!this.mech.isMotorDriving(motorKey)) showToast('Motor alimentado, mas sem carga: cole o braço na face do eixo de saída')
       return
     }
 
@@ -1265,7 +1269,17 @@ export class Engine {
       const state = this.world.getState(hit.x, hit.y, hit.z)
       this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
       sfx.rotate()
-      showToast(rolling ? `Motor girado 90° no eixo X (eixo: ${DIR_NAMES[state?.facing ?? orientation]})` : `Motor virado para: ${DIR_NAMES[orientation]}`)
+      const description = rolling
+        ? `Motor girado 90° no eixo X (eixo: ${DIR_NAMES[state?.facing ?? orientation]})`
+        : `Motor virado para: ${DIR_NAMES[orientation]}`
+      const motorKey = posKey(hit.x, hit.y, hit.z)
+      const power = this.mech.motorPowerLevel(motorKey)
+      const warning = power <= 0
+        ? ' • SEM ENERGIA: ligue +/− da bateria aos terminais A/B'
+        : !this.mech.isMotorDriving(motorKey)
+          ? ' • SEM CARGA: cole o braço na face do eixo'
+          : ''
+      showToast(description + warning)
       return
     }
 
@@ -1649,8 +1663,16 @@ export class Engine {
       hint = `${use} para abrir a programação do Arduino UNO`
     } else if (hit?.id === B.MOTOR && (item === null || isMotorItemId(item))) {
       const state = this.world.getState(hit.x, hit.y, hit.z)
-      const status = this.mech.motorStatus(posKey(hit.x, hit.y, hit.z))
-      const extra = status === 'stalled' ? '  •  TRAVADO!' : ''
+      const key = posKey(hit.x, hit.y, hit.z)
+      const status = this.mech.motorStatus(key)
+      const power = this.mech.motorPowerLevel(key)
+      const extra = status === 'stalled'
+        ? '  •  MONTAGEM TRAVADA'
+        : power <= 0
+          ? '  •  SEM ENERGIA: conecte bateria +/− aos terminais A/B'
+          : !this.mech.isMotorDriving(key)
+            ? '  •  SEM CARGA: cole a montagem na face do eixo'
+            : ''
       hint = this.player.sneaking ? `${use} para girar o motor 90° ao redor do eixo X${extra}` : `${use} para mudar a direção do eixo do motor (${DIR_NAMES[state?.facing ?? 2]})${extra}`
     } else if (item === 'battery') {
       hint = 'Mire num compartimento de pilha AAA'
@@ -1691,8 +1713,8 @@ export class Engine {
       g.rotation.set(0.12, 0.48, 0.06)
       return g
     }
-    if (item === 'motor') {
-      const m = createMotorModel(0).group
+    if (isMotorItemId(item)) {
+      const m = createMotorModel(0, ITEMS[item].motorType ?? 'fa130').group
       const g = new THREE.Group()
       g.add(m)
       g.scale.setScalar(0.5)
