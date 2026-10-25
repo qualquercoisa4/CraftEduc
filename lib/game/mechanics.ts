@@ -3716,7 +3716,7 @@ export class Mechanics {
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
         const otherMotorPowered = (c.extraRotors ?? []).some((extra) =>
-          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0 || (this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0) > 0,
+          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0 || (this.motorTorqueNm.get(extra.motorKey) ?? 0) > 0,
         )
         if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered && c.disassemblyRetryCooldown <= 0) {
           // disassemble() removes the rigid bodies from Rapier. Immediately skip
@@ -3770,8 +3770,8 @@ export class Mechanics {
           extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
-        } else if ((this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0) > 0) {
-          const brakeTorque = this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0
+        } else if ((this.motorTorqueNm.get(extra.motorKey) ?? 0) > 0) {
+          const brakeTorque = this.motorTorqueNm.get(extra.motorKey) ?? 0
           extra.unpoweredTime = 0
           extra.joint.setMotorMaxForce(Math.max(0.00001, brakeTorque))
           extra.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
