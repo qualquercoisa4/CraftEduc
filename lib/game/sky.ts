@@ -14,6 +14,7 @@ void main() {
 const fragment = /* glsl */ `
 uniform float uTime;
 uniform vec3 uSunDir;
+uniform float uTheme;
 varying vec3 vDir;
 
 float gridLine(float coord, float width) {
@@ -30,7 +31,15 @@ void main() {
   vec3 hor = vec3(0.62, 0.82, 0.96);
   vec3 col = mix(hor, mid, smoothstep(0.0, 0.32, h));
   col = mix(col, top, smoothstep(0.32, 0.95, h));
-  if (h < 0.0) col = mix(hor, vec3(0.45, 0.58, 0.72), smoothstep(0.0, -0.35, h));
+  vec3 marsTop=vec3(0.19,0.055,0.045), marsHorizon=vec3(0.82,0.31,0.18);
+  vec3 venusTop=vec3(0.24,0.12,0.035), venusHorizon=vec3(0.95,0.62,0.25);
+  vec3 alienTop=vec3(0.035,0.10,0.16), alienHorizon=vec3(0.24,0.55,0.53);
+  vec3 cityTop=vec3(0.012,0.025,0.09), cityHorizon=vec3(0.12,0.22,0.38);
+  vec3 themeTop=mix(mix(marsTop,venusTop,step(1.5,uTheme)),mix(alienTop,cityTop,step(3.5,uTheme)),step(2.5,uTheme));
+  vec3 themeHorizon=mix(mix(marsHorizon,venusHorizon,step(1.5,uTheme)),mix(alienHorizon,cityHorizon,step(3.5,uTheme)),step(2.5,uTheme));
+  float planetTheme=step(0.5,uTheme);
+  col=mix(col,mix(themeHorizon,themeTop,smoothstep(0.0,0.85,h)),planetTheme);
+  if (h < 0.0) col=mix(mix(hor,vec3(0.45,0.58,0.72),smoothstep(0.0,-0.35,h)),mix(themeHorizon,themeTop,0.25),planetTheme);
 
   float az = atan(d.z, d.x) / 6.2831853;
   float el = asin(clamp(h, -1.0, 1.0)) / 1.5707963;
@@ -82,6 +91,7 @@ export function createSky() {
     uniforms: {
       uTime: { value: 0 },
       uSunDir: { value: new THREE.Vector3(0.45, 0.62, -0.65).normalize() },
+      uTheme: { value: 0 },
     },
     side: THREE.BackSide,
     depthWrite: false,
