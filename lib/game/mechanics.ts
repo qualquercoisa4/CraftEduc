@@ -1900,6 +1900,9 @@ export class Mechanics {
       for (let face = 0; face < 6; face++) {
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+        // Procedural floor is immutable terrain even when it has a generated
+        // glue mask. It must never be included in a robot's rigid body.
+        if (ny < GROUND_LEVEL) continue
         const key = posKey(nx, ny, nz)
         if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR || this.world.getBlock(nx, ny, nz) === B.SERVO) continue
         if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
@@ -1917,13 +1920,16 @@ export class Mechanics {
       const n = DIRS[face]
       const x = mx + n[0], y = my + n[1], z = mz + n[2]
       const key = posKey(x, y, z)
-      if (this.world.getBlock(x, y, z) !== B.AIR && !visited.has(key)) {
+      // Terrain below the build surface is immutable support. Excluding it
+      // here also protects seeded procedural structures that pre-glue blocks.
+      if (y >= GROUND_LEVEL && this.world.getBlock(x, y, z) !== B.AIR && !visited.has(key)) {
         chassisVisited.add(key)
         chassisQueue.push([x, y, z])
       }
     }
     while (chassisQueue.length && chassisVisited.size <= MAX_CONTRAPTION) {
       const [x, y, z] = chassisQueue.shift()!
+      if (y < GROUND_LEVEL) continue
       const currentId = this.world.getBlock(x, y, z)
       const currentState = this.world.getState(x, y, z)
       const outputFace = currentId === B.MOTOR || currentId === B.SERVO ? (((currentState?.facing ?? 2) % 6) + 6) % 6 : -1
@@ -1933,6 +1939,7 @@ export class Mechanics {
         if (face === outputFace) continue
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+        if (ny < GROUND_LEVEL) continue
         const key = posKey(nx, ny, nz)
         if (key === motorKey || visited.has(key) || chassisVisited.has(key)) continue
         if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
@@ -3082,13 +3089,21 @@ export class Mechanics {
       const falling: FallingBlock[] = []
       const keys = new Set(blocksInGroup.map((b) => b.key))
       for (const b of blocksInGroup) {
-        const buffers = newBuffers()
-        emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.resinCoated ? '#e5c46a' : b.state?.color)
-        const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
-        mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
-        mesh.castShadow = true
-        mesh.receiveShadow = true
-        group.add(mesh)
+        // Model-only components (servos, motors, sensors, etc.) render from
+        // their specialized Three.js model attached below. Treating them as
+        // generic cubes made tileFor() fall back to the iron texture while
+        // the assembly was falling, making components appear to change type.
+        if (isOpaque(b.id)) {
+          const buffers = newBuffers()
+          emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.resinCoated ? '#e5c46a' : b.state?.color)
+          if (buffers.indices.length) {
+            const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
+            mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
+            mesh.castShadow = true
+            mesh.receiveShadow = true
+            group.add(mesh)
+          }
+        }
         falling.push({
           id: b.id, state: b.state ? { ...b.state } : undefined,
           x: b.x, y: b.y, z: b.z, originKey: b.key,
