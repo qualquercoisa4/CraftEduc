@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
+import { formatCurrentReading, formatVoltageReading, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -4545,11 +4545,7 @@ export class Mechanics {
       if (!this.electricalSolverConverged) return 'ERRO: o circuito não convergiu. Verifique curtos, fontes em conflito ou LEDs.'
       if (voltage === null) return 'Tensão indisponível: aguarde a próxima atualização do circuito.'
       if (!sameElectricalCircuit) return 'OL — terminais isolados ou sem referência elétrica comum.'
-      const magnitude = Math.abs(voltage)
-      const reading = magnitude > 0 && magnitude < 1
-        ? `${(voltage * 1000).toFixed(1)} mV`
-        : `${voltage.toFixed(3)} V`
-      return `Tensão DC: ${reading}`
+      return `Tensão DC: ${formatVoltageReading(voltage)}`
     }
     if (mode === 'dc_current') {
       if (first.key !== second.key || first.terminal === second.terminal) {
@@ -4557,11 +4553,7 @@ export class Mechanics {
       }
       const current = branchCurrent(first.key, firstId)
       if (current === undefined) return 'Corrente não disponível para este componente no modelo elétrico.'
-      const magnitude = Math.abs(current)
-      const reading = magnitude > 0 && magnitude < 1
-        ? `${(magnitude * 1000).toFixed(1)} mA`
-        : `${magnitude.toFixed(3)} A`
-      return `Corrente do ramo: ${reading} (estimativa calculada; o multímetro ainda não é inserido fisicamente em série)`
+      return `Corrente do ramo: ${formatCurrentReading(current)} (estimativa calculada; o multímetro ainda não é inserido fisicamente em série)`
     }
     if (mode === 'resistance' || mode === 'continuity') {
       if (first.key !== second.key) return 'Use as duas pontas nos terminais do mesmo componente. Desligue a alimentação antes de medir Ω/continuidade.'
