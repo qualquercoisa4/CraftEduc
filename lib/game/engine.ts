@@ -78,6 +78,14 @@ interface MultiplayerBridge {
   wireCreated: (wire: Wire) => void
   wiresRemovedAt: (key: string) => void
 }
+interface AssistantRobot {
+  group: THREE.Group
+  waypoints: THREE.Vector3[]
+  waypoint: number
+  speed: number
+  phase: number
+}
+
 interface RemoteAvatar {
   group: THREE.Group
   targetPosition: THREE.Vector3
@@ -138,6 +146,7 @@ export class Engine {
   private multiplayerCanFly = true
   private multiplayerRules: MultiplayerRules | null = null
   private remoteAvatars = new Map<string, RemoteAvatar>()
+  private assistantRobots: AssistantRobot[] = []
   private worldConfig: WorldConfig
   private singlePlayerWorldPlayed = false
 
@@ -181,8 +190,14 @@ export class Engine {
     this.camera.rotation.order = 'YXZ'
     this.handCamera = new THREE.PerspectiveCamera(70, 1, 0.01, 10)
 
-    this.scene.background = new THREE.Color(HORIZON_COLOR)
-    this.scene.fog = new THREE.Fog(HORIZON_COLOR, 60, 120)
+    const skyThemes: Record<string, {theme:number;horizon:string}> = {
+      mars_colony:{theme:1,horizon:'#bd715a'}, venus_colony:{theme:2,horizon:'#d4a35f'},
+      mystery_planet:{theme:3,horizon:'#537b91'}, robot_city:{theme:4,horizon:'#273b65'},
+    }
+    const skyTheme=skyThemes[this.worldConfig.type]
+    this.scene.background=new THREE.Color(skyTheme?.horizon ?? HORIZON_COLOR)
+    this.scene.fog=new THREE.Fog(skyTheme?.horizon ?? HORIZON_COLOR,60,120)
+    this.sky.material.uniforms.uTheme.value=skyTheme?.theme ?? 0
     this.scene.add(this.sky.mesh)
     this.scene.add(new THREE.HemisphereLight(0xdff2ff, 0x5a6a80, 1.6))
     const sun = new THREE.DirectionalLight(0xffffff, 1.6)
@@ -253,6 +268,8 @@ export class Engine {
     } else if (this.worldConfig.type === 'mars_colony') {
       this.buildMarsHoverRobot()
     }
+    if (['mars_colony','venus_colony','mystery_planet','robot_city'].includes(this.worldConfig.type)) this.buildWorldAssistants()
+    if (this.worldConfig.type === 'robot_city' && !startup.save) this.buildRobotCityControlPanel()
     // Include procedurally generated habitat glue in the visible glue overlay.
     this.mech.rebuildGlue()
 
@@ -284,6 +301,59 @@ export class Engine {
   }
 
   /* ---------------- Setup ---------------- */
+
+
+  private buildWorldAssistants() {
+    const city=this.worldConfig.type==='robot_city', count=city?9:3, radius=city?11:8
+    const cyan=new THREE.MeshStandardMaterial({color:0x08d9ef,emissive:0x087b91,emissiveIntensity:1.2})
+    const shell=new THREE.MeshStandardMaterial({color:0xcbd3d8,metalness:0.72,roughness:0.3})
+    const dark=new THREE.MeshStandardMaterial({color:0x202a34,metalness:0.3,roughness:0.45})
+    const cargo=new THREE.MeshStandardMaterial({color:0xf1b52b,metalness:0.2,roughness:0.65})
+    for(let i=0;i<count;i++){
+      const root=new THREE.Group(); root.name='Robô assistente de manutenção'
+      const part=(w:number,h:number,d:number,mat:THREE.Material,x:number,y:number,z:number)=>{
+        const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat); mesh.position.set(x,y,z); root.add(mesh); return mesh
+      }
+      part(0.72,0.65,0.48,shell,0,0.95,0)
+      part(0.76,0.48,0.52,dark,0,1.55,0)
+      part(0.58,0.29,0.035,cyan,0,1.56,0.275)
+      part(0.20,0.18,0.10,dark,-0.16,1.56,0.30)
+      part(0.20,0.18,0.10,dark,0.16,1.56,0.30)
+      part(0.18,0.48,0.18,shell,-0.48,0.94,0)
+      part(0.18,0.48,0.18,shell,0.48,0.94,0)
+      part(0.24,0.18,0.27,dark,-0.22,0.12,0.04)
+      part(0.24,0.18,0.27,dark,0.22,0.12,0.04)
+      part(0.36,0.36,0.36,cargo,0.42,1.04,-0.30)
+      const baseX=(i%3-1)*radius, baseZ=(Math.floor(i/3)-1)*radius
+      const points=[new THREE.Vector3(baseX,GROUND_LEVEL,baseZ),new THREE.Vector3(baseX+5,GROUND_LEVEL,baseZ),new THREE.Vector3(baseX+5,GROUND_LEVEL,baseZ+4),new THREE.Vector3(baseX-3,GROUND_LEVEL,baseZ+4),new THREE.Vector3(baseX-3,GROUND_LEVEL,baseZ)]
+      root.position.copy(points[0]); this.scene.add(root)
+      this.assistantRobots.push({group:root,waypoints:points,waypoint:1,speed:0.65+(i%4)*0.12,phase:i*0.7})
+    }
+  }
+
+  private buildRobotCityControlPanel() {
+    const y=GROUND_LEVEL
+    this.world.setBlock(5,y,5,B.BATTERY_BOX,{batteries:3})
+    this.world.setBlock(6,y,5,B.ARDUINO_UNO)
+    this.world.setBlock(7,y,5,B.LED,{color:'#00e5ff'})
+    this.world.setBlock(8,y,5,B.LED,{color:'#ff4fd8'})
+    this.world.setBlock(9,y,5,B.LED,{color:'#fdd835'})
+    const batteryKey=posKey(5,y,5), arduinoKey=posKey(6,y,5)
+    this.mech.addWire(batteryKey,new THREE.Vector3(5.82,y+0.12,5.97),'+',arduinoKey,new THREE.Vector3(6.7,y+0.5,5.78),'VIN','#e53935')
+    this.mech.addWire(batteryKey,new THREE.Vector3(5.70,y+0.12,5.97),'-',arduinoKey,new THREE.Vector3(6.82,y+0.5,5.78),'GND','#212121')
+  }
+
+  private updateAssistantRobots(dt:number) {
+    for(const bot of this.assistantRobots){
+      const target=bot.waypoints[bot.waypoint], dx=target.x-bot.group.position.x, dz=target.z-bot.group.position.z, distance=Math.hypot(dx,dz)
+      if(distance<0.18){bot.waypoint=(bot.waypoint+1)%bot.waypoints.length;continue}
+      const step=Math.min(distance,bot.speed*dt)
+      bot.group.position.x+=dx/distance*step; bot.group.position.z+=dz/distance*step
+      bot.group.position.y=target.y+Math.sin(this.elapsed*3+bot.phase)*0.035
+      bot.group.rotation.y=Math.atan2(dx,dz)
+      if(bot.group.children[1]) bot.group.children[1].rotation.y=Math.sin(this.elapsed*2+bot.phase)*0.05
+    }
+  }
 
   private buildMarsHoverRobot() {
     const y = GROUND_LEVEL
@@ -1969,6 +2039,7 @@ export class Engine {
     }
 
     this.updateRemoteAvatars(frozen ? 0 : dt)
+    if (!frozen) this.updateAssistantRobots(dt)
     this.sky.mesh.position.copy(this.camera.position)
     this.sky.material.uniforms.uTime.value = this.elapsed
     this.updateChunks(centerX, centerZ)
