@@ -96,6 +96,7 @@ export class RigidPhysics {
   private disposed = false
   private superBounce = false
   private gravityY = -9.81
+  private labRoofCollider: RAPIER.Collider | null = null
 
   constructor(private readonly voxelWorld: World) {
     this.initializing = RAPIER.init().then(() => {
@@ -146,6 +147,17 @@ export class RigidPhysics {
           this.fixedBody,
         )
       }
+      if (this.voxelWorld.type === 'test_lab') {
+        // The lab roof has 4,225 voxels. One slab avoids thousands of
+        // individual Rapier colliders stalling slower devices during startup.
+        this.labRoofCollider = physics.createCollider(
+          RAPIER.ColliderDesc.cuboid(32.5, 0.5, 32.5)
+            .setTranslation(0.5, GROUND_LEVEL + 10.5, 0.5)
+            .setFriction(0.72)
+            .setRestitution(this.superBounce ? 0.92 : 0.005),
+          this.fixedBody,
+        )
+      }
       this.initialized = true
       this.rebuildStaticColliders()
     })
@@ -185,6 +197,7 @@ export class RigidPhysics {
     if (y < this.minimumColliderY(x, z) || y >= WORLD_HEIGHT) return
     const id = this.voxelWorld.getBlock(x, y, z)
     if (id === B.AIR) return
+    if (this.voxelWorld.type === 'test_lab' && y === GROUND_LEVEL + 10 && id === B.ALUMINUM) return
     let colliderDesc: RAPIER.ColliderDesc
     if (id === B.MOTOR) {
       const state = this.voxelWorld.getState(x, y, z)
@@ -240,6 +253,7 @@ export class RigidPhysics {
         ? Math.floor(this.voxelWorld.waterBottomY)
         : GROUND_LEVEL
       for (let y = firstY; y <= maxY; y++) {
+        if (this.voxelWorld.type === 'test_lab' && y === GROUND_LEVEL + 10) continue
         for (let z = minZ; z < minZ + 16; z++) {
           for (let x = minX; x < minX + 16; x++) {
             // Model blocks also receive full-sized colliders even when their
