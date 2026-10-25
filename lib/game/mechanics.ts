@@ -1690,8 +1690,6 @@ export class Mechanics {
         const level = this.arduinoPinLevels.get(`${key}|${pin}`)
         if (level === undefined) continue
         if (level) {
-          const driveNode = `@arduino-output:${key}:${pin}`
-          nodes.add(driveNode)
           addResistor(`arduino-pin-high:${key}:${pin}`, node(key, '5V'), node(key, pin), 250)
         } else {
           addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 250)
@@ -1817,9 +1815,9 @@ export class Mechanics {
     for (const key of motorKeys) {
       const voltage = (solution.nodeVoltages.get(node(key, 'A')) ?? 0)
         - (solution.nodeVoltages.get(node(key, 'B')) ?? 0)
-      // Normalize against the actual motor's rated voltage and clamp the
-      // drive command. Moving/rebuilding an assembly must never produce >100%
-      // power from a stale or transient node voltage.
+      // Derive speed command from measured terminal voltage relative to the
+      // motor's rating. Permit bounded over-voltage operation, but avoid unbounded
+      // speeds when an assembly is moved or the circuit briefly becomes unstable.
       const motorState = this.lookup(key).state
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
