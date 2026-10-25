@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { formatCurrentReading, formatVoltageReading, solveDcCircuit } from '../lib/game/electrical.ts'
+import { estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from '../lib/game/motor-model.ts'
+import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
 const near = (actual, expected, tolerance, label) => {
   assert.ok(Number.isFinite(actual), `${label}: expected finite value, got ${actual}`)
@@ -42,6 +44,67 @@ const near = (actual, expected, tolerance, label) => {
     diodes: [],
   })
   near(solution.resistorCurrents.get('load'), 5 / 100.5, 1e-7, '5 V load current (A)')
+}
+
+// A 3-cell alkaline pack driving the 3 V FA-130 starts above its rated
+// stall current. Source resistance limits the current and makes terminal
+// voltage sag; the motor model must not silently clamp the voltage to 3 V.
+{
+  const motor = getMotorSpec('fa130')
+  const windingResistance = motor.nominalVoltageV / motor.stallCurrentA
+  const solution = solveDcCircuit({
+    resistors: [{ id: 'fa130-winding', a: 'pack+', b: 'pack-', resistanceOhms: windingResistance }],
+    voltageSources: [{
+      id: 'three-aaa-cells', positive: 'pack+', negative: 'pack-',
+      voltageVolts: 4.5, internalResistanceOhms: 0.45,
+    }],
+    diodes: [],
+  })
+  const current = solution.resistorCurrents.get('fa130-winding') ?? NaN
+  const motorVoltage = current * windingResistance
+  near(current, 4.5 / (windingResistance + 0.45), 1e-7, 'FA-130 startup current from three cells')
+  assert.ok(current > motor.stallCurrentA, '4.5 V may overcurrent a 3 V motor at startup')
+  assert.ok(motorVoltage < 4.5, 'battery internal resistance must sag under motor load')
+}
+
+// An Arduino digital output is not a motor driver. The conservative output
+// impedance keeps a small motor below its usable starting voltage.
+{
+  const motor = getMotorSpec('fa130')
+  const windingResistance = motor.nominalVoltageV / motor.stallCurrentA
+  const solution = solveDcCircuit({
+    resistors: [
+      { id: 'output-impedance', a: 'rail+', b: 'pin', resistanceOhms: 250 },
+      { id: 'motor-winding', a: 'pin', b: 'gnd', resistanceOhms: windingResistance },
+    ],
+    voltageSources: [{
+      id: 'arduino-rail', positive: 'rail+', negative: 'gnd',
+      voltageVolts: 5, internalResistanceOhms: 0.1,
+    }],
+    diodes: [],
+  })
+  const current = solution.resistorCurrents.get('motor-winding') ?? NaN
+  const motorVoltage = current * windingResistance
+  assert.ok(current < 0.025, 'direct digital output current should remain near/below 20 mA')
+  assert.ok(motorVoltage < 0.1, 'motor connected to a digital output should not receive a usable rail')
+}
+
+// The electrical motor model scales no-load speed with terminal voltage,
+// supports back-EMF above nominal voltage, and derives useful torque from current.
+{
+  const motor = getMotorSpec('fa130')
+  const nominalOmega = motor.noLoadRpm * Math.PI * 2 / 60
+  const halfVoltage = motorDriveCommandForVoltageRatio(motor, 0.5, motor.noLoadCurrentA ?? 0)
+  const overVoltage = motorDriveCommandForVoltageRatio(motor, 1.5, motor.stallCurrentA ?? 0)
+  near(halfVoltage.targetOmega, nominalOmega * 0.5, 1e-8, 'half-voltage no-load speed')
+  near(halfVoltage.maxTorqueNm, 0, 1e-8, 'no-load current should not create useful torque')
+  near(overVoltage.targetOmega, nominalOmega * 1.5, 1e-8, 'over-voltage no-load speed')
+  near(overVoltage.maxTorqueNm, motor.stallTorqueNm, 1e-8, 'stall current should produce rated stall torque')
+  near(estimateMotorBackEmfVolts(motor, nominalOmega), motor.nominalVoltageV, 1e-8, 'nominal-speed back-EMF')
+  near(estimateMotorBackEmfVolts(motor, -nominalOmega), -motor.nominalVoltageV, 1e-8, 'reverse back-EMF')
+  near(estimateMotorBackEmfVolts(motor, nominalOmega * 1.5), motor.nominalVoltageV * 1.5, 1e-8, 'over-speed back-EMF')
+  near(estimateMotorBackEmfVolts(motor, nominalOmega * 10), motor.nominalVoltageV * MAX_MOTOR_MODEL_RATIO, 1e-8, 'numerical back-EMF safety bound')
+  assert.ok(overVoltage.maxTorqueNm <= motor.stallTorqueNm * MAX_MOTOR_MODEL_RATIO, 'overcurrent torque must remain bounded')
 }
 
 // Unit formatting is shared by the simulation and multimeter; a 4.5 V source
@@ -124,4 +187,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical solver regression checks passed (6 circuits).')
+console.log('Electrical and motor-model regression checks passed (8 circuits plus motor checks).')
