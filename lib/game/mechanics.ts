@@ -4492,6 +4492,76 @@ export class Mechanics {
     return lines.join('\n')
   }
 
+  measureMultimeter(
+    mode: 'dc_voltage' | 'dc_current' | 'resistance' | 'continuity' | 'diode',
+    first: { key: string; terminal: string },
+    second: { key: string; terminal: string },
+  ): string {
+    const firstNode = `${first.key}|${first.terminal}`
+    const secondNode = `${second.key}|${second.terminal}`
+    const voltageA = this.electricalNodeVoltages.get(firstNode)
+    const voltageB = this.electricalNodeVoltages.get(secondNode)
+    const voltage = voltageA === undefined || voltageB === undefined ? null : voltageA - voltageB
+    const [ax, ay, az] = parseKey(first.key)
+    const firstId = this.lookup(first.key).id
+    const state = this.lookup(first.key).state ?? this.world.getState(ax, ay, az) ?? {}
+    const secondId = this.lookup(second.key).id
+    const branchCurrent = (key: string, id: number) => {
+      if (id === B.RESISTOR) return this.electricalBranchCurrents.get(`resistor:${key}`)
+      if (id === B.MOTOR) return this.electricalBranchCurrents.get(`motor:${key}`)
+      if (id === B.LED) return this.electricalBranchCurrents.get(`led:${key}`)
+      if (id === B.BATTERY_BOX) return this.electricalBranchCurrents.get(`battery-pack:${key}`)
+      return undefined
+    }
+    const resistance = (key: string, id: number, componentState: BlockState) => {
+      if (id === B.RESISTOR) return resistorActualResistanceOhms(
+        componentState.resistorDigit1 ?? 1, componentState.resistorDigit2 ?? 0,
+        componentState.resistorMultiplier ?? 1,
+        componentState.resistorActualOffsetPct ?? resistorToleranceOffsetPercent(key, componentState.resistorTolerance ?? 5),
+      )
+      if (id === B.MOTOR) {
+        const spec = getMotorSpec(componentState.motorType)
+        return spec.nominalVoltageV / Math.max(0.05, spec.stallCurrentA ?? 1.5)
+      }
+      if (id === B.SWITCH) return componentState.switchOn ? 0.01 : Infinity
+      if (id === B.LED) return Infinity
+      if (id === B.BATTERY_BOX) return 0.15 * Math.max(1, Math.floor(componentState.batteries ?? 0))
+      return Infinity
+    }
+    if (mode === 'dc_voltage') {
+      if (voltage === null) return 'Tensão indisponível: aguarde a próxima atualização do circuito.'
+      return `Tensão DC: ${voltage.toFixed(3)} V`
+    }
+    if (mode === 'dc_current') {
+      if (first.key !== second.key || first.terminal === second.terminal) {
+        return 'Corrente DC: coloque o multímetro em série, interrompendo um fio e usando as duas pontas nas extremidades da abertura.'
+      }
+      const current = branchCurrent(first.key, firstId)
+      if (current === undefined) return 'Corrente indisponível nesse componente. Para medir corrente, abra o circuito e insira o multímetro em série.'
+      return `Corrente DC no componente: ${Math.abs(current).toFixed(4)} A`
+    }
+    if (mode === 'resistance' || mode === 'continuity') {
+      if (first.key !== second.key) return 'Use as duas pontas nos terminais do mesmo componente. Desligue a alimentação antes de medir Ω/continuidade.'
+      const ohms = resistance(first.key, firstId, state)
+      if (mode === 'resistance') {
+        if (Number.isFinite(voltage) && Math.abs(voltage) > 0.2) return 'ERRO: circuito energizado. Desligue a fonte antes de medir resistência.'
+        return Number.isFinite(ohms) ? `Resistência: ${ohms >= 1000 ? (ohms / 1000).toFixed(3) + ' kΩ' : ohms.toFixed(2) + ' Ω'}` : 'OL — circuito aberto ou componente não resistivo.'
+      }
+      if (Number.isFinite(voltage) && Math.abs(voltage) > 0.2) return 'ERRO: circuito energizado. Desligue a fonte antes do teste de continuidade.'
+      return ohms < 50 ? `Continuidade: SIM (${ohms.toFixed(2)} Ω, bip)` : 'Continuidade: NÃO (circuito aberto ou resistência alta)'
+    }
+    if (first.key !== second.key || firstId !== B.LED || secondId !== B.LED) {
+      return 'Teste de diodo: selecione os dois terminais do mesmo LED.'
+    }
+    if (first.terminal === second.terminal) return 'Selecione anodo e catodo do LED em pontas diferentes.'
+    const forward = first.terminal === 'anode' && second.terminal === 'cathode'
+    const ledVoltage = voltage === null ? null : (forward ? voltage : -voltage)
+    if (ledVoltage === null) return 'Leitura de diodo indisponível.'
+    if (ledVoltage >= 1.4 && ledVoltage <= 3.6) return `Diodo direto: ${ledVoltage.toFixed(2)} V`
+    if (ledVoltage < 0) return 'Polaridade invertida: OL'
+    return 'Sem condução: OL (LED aberto, queimado ou sem contato)'
+  }
+
   electricalDebugText() {
     const lines = [
       `ELÉTRICA: fios=${this.wires.length} nós=${this.electricalNodeVoltages.size}`,
