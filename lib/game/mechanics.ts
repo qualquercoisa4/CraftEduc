@@ -57,7 +57,7 @@ const SERVO_MAX_TORQUE_NM = 0.176
 function motorDriveCommand(
   variant: string | undefined,
   power: number,
-  relativeOmega: number,
+  windingCurrentA: number,
 ): { targetOmega: number; maxTorqueNm: number } {
   if (power <= 0) return { targetOmega: 0, maxTorqueNm: 0 }
 
@@ -72,14 +72,23 @@ function motorDriveCommand(
   }
 
   const spec = getMotorSpec(variant)
-  const voltageRatio = Math.max(0, Math.min(1, power * 1.5 / spec.nominalVoltageV))
+  // "power" is already the measured motor-terminal voltage divided by rated
+  // voltage. Multiplying it by 1.5 V had wrongly limited 6 V and 12 V motors
+  // to 25% and 12.5% of their rated no-load speed, respectively.
+  const voltageRatio = Math.max(0, Math.min(1, power))
   const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
-  const torqueRatio = targetOmega > 1e-5
-    ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
-    : 0
+
+  // DC motor torque is proportional to armature current. Subtract estimated
+  // no-load current to keep bearing/brush losses from creating useful shaft
+  // torque when the motor is only spinning freely.
+  const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
+  const noLoadCurrentA = Math.min(stallCurrentA * 0.9, spec.noLoadCurrentA ?? stallCurrentA * 0.08)
+  const torqueCurrentRatio = Math.max(0, Math.min(1,
+    (Math.abs(windingCurrentA) - noLoadCurrentA) / Math.max(0.01, stallCurrentA - noLoadCurrentA),
+  ))
   return {
     targetOmega,
-    maxTorqueNm: spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE,
+    maxTorqueNm: spec.stallTorqueNm * torqueCurrentRatio * MOTOR_SIMULATION_TORQUE_SCALE,
   }
 }
 // Avoid the exact PI boundary in revolute-joint limits.
@@ -302,7 +311,10 @@ export class Mechanics {
   motorPower = new Map<string, number>()
   /** Last solved DC node voltages (volts) and named branch currents (amperes). */
   electricalNodeVoltages = new Map<string, number>()
+  /** Floating-node reference domains. Never compare voltages across different domains. */
+  electricalNodeComponentIds = new Map<string, string>()
   electricalBranchCurrents = new Map<string, number>()
+  private electricalSolverConverged = true
   private activeShortSources = new Set<string>()
   private shortCircuitEventQueue: string[] = []
   motorDirection = new Map<string, number>()
@@ -1541,17 +1553,18 @@ export class Mechanics {
         // block move, which previously fed an artificial voltage spike back
         // into the electrical solver.
         const angularSpeed = mechanism
-          ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return Math.abs(v.x * axis[0] + v.y * axis[1] + v.z * axis[2]) })()
-          : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return Math.abs(v.x * axis[0] + v.y * axis[1] + v.z * axis[2]) })()
+          ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
+          : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
           : 0
         const noLoadAngularSpeed = spec.noLoadRpm * Math.PI * 2 / 60
-        const speedRatio = Math.min(0.92, Math.max(0, angularSpeed / Math.max(0.01, noLoadAngularSpeed)))
-        const lastDirection = this.motorDirection.get(key) ?? 1
+        // Back-EMF is signed and proportional to measured rotor speed. A hard
+        // 92% cap prevented realistic reverse-current braking and overspeed response.
+        const speedRatio = Math.max(-1.25, Math.min(1.25, angularSpeed / Math.max(0.01, noLoadAngularSpeed)))
         addResistor(
           `motor:${key}`, node(key, 'A'), node(key, 'B'), motorResistance,
         )
         const branch = resistors[resistors.length - 1]
-        branch.offsetVoltageVolts = speedRatio * spec.nominalVoltageV * lastDirection
+        branch.offsetVoltageVolts = speedRatio * spec.nominalVoltageV
       } else if (block.id === B.SERVO) {
         addTerminals(key, ['gnd', 'vcc', 'signal'])
         servoKeys.push(key)
@@ -1737,6 +1750,8 @@ export class Mechanics {
     }
 
     this.electricalNodeVoltages = solution.nodeVoltages
+    this.electricalNodeComponentIds = solution.nodeComponentIds
+    this.electricalSolverConverged = solution.converged
     this.electricalBranchCurrents = new Map<string, number>([
       ...solution.resistorCurrents.entries(),
       ...solution.diodeCurrents.entries(),
@@ -3373,15 +3388,15 @@ export class Mechanics {
     this.proximityScanCooldown -= dt
     const shouldRefreshProximitySensors = this.proximityScanCooldown <= 0
     if (shouldRefreshProximitySensors) this.proximityScanCooldown = 0.1
-    // Back-EMF changes as the rotor accelerates. Re-solve moving circuits a
-    // few times per second so motor current and battery sag follow the motion,
-    // without scanning the whole world on every render frame.
+    // Back-EMF changes continuously with rotor speed. Refresh dynamic circuits
+    // often enough for current and battery sag to react promptly, without doing
+    // a full world scan every render frame.
     this.circuitRefreshTimer -= dt
     const electricalMotion = [...this.contraptions.values()].some((machine) =>
       Math.abs(machine.speed) > 0.5 || (machine.extraRotors ?? []).some((rotor) => Math.abs(rotor.speed) > 0.5),
     )
     if (electricalMotion && this.circuitRefreshTimer <= 0) {
-      this.circuitRefreshTimer = 0.35
+      this.circuitRefreshTimer = 0.12
       this.powerDirty = true
     }
     this.powerCooldown -= dt
@@ -3542,7 +3557,8 @@ export class Mechanics {
           rotorOmega.y - chassisOmega.y,
           rotorOmega.z - chassisOmega.z,
         )
-        const drive = motorDriveCommand(c.motorState?.motorType, power, relativeOmega)
+        const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
+        const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
         const requestedSpeed = drive.targetOmega * direction
         // Slew-limit the velocity target. A moved/re-keyed block can change
         // the solved voltage in one tick; the real rotor cannot instantly jump
@@ -3589,7 +3605,8 @@ export class Mechanics {
             rotorOmega.y - chassisAngularVelocity.y,
             rotorOmega.z - chassisAngularVelocity.z,
           )
-          const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, relativeOmega)
+          const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
+          const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
           const requestedSpeed = drive.targetOmega * extraDirection
           const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
           extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)
@@ -4509,6 +4526,9 @@ export class Mechanics {
     const voltageA = this.electricalNodeVoltages.get(firstNode)
     const voltageB = this.electricalNodeVoltages.get(secondNode)
     const voltage = voltageA === undefined || voltageB === undefined ? null : voltageA - voltageB
+    const firstCircuit = this.electricalNodeComponentIds.get(firstNode)
+    const secondCircuit = this.electricalNodeComponentIds.get(secondNode)
+    const sameElectricalCircuit = Boolean(firstCircuit && secondCircuit && firstCircuit === secondCircuit)
     const [ax, ay, az] = parseKey(first.key)
     const firstId = this.lookup(first.key).id
     const state = this.lookup(first.key).state ?? this.world.getState(ax, ay, az) ?? {}
@@ -4536,8 +4556,14 @@ export class Mechanics {
       return Infinity
     }
     if (mode === 'dc_voltage') {
+      if (!this.electricalSolverConverged) return 'ERRO: o circuito não convergiu. Verifique curtos, fontes em conflito ou LEDs.'
       if (voltage === null) return 'Tensão indisponível: aguarde a próxima atualização do circuito.'
-      return `Tensão DC: ${voltage.toFixed(3)} V`
+      if (!sameElectricalCircuit) return 'OL — terminais isolados ou sem referência elétrica comum.'
+      const magnitude = Math.abs(voltage)
+      const reading = magnitude > 0 && magnitude < 1
+        ? `${(voltage * 1000).toFixed(1)} mV`
+        : `${voltage.toFixed(3)} V`
+      return `Tensão DC: ${reading}`
     }
     if (mode === 'dc_current') {
       if (first.key !== second.key || first.terminal === second.terminal) {
