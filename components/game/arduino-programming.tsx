@@ -303,7 +303,8 @@ export function ArduinoProgramming() {
               created.push(block)
               return block
             }
-            const connectNext = (a: any, b: any) => a.nextConnection?.connect(b.previousConnection)
+            const connect = (a: any, b: any) => { if (a && b) a.connect(b) }
+            const connectNext = (a: any, b: any) => connect(a.nextConnection, b.previousConnection)
             const start = makeBlock('arduino_when_start')
             const forever = makeBlock('arduino_forever')
             const branch = makeBlock('arduino_if_else')
@@ -315,13 +316,13 @@ export function ArduinoProgramming() {
             const leftStop = makeBlock('arduino_digital_write', { PIN: 'D5', LEVEL: 'LOW' })
             const rightStop = makeBlock('arduino_digital_write', { PIN: 'D6', LEVEL: 'LOW' })
             connectNext(start, forever)
-            forever.getInput('DO')?.connection?.connect(branch.previousConnection)
-            branch.getInput('CONDITION')?.connection?.connect(compare.outputConnection)
-            compare.getInput('A')?.connection?.connect(distance.outputConnection)
-            compare.getInput('B')?.connection?.connect(threshold.outputConnection)
-            branch.getInput('DO')?.connection?.connect(leftForward.previousConnection)
+            connect(forever.getInput('DO')?.connection, branch.previousConnection)
+            connect(branch.getInput('CONDITION')?.connection, compare.outputConnection)
+            connect(compare.getInput('A')?.connection, distance.outputConnection)
+            connect(compare.getInput('B')?.connection, threshold.outputConnection)
+            connect(branch.getInput('DO')?.connection, leftForward.previousConnection)
             connectNext(leftForward, rightForward)
-            branch.getInput('ELSE')?.connection?.connect(leftStop.previousConnection)
+            connect(branch.getInput('ELSE')?.connection, leftStop.previousConnection)
             connectNext(leftStop, rightStop)
             created.forEach((block, index) => {
               block.initSvg()
