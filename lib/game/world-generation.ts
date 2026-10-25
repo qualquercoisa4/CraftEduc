@@ -244,7 +244,38 @@ function marsStructureBlock(x: number, y: number, z: number) {
     return y === GROUND_LEVEL + 8 ? B.ALUMINUM : B.IRON
   }
 
+  // Expanded colony: a landing-pad perimeter, two cargo crates and a
+  // low maintenance shelter give the base readable zones beyond the habitats.
+  if (y === GROUND_LEVEL && x >= 22 && x <= 34 && z >= -2 && z <= 10) {
+    if (x === 22 || x === 34 || z === -2 || z === 10) {
+      return (x + z) % 3 === 0 ? B.ALUMINUM : B.IRON
+    }
+  }
+  if (x >= 31 && x <= 33 && z >= -13 && z <= -11 && y >= GROUND_LEVEL && y <= GROUND_LEVEL + 1) {
+    return y === GROUND_LEVEL ? B.ALUMINUM : B.IRON
+  }
+  if (x >= 24 && x <= 28 && z >= -18 && z <= -17) {
+    if (y === GROUND_LEVEL + 3) return B.ALUMINUM
+    if (y >= GROUND_LEVEL && y <= GROUND_LEVEL + 2 && (x === 24 || x === 28 || z === -18)) return B.IRON
+  }
+
   return B.AIR
+}
+
+// Procedural structures have real glue state, not merely touching voxels.
+// Glue every neighbouring face in a generated habitat so roofs, walls and
+// structural ribs stay attached when physics converts the structure to bodies.
+export function getTerrainGlueMask(type: WorldType, seed: number, x: number, y: number, z: number) {
+  if (type !== 'mars_colony') return 0
+  const id = marsStructureBlock(x, y, z)
+  if (id === B.AIR) return 0
+  let mask = 0
+  for (let face = 0; face < 6; face++) {
+    const [dx, dy, dz] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]][face]
+    if (marsStructureBlock(x + dx, y + dy, z + dz) !== B.AIR) mask |= 1 << face
+  }
+  void seed
+  return mask
 }
 
 export function getTerrainBlock(type: WorldType, seed: number, x: number, y: number, z: number): number {
