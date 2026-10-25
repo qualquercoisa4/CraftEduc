@@ -525,6 +525,20 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(14, 7, 2, 2, [231, 233, 237])
       break
     }
+    case 'multimeter': {
+      // Pixel-art handheld digital multimeter with display, selector and leads.
+      rect(3, 1, 10, 14, [31, 35, 42])
+      rect(4, 2, 8, 5, [92, 105, 110])
+      rect(5, 3, 6, 3, [174, 229, 218])
+      rect(6, 3, 4, 1, [24, 58, 55])
+      rect(6, 8, 4, 4, [64, 69, 76])
+      rect(7, 9, 2, 2, [221, 166, 54])
+      rect(1, 11, 2, 4, [214, 57, 46])
+      rect(13, 11, 2, 4, [38, 49, 65])
+      px(1, 10, [214, 57, 46])
+      px(14, 10, [38, 49, 65])
+      break
+    }
     case 'resistor': {
       // Compact four-band axial resistor icon, viewed from the side.
       rect(0, 7, 4, 2, [177, 180, 184])
