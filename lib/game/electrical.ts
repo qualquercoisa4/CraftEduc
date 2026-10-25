@@ -262,6 +262,23 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
   return { nodeVoltages: finalVoltages, resistorCurrents, diodeCurrents, sourceCurrents, converged }
 }
 
+/** Stable per-component manufacturing deviation, constrained by the tolerance band. */
+export function resistorToleranceOffsetPercent(componentKey: string, tolerancePercent = 5) {
+  let hash = 2166136261
+  for (let i = 0; i < componentKey.length; i++) {
+    hash ^= componentKey.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  const unit = ((hash >>> 0) / 0xffffffff) * 2 - 1
+  const tolerance = Math.max(0, Math.min(10, Number.isFinite(tolerancePercent) ? tolerancePercent : 5))
+  return unit * tolerance
+}
+
+export function resistorActualResistanceOhms(digit1: number, digit2: number, multiplier: number, offsetPercent = 0) {
+  const offset = Math.max(-100, Math.min(100, Number.isFinite(offsetPercent) ? offsetPercent : 0))
+  return resistorValueOhms(digit1, digit2, multiplier) * (1 + offset / 100)
+}
+
 /** Standard four-band resistor colour code. Multiplier is a power of ten. */
 export const RESISTOR_DIGIT_COLORS = [
   '#171717', '#7b4428', '#d12c27', '#ee7d22', '#f2ca36',
