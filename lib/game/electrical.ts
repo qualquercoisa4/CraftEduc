@@ -146,6 +146,7 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
 
   const solveWithDiodeState = () => {
     const voltages = new Map<string, number>()
+    let allComponentsSolved = true
     for (const componentNodes of components) {
       const set = new Set(componentNodes)
       const componentResistors = resistorList.filter((r) => set.has(r.a) && set.has(r.b))
@@ -227,16 +228,20 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
       const solved = solveLinearSystem(matrix, rhs)
       voltages.set(reference, 0)
       if (!solved) {
+        allComponentsSolved = false
         for (const n of unknownNodes) voltages.set(n, 0)
         continue
       }
       unknownNodes.forEach((n, i) => voltages.set(n, solved[i]))
     }
-    return voltages
+    return { voltages, allComponentsSolved }
   }
 
+  let linearSolveSucceeded = true
   for (let iteration = 0; iteration < 20; iteration++) {
-    const voltages = solveWithDiodeState()
+    const solveResult = solveWithDiodeState()
+    const voltages = solveResult.voltages
+    linearSolveSucceeded = solveResult.allComponentsSolved
     let changed = false
     for (const diode of diodeList) {
       const difference = (voltages.get(diode.anode) ?? 0) - (voltages.get(diode.cathode) ?? 0)
@@ -270,7 +275,14 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
     const internal = voltage(internalNode(s.id))
     sourceCurrents.set(s.id, (internal - voltage(s.positive)) / s.internalResistanceOhms)
   }
-  return { nodeVoltages: finalVoltages, nodeComponentIds, resistorCurrents, diodeCurrents, sourceCurrents, converged }
+  return {
+    nodeVoltages: finalVoltages,
+    nodeComponentIds,
+    resistorCurrents,
+    diodeCurrents,
+    sourceCurrents,
+    converged: converged && linearSolveSucceeded,
+  }
 }
 
 /** Stable per-component manufacturing deviation, constrained by the tolerance band. */
