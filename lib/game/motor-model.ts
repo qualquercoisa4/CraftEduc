@@ -47,6 +47,33 @@ export function estimateMotorBackEmfVolts(spec: MotorSpec, angularSpeedRadPerSec
   return speedRatio * backEmfAtNoLoadSpeed
 }
 
+/**
+ * Signed shaft torque in N·m from measured armature current.
+ *
+ * Current and torque retain their physical signs: reverse current creates
+ * reverse torque, which naturally brakes a motor that is being back-driven.
+ * No-load current is treated as internal mechanical/brush loss opposing motion,
+ * rather than being mistaken for useful output torque.
+ */
+export function motorTorqueFromCurrent(
+  spec: MotorSpec,
+  windingCurrentA: number,
+  shaftAngularSpeedRadPerSec: number,
+) {
+  const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
+  const torqueConstantNmPerAmp = Math.max(0, spec.stallTorqueNm) / stallCurrentA
+  const current = Number.isFinite(windingCurrentA) ? windingCurrentA : 0
+  const noLoadCurrentA = clamp(spec.noLoadCurrentA ?? 0, 0, stallCurrentA * 0.9)
+  const internalLossTorque = Math.abs(shaftAngularSpeedRadPerSec) > 0.05
+    ? Math.sign(shaftAngularSpeedRadPerSec) * torqueConstantNmPerAmp * noLoadCurrentA
+    : 0
+  return clamp(
+    torqueConstantNmPerAmp * current - internalLossTorque,
+    -spec.stallTorqueNm * MAX_MOTOR_MODEL_RATIO,
+    spec.stallTorqueNm * MAX_MOTOR_MODEL_RATIO,
+  )
+}
+
 /** Electromagnetic braking torque while the motor is generating current. */
 export function motorGeneratingTorqueNm(spec: MotorSpec, windingCurrentA: number) {
   const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
