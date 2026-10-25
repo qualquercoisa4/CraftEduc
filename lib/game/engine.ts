@@ -1282,7 +1282,7 @@ export class Engine {
 
     // Dynamic bodies are interactive, but voxel placement/wiring still uses
     // the world's integer grid. Resolve the source identity before editing.
-    if (hit?.moving) {
+    if (hit?.moving && item !== 'multimeter') {
       const cell = this.mech.releaseMovingBlock(hit.moving.key, hit.moving.kind)
       if (!cell) {
         showToast('Não foi possível estabilizar esse conjunto para editar')
