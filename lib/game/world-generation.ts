@@ -175,20 +175,35 @@ function isLineTrack(x: number, z: number) {
 }
 
 function marsSurfaceHeight(seed: number, x: number, z: number) {
-  // Keep the central colony and landing area flat enough for constructions.
+  // Preserve a wide, walkable central base while the outskirts use layered
+  // noise, erosion channels and several craters for a less tiled landscape.
   if (Math.abs(x) <= 22 && Math.abs(z) <= 22) return GROUND_LEVEL
 
-  const cellNoise = hash2(seed, Math.floor(x / 7), Math.floor(z / 7))
-  let height = GROUND_LEVEL - 1 + Math.floor(cellNoise * 3)
+  const broad = hash2(seed, Math.floor(x / 13), Math.floor(z / 13))
+  const medium = hash2(seed ^ 0x51ed270b, Math.floor(x / 5), Math.floor(z / 5))
+  const fine = hash2(seed ^ 0x2c1b3c6d, x, z)
+  let height = GROUND_LEVEL - 2 + Math.floor(broad * 3) + Math.floor(medium * 2)
+  if (fine > 0.84) height += 1
 
-  // A crater and a raised rim make the surrounding terrain visibly less flat.
-  const craterDistance = Math.hypot(x - 36, z + 28)
-  if (craterDistance < 8) height = Math.min(height, GROUND_LEVEL - 2)
-  else if (craterDistance < 12) height = Math.max(height, GROUND_LEVEL + 1)
+  const craters = [
+    { x: 36, z: -28, radius: 9 },
+    { x: -39, z: -27, radius: 7 },
+    { x: 39, z: 34, radius: 11 },
+    { x: -30, z: 39, radius: 8 },
+  ]
+  for (const crater of craters) {
+    const distance = Math.hypot(x - crater.x, z - crater.z)
+    if (distance < crater.radius * 0.68) height = Math.min(height, GROUND_LEVEL - 3)
+    else if (distance < crater.radius) height = Math.max(height, GROUND_LEVEL + 1)
+    else if (distance < crater.radius * 1.45) height = Math.max(height, GROUND_LEVEL)
+  }
 
+  // Long shallow gullies and a rocky ridge make the approach terrain readable.
+  const gully = Math.abs(z - Math.sin(x * 0.12) * 8)
+  if (gully < 2.2 && Math.abs(x) > 24) height = Math.min(height, GROUND_LEVEL - 1)
   const ridgeDistance = Math.hypot(x + 34, z - 29)
   if (ridgeDistance < 8) height = Math.max(height, GROUND_LEVEL + 2)
-  return Math.max(1, Math.min(9, height))
+  return Math.max(1, Math.min(10, height))
 }
 
 function marsStructureBlock(x: number, y: number, z: number) {
