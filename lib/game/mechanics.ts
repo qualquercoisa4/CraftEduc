@@ -4476,7 +4476,7 @@ export class Mechanics {
         shown++
       }
     }
-    return lines.join('\\n')
+    return lines.join('\n')
   }
 
   isMotorDriving(key: string) {
