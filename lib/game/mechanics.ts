@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
+import { resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -453,6 +453,7 @@ export class Mechanics {
       state.resistorDigit2 ??= 0
       state.resistorMultiplier ??= 1
       state.resistorTolerance ??= 5
+      state.resistorActualOffsetPct ??= resistorToleranceOffsetPercent(key, state.resistorTolerance)
       const model = createResistorModel(state.resistorDigit1, state.resistorDigit2, state.resistorMultiplier, state.resistorTolerance)
       model.group.position.set(x, y, z)
       this.scene.add(model.group)
@@ -813,7 +814,7 @@ export class Mechanics {
     const tolerance = state.resistorTolerance ?? 5
     return {
       digit1, digit2, multiplier, tolerance,
-      resistanceOhms: resistorValueOhms(digit1, digit2, multiplier),
+      resistanceOhms: resistorActualResistanceOhms(digit1, digit2, multiplier, state.resistorActualOffsetPct ?? 0),
     }
   }
 
@@ -828,6 +829,8 @@ export class Mechanics {
       resistorMultiplier: Math.max(-2, Math.min(9, Math.floor(multiplier))),
       resistorTolerance: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10].reduce((best, value) =>
         Math.abs(value - tolerance) < Math.abs(best - tolerance) ? value : best, 5),
+      resistorActualOffsetPct: resistorToleranceOffsetPercent(key, [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10].reduce((best, value) =>
+        Math.abs(value - tolerance) < Math.abs(best - tolerance) ? value : best, 5)),
     }
     this.world.states.set(key, state)
     this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
@@ -1491,7 +1494,7 @@ export class Mechanics {
         addTerminals(key, ['A', 'B'])
         addResistor(
           `resistor:${key}`, node(key, 'A'), node(key, 'B'),
-          resistorValueOhms(state.resistorDigit1 ?? 1, state.resistorDigit2 ?? 0, state.resistorMultiplier ?? 1),
+          resistorActualResistanceOhms(state.resistorDigit1 ?? 1, state.resistorDigit2 ?? 0, state.resistorMultiplier ?? 1, state.resistorActualOffsetPct ?? resistorToleranceOffsetPercent(key, state.resistorTolerance ?? 5)),
         )
       } else if (block.id === B.LED) {
         addTerminals(key, ['anode', 'cathode'])
@@ -1593,14 +1596,9 @@ export class Mechanics {
         if (level) {
           const driveNode = `@arduino-output:${key}:${pin}`
           nodes.add(driveNode)
-          sources.push({
-            id: `arduino-high:${key}:${pin}`,
-            positive: driveNode, negative: node(key, '5V'),
-            voltageVolts: 0, internalResistanceOhms: 0.25,
-          })
-          addResistor(`arduino-pin-resistance:${key}:${pin}`, driveNode, node(key, pin), 100)
+          addResistor(`arduino-pin-high:${key}:${pin}`, node(key, '5V'), node(key, pin), 150)
         } else {
-          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 1)
+          addResistor(`arduino-low:${key}:${pin}`, node(key, pin), ground, 20)
         }
       }
     }
