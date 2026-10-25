@@ -341,6 +341,15 @@ export class Engine {
     const batteryKey=posKey(5,y,5), arduinoKey=posKey(6,y,5)
     this.mech.addWire(batteryKey,new THREE.Vector3(5.82,y+0.12,5.97),'+',arduinoKey,new THREE.Vector3(6.7,y+0.5,5.78),'VIN','#e53935')
     this.mech.addWire(batteryKey,new THREE.Vector3(5.70,y+0.12,5.97),'-',arduinoKey,new THREE.Vector3(6.82,y+0.5,5.78),'GND','#212121')
+    const pinPoint=(pin:number)=>new THREE.Vector3(6.15+pin*0.045,y+0.5,5.24)
+    const groundPoint=new THREE.Vector3(6.82,y+0.5,5.78)
+    const ledColors=['#00e5ff','#ff4fd8','#fdd835']
+    for(let i=0;i<3;i++){
+      const ledKey=posKey(7+i,y,5)
+      this.mech.addWire(arduinoKey,pinPoint(2+i),`D${2+i}`,ledKey,new THREE.Vector3(8+i,y+0.5,5.5),'anode',ledColors[i])
+      this.mech.addWire(arduinoKey,groundPoint,'GND',ledKey,new THREE.Vector3(7+i,y+0.5,5),'cathode','#212121')
+    }
+    try { window.localStorage.setItem('crafteduc:robot-city-face-preset:'+arduinoKey,'1') } catch {}
   }
 
   private updateAssistantRobots(dt:number) {
