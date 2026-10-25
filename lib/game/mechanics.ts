@@ -567,6 +567,22 @@ export class Mechanics {
       if (!this.contraptions.has(key) && !this.findExtraRotor(key)) this.rigidPhysics.syncStaticBlock(x, y, z)
     }
     if (id === B.BATTERY_BOX && model?.type === 'box') setBatteryCount(model.model, next?.batteries ?? 0)
+    if (id === B.RESISTOR && model?.type === 'resistor' && (
+      next?.resistorDigit1 !== previous?.resistorDigit1 ||
+      next?.resistorDigit2 !== previous?.resistorDigit2 ||
+      next?.resistorMultiplier !== previous?.resistorMultiplier ||
+      next?.resistorTolerance !== previous?.resistorTolerance
+    )) {
+      const replacement = createResistorModel(
+        next?.resistorDigit1 ?? 1, next?.resistorDigit2 ?? 0,
+        next?.resistorMultiplier ?? 1, next?.resistorTolerance ?? 5,
+      )
+      replacement.group.position.copy(model.model.group.position)
+      this.scene.add(replacement.group)
+      disposeObject(model.model.group)
+      model = { type: 'resistor', model: replacement }
+      this.models.set(key, model)
+    }
     if (id === B.SWITCH && model?.type === 'switch') setSwitchState(model.model, Boolean(next?.switchOn))
     if (id === B.PROXIMITY_SENSOR && model?.type === 'sensor') {
       if (next?.facing !== undefined) setProximitySensorFacing(model.model, next.facing)
