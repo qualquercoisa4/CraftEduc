@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
+import { resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -13,7 +14,9 @@ import {
   type ProximitySensorModel,
   type ServoModel,
   type ArduinoUnoModel,
+  type ResistorModel,
   createArduinoUnoModel,
+  createResistorModel,
   createProximitySensorModel,
   createServoModel,
   setServoFacing,
@@ -193,6 +196,7 @@ type ModelEntry =
   | { type: 'sensor'; model: ProximitySensorModel }
   | { type: 'servo'; model: ServoModel; status: 'idle' | 'stalled' | 'driving' }
   | { type: 'arduino_uno'; model: ArduinoUnoModel }
+  | { type: 'resistor'; model: ResistorModel }
 
 export interface Wire {
   id: number
@@ -296,6 +300,9 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
+  /** Last solved DC node voltages (volts) and named branch currents (amperes). */
+  electricalNodeVoltages = new Map<string, number>()
+  electricalBranchCurrents = new Map<string, number>()
   motorDirection = new Map<string, number>()
   servoPowered = new Set<string>()
   // Program output state is kept separate from battery-box power calculations.
@@ -364,7 +371,7 @@ export class Mechanics {
     if (this.suppress) return
     if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
     if (oldId === B.SERVO) this.programmedServoAngles.delete(key)
-    if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO) {
+    if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO || oldId === B.RESISTOR) {
       const e = this.models.get(key)
       if (e) {
         disposeObject(e.model.group)
@@ -439,10 +446,20 @@ export class Mechanics {
       model.group.position.set(x + 1, y + 0.14, z + 1)
       this.scene.add(model.group)
       this.models.set(key, { type: 'arduino_uno', model })
+    } else if (newId === B.RESISTOR) {
+      const state = this.world.ensureState(x, y, z)
+      state.resistorDigit1 ??= 1
+      state.resistorDigit2 ??= 0
+      state.resistorMultiplier ??= 1
+      state.resistorTolerance ??= 5
+      const model = createResistorModel(state.resistorDigit1, state.resistorDigit2, state.resistorMultiplier, state.resistorTolerance)
+      model.group.position.set(x, y, z)
+      this.scene.add(model.group)
+      this.models.set(key, { type: 'resistor', model })
     }
     // Glue geometry is expensive: rebuild only when a glued block actually changes.
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
-    const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
+    const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
     if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
     if (newId !== B.AIR && this.world.getState(x, y, z)?.resinCoated) this.syncResinVisual(x, y, z)
@@ -571,7 +588,7 @@ export class Mechanics {
       disposeObject(mounted.model.group)
       this.mountedWheels.delete(key)
     }
-    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT) {
+    if (id === B.MOTOR || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT || id === B.SERVO || id === B.ARDUINO_UNO) {
       this.powerDirty = true
       this.mechDirty = true
     }
@@ -580,7 +597,7 @@ export class Mechanics {
   }
 
   private isElectricalBlock(id: number) {
-    return id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON
+    return id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.IRON
       || id === B.ALUMINUM || id === B.ROBOTICS || id === B.COMPONENT
   }
 
@@ -766,6 +783,52 @@ export class Mechanics {
     this.powerDirty = true
     this.powerCooldown = 0
     this.mechDirty = true
+    return true
+  }
+
+  getResistorConfig(key: string) {
+    const block = this.lookup(key)
+    if (block.id !== B.RESISTOR) return null
+    const state = block.state ?? {}
+    const digit1 = Math.max(0, Math.min(9, Math.floor(state.resistorDigit1 ?? 1)))
+    const digit2 = Math.max(0, Math.min(9, Math.floor(state.resistorDigit2 ?? 0)))
+    const multiplier = Math.max(-2, Math.min(9, Math.floor(state.resistorMultiplier ?? 1)))
+    const tolerance = state.resistorTolerance ?? 5
+    return {
+      digit1, digit2, multiplier, tolerance,
+      resistanceOhms: resistorValueOhms(digit1, digit2, multiplier),
+    }
+  }
+
+  configureResistor(key: string, digit1: number, digit2: number, multiplier: number, tolerance: number) {
+    if (![digit1, digit2, multiplier, tolerance].every(Number.isFinite)) return false
+    if (this.lookup(key).id !== B.RESISTOR) return false
+    const [x, y, z] = parseKey(key)
+    const state = {
+      ...(this.world.getState(x, y, z) ?? this.lookup(key).state ?? {}),
+      resistorDigit1: Math.max(0, Math.min(9, Math.floor(digit1))),
+      resistorDigit2: Math.max(0, Math.min(9, Math.floor(digit2))),
+      resistorMultiplier: Math.max(-2, Math.min(9, Math.floor(multiplier))),
+      resistorTolerance: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10].reduce((best, value) =>
+        Math.abs(value - tolerance) < Math.abs(best - tolerance) ? value : best, 5),
+    }
+    this.world.states.set(key, state)
+    this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
+    this.world.markBlockDirty(x, y, z)
+
+    const entry = this.models.get(key)
+    if (entry?.type === 'resistor') {
+      const replacement = createResistorModel(state.resistorDigit1, state.resistorDigit2, state.resistorMultiplier, state.resistorTolerance)
+      replacement.group.position.copy(entry.model.group.position)
+      this.scene.add(replacement.group)
+      disposeObject(entry.model.group)
+      this.models.set(key, { type: 'resistor', model: replacement })
+    }
+    this.powerDirty = true
+    this.powerCooldown = 0
+    if (this.networkAuthority && this.world.getBlock(x, y, z) === B.RESISTOR) {
+      this.networkBlockPublisher?.(x, y, z, B.RESISTOR, { ...state }, this.networkBlockOwner?.(x, y, z))
+    }
     return true
   }
 
@@ -1092,6 +1155,27 @@ export class Mechanics {
       ].map((terminal) => ({ terminal: terminal.terminal, point: terminal.local.applyQuaternion(q).add(center) }))
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.35 ? terminals[0] : null
+    }
+    if (id === B.RESISTOR) {
+      const entry = this.models.get(key)
+      if (entry?.type !== 'resistor') return null
+      entry.model.group.updateWorldMatrix(true, false)
+      const terminals = entry.model.terminals.map((terminal) => ({
+        terminal: terminal.id,
+        point: entry.model.group.localToWorld(terminal.localPosition.clone()),
+      }))
+      if (rayOrigin && rayDirection) {
+        const ray = new THREE.Ray(rayOrigin, rayDirection.clone().normalize())
+        const candidates = terminals.map((terminal) => {
+          const closest = ray.closestPointToPoint(terminal.point, new THREE.Vector3())
+          return { ...terminal, distanceToRay: closest.distanceTo(terminal.point), alongRay: closest.clone().sub(rayOrigin).dot(ray.direction) }
+        }).filter((terminal) => terminal.alongRay >= 0 && terminal.alongRay <= 8)
+          .sort((a, b) => a.distanceToRay - b.distanceToRay)
+        const best = candidates[0]
+        return best && best.distanceToRay <= 0.2 ? { terminal: best.terminal, point: best.point } : null
+      }
+      terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
+      return terminals[0].point.distanceTo(hitPoint) <= 0.28 ? terminals[0] : null
     }
     if (id === B.SWITCH) {
       const terminals = [
