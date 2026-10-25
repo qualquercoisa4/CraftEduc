@@ -27,7 +27,13 @@ export function estimateMotorBackEmfVolts(spec: MotorSpec, angularSpeedRadPerSec
   const nominalOmega = motorNoLoadAngularSpeed(spec)
   if (nominalOmega <= 1e-6 || !Number.isFinite(angularSpeedRadPerSec)) return 0
   const speedRatio = clamp(angularSpeedRadPerSec / nominalOmega, -MAX_MOTOR_MODEL_RATIO, MAX_MOTOR_MODEL_RATIO)
-  return speedRatio * spec.nominalVoltageV
+  // Calibrate back-EMF so the motor still draws its catalogued no-load current
+  // at the catalogued no-load RPM. Using the full nominal voltage as back-EMF
+  // would imply zero current at that speed and contradict the torque model.
+  const windingResistance = spec.nominalVoltageV / Math.max(0.01, spec.stallCurrentA ?? 1.5)
+  const noLoadCurrentA = clamp(spec.noLoadCurrentA ?? 0, 0, (spec.stallCurrentA ?? 1.5) * 0.9)
+  const backEmfAtNoLoadSpeed = Math.max(0, spec.nominalVoltageV - noLoadCurrentA * windingResistance)
+  return speedRatio * backEmfAtNoLoadSpeed
 }
 
 /**
