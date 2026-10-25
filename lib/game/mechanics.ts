@@ -41,14 +41,44 @@ const HALF_PI = Math.PI / 2
 // Approximate electromechanical limits in SI units.
 const MOTOR_VELOCITY_DAMPING = 2.0
 const MOTOR_COAST_TORQUE_NM = 0.001
-// The voxel world uses metre-sized blocks, while the referenced toy motors are
-// specified for centimetre-scale mechanisms. Scale drive torque for this game
-// world so realistic motor rankings remain meaningful without making multi-voxel
-// educational robots effectively immovable.
-const MOTOR_SIMULATION_TORQUE_SCALE = 24
+// The voxel world uses metre-sized blocks while toy gearmotors are designed
+// for centimetre-scale robot chassis. Apply a game-world scale to catalogued
+// motors, while keeping legacy blocks at the torque behavior they had before
+// catalogued motor variants existed so already-built robots remain usable.
+const MOTOR_SIMULATION_TORQUE_SCALE = 120
+const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
 const SERVO_MAX_TORQUE_NM = 0.176
+
+function motorDriveCommand(
+  variant: string | undefined,
+  power: number,
+  relativeOmega: number,
+): { targetOmega: number; maxTorqueNm: number } {
+  if (power <= 0) return { targetOmega: 0, maxTorqueNm: 0 }
+
+  // Pre-catalogue motor blocks saved in existing worlds have no motorType.
+  // Preserve their former drive strength instead of silently downgrading them
+  // to the tiny un-geared FA-130 when users continue an existing robot.
+  if (!variant) {
+    return {
+      targetOmega: power * 1.05,
+      maxTorqueNm: LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM * power,
+    }
+  }
+
+  const spec = getMotorSpec(variant)
+  const voltageRatio = Math.max(0, Math.min(1, power * 1.5 / spec.nominalVoltageV))
+  const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
+  const torqueRatio = targetOmega > 1e-5
+    ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
+    : 0
+  return {
+    targetOmega,
+    maxTorqueNm: spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE,
+  }
+}
 // Avoid the exact PI boundary in revolute-joint limits.
 const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
@@ -3112,12 +3142,6 @@ export class Mechanics {
         c.joint.configureMotorPosition(commandedTarget, 18, 3)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
-        const spec = getMotorSpec(c.motorState?.motorType)
-        // Battery cells are modeled as 1.5 V each. Speed and available torque
-        // scale with delivered voltage; the motor's torque falls as its shaft
-        // approaches no-load speed, using a linear DC motor torque-speed curve.
-        const voltageRatio = Math.max(0, Math.min(1, power * 1.5 / spec.nominalVoltageV))
-        const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
         const rotorOmega = c.rotorBody.angvel()
         const chassisOmega = c.chassisBody.angvel()
         const relativeOmega = Math.hypot(
@@ -3125,13 +3149,11 @@ export class Mechanics {
           rotorOmega.y - chassisOmega.y,
           rotorOmega.z - chassisOmega.z,
         )
-        const torqueRatio = targetOmega > 1e-5
-          ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
-          : 0
-        c.speed = targetOmega * direction
+        const drive = motorDriveCommand(c.motorState?.motorType, power, relativeOmega)
+        c.speed = drive.targetOmega * direction
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE))
+        c.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
@@ -3163,21 +3185,16 @@ export class Mechanics {
         const extraMotor = this.models.get(extra.motorKey)
         if (extraPower > 0) {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-          const spec = getMotorSpec(extra.motorState?.motorType)
-          const voltageRatio = Math.max(0, Math.min(1, extraPower * 1.5 / spec.nominalVoltageV))
-          const targetOmega = spec.noLoadRpm * (Math.PI * 2 / 60) * voltageRatio
           const rotorOmega = extra.rotorBody.angvel()
           const relativeOmega = Math.hypot(
             rotorOmega.x - chassisAngularVelocity.x,
             rotorOmega.y - chassisAngularVelocity.y,
             rotorOmega.z - chassisAngularVelocity.z,
           )
-          const torqueRatio = targetOmega > 1e-5
-            ? Math.max(0, Math.min(1, 1 - relativeOmega / targetOmega))
-            : 0
-          extra.speed = targetOmega * extraDirection
+          const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, relativeOmega)
+          extra.speed = drive.targetOmega * extraDirection
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(Math.max(0.00001, spec.stallTorqueNm * voltageRatio * torqueRatio * MOTOR_SIMULATION_TORQUE_SCALE))
+          extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
