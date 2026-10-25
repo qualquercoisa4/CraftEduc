@@ -304,7 +304,7 @@ export class Engine {
     // Shaft faces point outwards; each motor is glued to the chassis on its
     // non-output face and has a wheel mounted directly to the output shaft.
     this.world.setBlock(baseX - 2, y + 1, baseZ, B.MOTOR, {
-      facing: 1, mountedWheel: true, motorType: 'tt_motor', glue: 1 << 0,
+      facing: 1, mountedWheel: true, motorType: 'tt48', glue: 1 << 0,
     })
     this.world.setBlock(baseX + 2, y + 1, baseZ, B.MOTOR, {
       facing: 0, mountedWheel: true, motorType: 'tt_motor', glue: 1 << 1,
@@ -317,6 +317,9 @@ export class Engine {
 
     // Arduino headers use local coordinates transformed by the board model.
     const arduinoKey = posKey(baseX, y + 2, baseZ)
+    try {
+      window.localStorage.setItem(`crafteduc:mars-hover-preset:${arduinoKey}`, '1')
+    } catch {}
     const boardTerminal = (id: string, lx: number, lz: number) =>
       new THREE.Vector3(baseX + 1 + lx, y + 2 + 0.14 + 0.134, baseZ + 1 + lz)
     const d2 = boardTerminal('D2', -0.35 + 2 * (0.70 / 13), -0.27)
