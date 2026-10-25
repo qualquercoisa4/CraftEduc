@@ -4520,7 +4520,7 @@ export class Mechanics {
       if (id === B.BATTERY_BOX) return this.electricalBranchCurrents.get(`battery-pack:${key}`)
       return undefined
     }
-    const resistance = (key: string, id: number, componentState: BlockState) => {
+    const resistance = (key: string, id: number, componentState: BlockState): number => {
       if (id === B.RESISTOR) return resistorActualResistanceOhms(
         componentState.resistorDigit1 ?? 1, componentState.resistorDigit2 ?? 0,
         componentState.resistorMultiplier ?? 1,
