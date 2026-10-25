@@ -309,7 +309,7 @@ export class Engine {
       facing: 1, mountedWheel: true, motorType: 'tt48', glue: 1 << 0,
     })
     this.world.setBlock(baseX + 2, y + 1, baseZ, B.MOTOR, {
-      facing: 0, mountedWheel: true, motorType: 'tt_motor', glue: 1 << 1,
+      facing: 0, mountedWheel: true, motorType: 'tt48', glue: 1 << 1,
     })
     // Aluminium top deck, a front bumper and a small rear battery bay.
     this.world.setBlock(baseX, y + 2, baseZ + 1, B.ALUMINUM)
