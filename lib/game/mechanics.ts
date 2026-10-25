@@ -984,6 +984,10 @@ export class Mechanics {
         entry.model.group.position.set(x + 1, y + 0.14, z + 1)
         entry.model.group.quaternion.identity()
         break
+      case 'resistor':
+        entry.model.group.position.set(x, y, z)
+        entry.model.group.quaternion.identity()
+        break
     }
   }
 
@@ -1194,7 +1198,7 @@ export class Mechanics {
         }).filter((terminal) => terminal.alongRay >= 0 && terminal.alongRay <= 8)
           .sort((a, b) => a.distanceToRay - b.distanceToRay)
         const best = candidates[0]
-        return best && best.distanceToRay <= 0.2 ? { terminal: best.terminal, point: best.point } : null
+        return best && best.distanceToRay <= 0.3 ? { terminal: best.terminal, point: best.point } : null
       }
       terminals.sort((a, b) => a.point.distanceToSquared(hitPoint) - b.point.distanceToSquared(hitPoint))
       return terminals[0].point.distanceTo(hitPoint) <= 0.28 ? terminals[0] : null
@@ -1474,6 +1478,7 @@ export class Mechanics {
       [B.GEAR, 0.04],
     ])
     const ledKeys: string[] = []
+    const ledForwardSpecs = new Map<string, { forwardVoltageVolts: number; dynamicResistanceOhms: number }>()
     const motorKeys: string[] = []
     const servoKeys: string[] = []
     const arduinoKeys: string[] = []
@@ -1516,10 +1521,12 @@ export class Mechanics {
             : color.includes('7cb342') || color.includes('43a047') ? 2.2
             : color.includes('fdd835') || color.includes('f2ca36') || color.includes('fb8c00') ? 2.05
             : 1.85
+          const dynamicResistanceOhms = 8
+          ledForwardSpecs.set(key, { forwardVoltageVolts, dynamicResistanceOhms })
           diodes.push({
             id: `led:${key}`,
             anode: node(key, 'anode'), cathode: node(key, 'cathode'),
-            forwardVoltageVolts, dynamicResistanceOhms: 8,
+            forwardVoltageVolts, dynamicResistanceOhms,
           })
         }
       } else if (block.id === B.MOTOR) {
@@ -1641,21 +1648,45 @@ export class Mechanics {
     for (const ledKey of ledKeys) {
       const block = electricalBlocks.get(ledKey)
       if (!block || block.state?.ledBurnedOut) continue
-      const current = solution.diodeCurrents.get(`led:${ledKey}`) ?? 0
+      const diodeId = `led:${ledKey}`
+      const spec = ledForwardSpecs.get(ledKey)
+      const anodeVoltage = solution.nodeVoltages.get(node(ledKey, 'anode')) ?? 0
+      const cathodeVoltage = solution.nodeVoltages.get(node(ledKey, 'cathode')) ?? 0
+      const solvedCurrent = solution.diodeCurrents.get(diodeId) ?? 0
+      // The piecewise-linear diode solver can occasionally finish an iteration
+      // with the diode state stale in a large circuit. Estimate forward current
+      // from the measured terminal voltage as a fail-safe; an open/unpowered LED
+      // still has no forward voltage and therefore cannot trip this check.
+      const voltageEstimatedCurrent = spec
+        ? Math.max(0, (anodeVoltage - cathodeVoltage - spec.forwardVoltageVolts) / spec.dynamicResistanceOhms)
+        : 0
+      const current = Math.max(solvedCurrent, voltageEstimatedCurrent)
       if (current <= 0.03) continue
-      // Excess forward current permanently opens the LED. Save and replicate
-      // the damage once; the next solve treats the diode as an open circuit.
+
+      // Excess forward current permanently opens the LED. Persist damage both
+      // for ordinary world blocks and LEDs currently held in a moving assembly.
       const [x, y, z] = parseKey(ledKey)
-      if (this.world.getBlock(x, y, z) !== B.LED) continue
-      const state = { ...(this.world.getState(x, y, z) ?? {}), ledBurnedOut: true }
-      this.world.states.set(ledKey, state)
-      this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
-      this.world.markBlockDirty(x, y, z)
+      const state = { ...block.state, ...(this.world.getState(x, y, z) ?? {}), ledBurnedOut: true }
+      const worldHasLed = this.world.getBlock(x, y, z) === B.LED
+      if (worldHasLed) {
+        this.world.states.set(ledKey, state)
+        this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
+        this.world.markBlockDirty(x, y, z)
+        if (this.networkAuthority) {
+          this.networkBlockPublisher?.(x, y, z, B.LED, state, this.networkBlockOwner?.(x, y, z))
+        }
+      } else {
+        const movingBlock = this.findMovingBlock(ledKey)
+        if (movingBlock?.id === B.LED) movingBlock.state = state
+        else {
+          const fallingBlock = this.fallingBodies.flatMap((body) => body.blocks)
+            .find((candidate) => candidate.originKey === ledKey && candidate.id === B.LED)
+          if (!fallingBlock) continue
+          fallingBlock.state = state
+        }
+      }
       block.state = state
       burnedNow.push(ledKey)
-      if (this.networkAuthority) {
-        this.networkBlockPublisher?.(x, y, z, B.LED, state, this.networkBlockOwner?.(x, y, z))
-      }
     }
     if (burnedNow.length) {
       const burned = new Set(burnedNow.map((key) => `led:${key}`))
@@ -1720,10 +1751,15 @@ export class Mechanics {
     const leds = new Set<string>()
     for (const key of ledKeys) {
       if (electricalBlocks.get(key)?.state?.ledBurnedOut) continue
-      const current = solution.diodeCurrents.get(`led:${key}`) ?? 0
-      const voltage = (solution.nodeVoltages.get(node(key, 'anode')) ?? 0)
-        - (solution.nodeVoltages.get(node(key, 'cathode')) ?? 0)
-      if (current > 0.001 && voltage >= 1.5) leds.add(key)
+      const spec = ledForwardSpecs.get(key)
+      const anode = solution.nodeVoltages.get(node(key, 'anode')) ?? 0
+      const cathode = solution.nodeVoltages.get(node(key, 'cathode')) ?? 0
+      const solvedCurrent = solution.diodeCurrents.get(`led:${key}`) ?? 0
+      const estimatedCurrent = spec
+        ? Math.max(0, (anode - cathode - spec.forwardVoltageVolts) / spec.dynamicResistanceOhms)
+        : 0
+      const current = Math.max(solvedCurrent, estimatedCurrent)
+      if (current > 0.001 && anode - cathode >= 1.5) leds.add(key)
     }
 
     const previousLeds = this.world.poweredLeds
@@ -4404,6 +4440,43 @@ export class Mechanics {
       }
     }
     return lines.join('\n')
+  }
+
+  electricalDebugText() {
+    const lines = [
+      `ELÉTRICA: fios=${this.wires.length} nós=${this.electricalNodeVoltages.size}`,
+    ]
+    let shown = 0
+    for (const [key, entry] of this.models) {
+      if (shown >= 18) {
+        lines.push('… diagnóstico limitado aos primeiros 18 componentes')
+        break
+      }
+      if (entry.type === 'box') {
+        const sourceId = `battery-pack:${key}`
+        const state = this.lookup(key).state
+        const current = this.electricalBranchCurrents.get(sourceId)
+        const connected = this.getTerminalConnections(key, '+').length + this.getTerminalConnections(key, '-').length
+        lines.push(`bateria ${key} células=${state?.batteries ?? 0}V=${((state?.batteries ?? 0) * 1.5).toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} terminaisLigados=${connected}`)
+        shown++
+      } else if (entry.type === 'resistor') {
+        const va = this.electricalNodeVoltages.get(`${key}|A`)
+        const vb = this.electricalNodeVoltages.get(`${key}|B`)
+        const current = this.electricalBranchCurrents.get(`resistor:${key}`)
+        const connected = this.getTerminalConnections(key, 'A').length + this.getTerminalConnections(key, 'B').length
+        lines.push(`resistor ${key} V=${va === undefined || vb === undefined ? '—' : Math.abs(va - vb).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} terminaisLigados=${connected}`)
+        shown++
+      } else if (entry.type === 'led') {
+        const va = this.electricalNodeVoltages.get(`${key}|anode`)
+        const vc = this.electricalNodeVoltages.get(`${key}|cathode`)
+        const current = this.electricalBranchCurrents.get(`led:${key}`)
+        const state = this.lookup(key).state
+        const connected = this.getTerminalConnections(key, 'anode').length + this.getTerminalConnections(key, 'cathode').length
+        lines.push(`LED ${key} V=${va === undefined || vc === undefined ? '—' : (va - vc).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} queimado=${Boolean(state?.ledBurnedOut)} terminaisLigados=${connected}`)
+        shown++
+      }
+    }
+    return lines.join('\\n')
   }
 
   isMotorDriving(key: string) {
