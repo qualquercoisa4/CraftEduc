@@ -47,6 +47,17 @@ export function estimateMotorBackEmfVolts(spec: MotorSpec, angularSpeedRadPerSec
   return speedRatio * backEmfAtNoLoadSpeed
 }
 
+/** Electromagnetic braking torque while the motor is generating current. */
+export function motorGeneratingTorqueNm(spec: MotorSpec, windingCurrentA: number) {
+  const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
+  const currentRatio = clamp(
+    Math.abs(Number.isFinite(windingCurrentA) ? windingCurrentA : 0) / stallCurrentA,
+    0,
+    MAX_MOTOR_MODEL_RATIO,
+  )
+  return Math.max(0, spec.stallTorqueNm) * currentRatio
+}
+
 /**
  * Converts measured terminal voltage and winding current into a motor command.
  * Voltage above the rating can raise no-load speed above the nominal value;
