@@ -104,12 +104,13 @@ const blockDefinitions = [
     message0: 'girar servo no pino %1 para %2 graus',
     args0: [
       { type: 'field_dropdown', name: 'PIN', options: pins },
-      { type: 'field_number', name: 'ANGLE', value: 90, min: 1, max: 180, precision: 1 },
+      { type: 'field_number', name: 'ANGLE', value: 90, min: 0, max: 180, precision: 1 },
+
     ],
     previousStatement: null,
     nextStatement: null,
     colour: 340,
-    tooltip: 'Move o servo ligado ao pino selecionado para um ângulo de 1° a 180°.',
+    tooltip: 'Move o servo ligado ao pino selecionado para um ângulo de 0° a 180°.',
   },
   {
     type: 'arduino_distance',
@@ -564,7 +565,7 @@ export function ArduinoProgramming() {
             setStatus(`Configure o pino ${pin} como servo antes de comandar o ângulo.`)
             break
           }
-          const angle = Math.max(1, Math.min(180, Math.round(finiteNumber(block.getFieldValue('ANGLE'), 90))))
+          const angle = Math.max(0, Math.min(180, Math.round(finiteNumber(block.getFieldValue('ANGLE'), 90))))
           const count = getEngine()?.mech.setArduinoServoAngle(key, pin, angle) ?? 0
           if (!count) setStatus(`Nenhum servo conectado ao pino ${pin} (o fio deve chegar ao terminal de sinal).`)
           else setStatus(`Servo no pino ${pin}: ${angle}°.`)
@@ -674,6 +675,15 @@ export function ArduinoProgramming() {
     }
   }, [key, ready])
 
+  const runProgramManually = () => {
+    if (!key) return
+    if (!(getEngine()?.mech.isArduinoPowered(key) ?? false)) {
+      setStatus('Arduino sem alimentação. Conecte a bateria ao pino 5V/GND ou use uma tensão adequada no VIN.')
+      return
+    }
+    void executeProgramRef.current?.()
+  }
+
   const close = () => {
     // The IDE is only a view; the board and its saved sketch remain active.
     gameStore.set({ screen: 'playing' })
@@ -705,6 +715,14 @@ export function ArduinoProgramming() {
       <footer className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-black/15 bg-[#e5eef3] px-3 py-2 sm:px-5">
         <p className="hidden text-xs text-[#4a5360] sm:block">Código salvo automaticamente. O Arduino executa ao receber energia.</p>
         <div className="ml-auto flex gap-2">
+          <button
+            type="button"
+            disabled={!ready || !key}
+            onClick={runProgramManually}
+            className="border-2 border-black/20 bg-[#4396D2] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 sm:text-sm"
+          >
+            Executar agora
+          </button>
           <button
             type="button"
             disabled={!ready}
