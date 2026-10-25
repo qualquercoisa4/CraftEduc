@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from './motor-model'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, motorTorqueFromCurrent } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -45,11 +45,10 @@ const HALF_PI = Math.PI / 2
 // Approximate electromechanical limits in SI units.
 const MOTOR_VELOCITY_DAMPING = 2.0
 const MOTOR_COAST_TORQUE_NM = 0.001
-// The voxel world uses metre-sized blocks while toy gearmotors are designed
-// for centimetre-scale robot chassis. Apply a game-world scale to catalogued
-// motors, while keeping legacy blocks at the torque behavior they had before
-// catalogued motor variants existed so already-built robots remain usable.
-const MOTOR_SIMULATION_TORQUE_SCALE = 120
+// Blocks are metre-scale in the game, but torque must still accelerate the
+// actual rigid-body inertia. A moderate scale avoids the old velocity-servo
+// behavior flinging large payloads toward a motor's no-load RPM.
+const MOTOR_SIMULATION_TORQUE_SCALE = 5
 const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
@@ -301,8 +300,8 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
-  /** Electromagnetic braking torque for motors acting as generators, in world-scaled N·m. */
-  motorBrakeTorqueNm = new Map<string, number>()
+  /** Signed shaft torque calculated from current (N·m before world-scale conversion). */
+  motorTorqueNm = new Map<string, number>()
   /** Last solved DC node voltages (volts) and named branch currents (amperes). */
   electricalNodeVoltages = new Map<string, number>()
   /** Floating-node reference domains. Never compare voltages across different domains. */
@@ -1822,18 +1821,14 @@ export class Mechanics {
     this.activeShortSources = currentShortSources
 
     this.motorPower.clear()
-    this.motorBrakeTorqueNm.clear()
+    this.motorTorqueNm.clear()
     this.motorDirection.clear()
     for (const key of motorKeys) {
       const voltage = (solution.nodeVoltages.get(node(key, 'A')) ?? 0)
         - (solution.nodeVoltages.get(node(key, 'B')) ?? 0)
       const windingCurrent = solution.resistorCurrents.get(`motor:${key}`) ?? 0
       const powerFlow = classifyMotorPowerFlow(voltage, windingCurrent)
-      // A spinning open-circuit motor can show back-EMF without receiving power.
-      // Do not let terminal voltage alone turn that generated voltage into a
-      // fictional drive command. Use P = V × I to distinguish motoring from
-      // generating, and apply electromagnetic braking in the latter case.
-      // Assemblies temporarily remove their motor voxel from World; use the
+      // Assemblies temporarily remove the motor voxel from World; use the
       // canonical electrical-block snapshot so variant-specific ratings survive.
       const motorState = electricalBlocks.get(key)?.state
       const spec = getMotorSpec(motorState?.motorType)
@@ -1841,17 +1836,26 @@ export class Mechanics {
       const voltageRatio = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
       const usableTerminalVoltage = Math.abs(voltage) >= Math.max(0.4, ratedVoltage * 0.08)
 
+      // Actual current and measured shaft speed determine torque. This avoids
+      // commanding the rigid body to jump to no-load RPM regardless of payload.
+      const mechanism = this.contraptions.get(key)
+      const extra = this.findExtraRotor(key)
+      const angularSpeed = mechanism
+        ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
+        : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
+        : 0
+      if (motorState?.motorType) {
+        this.motorTorqueNm.set(key, motorTorqueFromCurrent(spec, windingCurrent, angularSpeed))
+      }
+
       if (powerFlow === 'motoring' && usableTerminalVoltage) {
         this.motorPower.set(key, voltageRatio)
         this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
-      } else if (powerFlow === 'generating' && usableTerminalVoltage) {
-        const generatorTorqueNm = motorGeneratingTorqueNm(spec, windingCurrent)
-        this.motorPower.set(key, 0)
-        this.motorDirection.set(key, 1)
-        this.motorBrakeTorqueNm.set(key, generatorTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE)
       } else {
+        // Back-EMF alone is not supply power. Signed current-derived torque
+        // remains available below to brake a motor that is being back-driven.
         this.motorPower.set(key, 0)
-        this.motorDirection.set(key, 1)
+        this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
       }
     }
 
