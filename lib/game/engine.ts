@@ -1998,6 +1998,17 @@ export class Engine {
     this.handRoot.rotation.set(-sw2 * 0.6, sw2 * 0.25, 0)
   }
 
+  private processShortCircuitEvents() {
+    for (const key of this.mech.drainShortCircuitEvents()) {
+      const [x, y, z] = parseKey(key)
+      // Use the existing particle system for a visible burst and the zap sound
+      // for the electrical arc; one event is emitted per short-circuit episode.
+      this.particles.burst(x, y, z, tileFor(B.BATTERY_BOX, false), 10)
+      sfx.zap()
+      showToast('CURTO-CIRCUITO: corrente excessiva na fonte. Desconecte o circuito.')
+    }
+  }
+
   private frame = (now: number) => {
     this.raf = requestAnimationFrame(this.frame)
     const dt = Math.min(0.05, (now - this.last) / 1000)
@@ -2020,6 +2031,7 @@ export class Engine {
       this.outline.visible = false
       this.handRoot.visible = false
       this.mech.update(dt)
+      this.processShortCircuitEvents()
     } else {
       this.handRoot.visible = true
       if (!frozen) {
@@ -2043,6 +2055,7 @@ export class Engine {
         if (s.flying !== this.player.flying || s.sneaking !== this.player.sneaking)
           gameStore.set({ flying: this.player.flying, sneaking: this.player.sneaking })
         this.mech.update(dt)
+        this.processShortCircuitEvents()
         // Player-vs-machine contacts use the latest host snapshot on every client.
         // The client moves only its local player; it never advances the shared machine physics.
         if (playing) this.mech.resolvePlayerCollision(this.player, dt)
