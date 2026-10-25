@@ -1768,7 +1768,6 @@ export class Mechanics {
       // Normalize against the actual motor's rated voltage and clamp the
       // drive command. Moving/rebuilding an assembly must never produce >100%
       // power from a stale or transient node voltage.
-      const [mx, my, mz] = parseKey(key)
       const motorState = this.lookup(key).state
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
