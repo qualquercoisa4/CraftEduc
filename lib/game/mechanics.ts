@@ -3543,7 +3543,12 @@ export class Mechanics {
           rotorOmega.z - chassisOmega.z,
         )
         const drive = motorDriveCommand(c.motorState?.motorType, power, relativeOmega)
-        c.speed = drive.targetOmega * direction
+        const requestedSpeed = drive.targetOmega * direction
+        // Slew-limit the velocity target. A moved/re-keyed block can change
+        // the solved voltage in one tick; the real rotor cannot instantly jump
+        // to a new speed, so cap command acceleration to avoid violent impulses.
+        const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
+        c.speed += THREE.MathUtils.clamp(requestedSpeed - c.speed, -maxSpeedStep, maxSpeedStep)
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
         c.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
@@ -3585,7 +3590,9 @@ export class Mechanics {
             rotorOmega.z - chassisAngularVelocity.z,
           )
           const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, relativeOmega)
-          extra.speed = drive.targetOmega * extraDirection
+          const requestedSpeed = drive.targetOmega * extraDirection
+          const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
+          extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)
           extra.unpoweredTime = 0
           extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
