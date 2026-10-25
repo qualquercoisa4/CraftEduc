@@ -23,6 +23,10 @@ export interface Settings {
   fov: number
 }
 
+export type MultimeterMode = 'dc_voltage' | 'dc_current' | 'resistance' | 'continuity' | 'diode'
+
+export interface MeterProbe { key: string; terminal: string }
+
 export interface GameState {
   screen: Screen
   returnScreen: Screen
@@ -45,6 +49,9 @@ export interface GameState {
   arduinoProgramKey: string | null
   scannerReport: ScannerReport | null
   brushColor: string
+  multimeterMode: MultimeterMode
+  multimeterFirstProbe: MeterProbe | null
+  multimeterReading: string
 }
 
 type Listener = () => void
@@ -96,6 +103,9 @@ export const gameStore = createStore({
   arduinoProgramKey: null,
   scannerReport: null,
   brushColor: '#e53935',
+  multimeterMode: 'dc_voltage',
+  multimeterFirstProbe: null,
+  multimeterReading: 'Selecione o primeiro terminal.',
 })
 
 let toastId = 0
