@@ -2248,7 +2248,13 @@ export class Engine {
   }
 
   private updateChunks(px: number, pz: number) {
-    const R = gameStore.get().settings.renderDistance
+    const settings = gameStore.get().settings
+    // The test laboratory is a bounded 65x65 facility (chunk coordinates
+    // -2..2 on each axis). Loading the normal render radius creates hundreds
+    // of completely empty chunks around it, which can stall mobile browsers.
+    // Render the whole lab, but never generate terrain beyond its boundaries.
+    const isTestLab = this.worldConfig.type === 'test_lab'
+    const R = isTestLab ? 5 : settings.renderDistance
     const pcx = Math.floor(px / CHUNK_SIZE)
     const pcz = Math.floor(pz / CHUNK_SIZE)
     const far = R * CHUNK_SIZE
@@ -2259,17 +2265,24 @@ export class Engine {
     const pending: { cx: number; cz: number; d: number }[] = []
     for (let dx = -R; dx <= R; dx++)
       for (let dz = -R; dz <= R; dz++) {
+        const cx = pcx + dx
+        const cz = pcz + dz
+        if (isTestLab && (cx < -2 || cx > 2 || cz < -2 || cz > 2)) continue
         const d = dx * dx + dz * dz
         if (d > R * R) continue
-        const c = this.world.getChunk(pcx + dx, pcz + dz)
-        if (!c || c.dirty) pending.push({ cx: pcx + dx, cz: pcz + dz, d: c?.mesh ? -1 : d })
+        const c = this.world.getChunk(cx, cz)
+        if (!c || c.dirty) pending.push({ cx, cz, d: c?.mesh ? -1 : d })
       }
     pending.sort((a, b) => a.d - b.d)
+
+    // Check the mesh budget BEFORE creating a chunk. The prior ordering
+    // generated one extra chunk every frame even when the budget was exhausted.
     let budget = 1
     for (const p of pending) {
+      if (budget <= 0) break
       const c = this.world.ensureChunk(p.cx, p.cz)
-      if (budget-- <= 0) break
       this.world.buildChunkMesh(c)
+      budget -= 1
     }
 
     const limit = (R + 2) * (R + 2)
