@@ -293,10 +293,48 @@ export function ArduinoProgramming() {
           window.localStorage.removeItem(storageKey)
         }
         if (!loaded) {
-          const start = workspace.newBlock('arduino_when_start')
-          start.initSvg()
-          start.render()
-          start.moveBy(24, 24)
+          const presetKey = 'crafteduc:mars-hover-preset:' + key
+          const hasMarsHoverPreset = window.localStorage.getItem(presetKey) === '1'
+          if (hasMarsHoverPreset) {
+            const created: Array<any> = []
+            const makeBlock = (type: string, fields: Record<string, string> = {}) => {
+              const block = workspace.newBlock(type)
+              for (const [field, value] of Object.entries(fields)) block.setFieldValue(value, field)
+              created.push(block)
+              return block
+            }
+            const connectNext = (a: any, b: any) => a.nextConnection?.connect(b.previousConnection)
+            const start = makeBlock('arduino_when_start')
+            const forever = makeBlock('arduino_forever')
+            const branch = makeBlock('arduino_if_else')
+            const compare = makeBlock('logic_compare', { OP: 'LT' })
+            const distance = makeBlock('arduino_distance', { TRIG_PIN: 'D2', ECHO_PIN: 'D3' })
+            const threshold = makeBlock('math_number', { NUM: '20' })
+            const leftForward = makeBlock('arduino_digital_write', { PIN: 'D5', LEVEL: 'HIGH' })
+            const rightForward = makeBlock('arduino_digital_write', { PIN: 'D6', LEVEL: 'HIGH' })
+            const leftStop = makeBlock('arduino_digital_write', { PIN: 'D5', LEVEL: 'LOW' })
+            const rightStop = makeBlock('arduino_digital_write', { PIN: 'D6', LEVEL: 'LOW' })
+            connectNext(start, forever)
+            forever.getInput('DO')?.connection?.connect(branch.previousConnection)
+            branch.getInput('CONDITION')?.connection?.connect(compare.outputConnection)
+            compare.getInput('A')?.connection?.connect(distance.outputConnection)
+            compare.getInput('B')?.connection?.connect(threshold.outputConnection)
+            branch.getInput('DO')?.connection?.connect(leftForward.previousConnection)
+            connectNext(leftForward, rightForward)
+            branch.getInput('ELSE')?.connection?.connect(leftStop.previousConnection)
+            connectNext(leftStop, rightStop)
+            created.forEach((block, index) => {
+              block.initSvg()
+              block.render()
+              if (index === 0) block.moveBy(24, 24)
+            })
+            window.localStorage.removeItem(presetKey)
+          } else {
+            const start = workspace.newBlock('arduino_when_start')
+            start.initSvg()
+            start.render()
+            start.moveBy(24, 24)
+          }
           try {
             window.localStorage.setItem(storageKey, JSON.stringify(Blockly.serialization.workspaces.save(workspace)))
           } catch {
