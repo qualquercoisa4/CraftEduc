@@ -323,6 +323,51 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
   }
 }
 
+/**
+ * Applies a simple per-branch current limit to selected resistive outputs.
+ *
+ * This is useful for microcontroller GPIO: use a realistic low output impedance
+ * at normal loads, then increase the equivalent resistance only if the modeled
+ * current exceeds the recommended limit. It preserves ordinary LED logic levels
+ * while keeping direct motor loads from drawing unlimited current.
+ */
+export function limitResistorBranchCurrent(
+  input: DcCircuitInput,
+  initialSolution: DcCircuitSolution,
+  limitedBranchIds: ReadonlySet<string>,
+  maxCurrentAmps: number,
+): DcCircuitSolution {
+  const limit = Number.isFinite(maxCurrentAmps) ? Math.max(0.001, maxCurrentAmps) : 0.02
+  if (limitedBranchIds.size === 0) return initialSolution
+
+  const resistors = input.resistors.map((resistor) => ({ ...resistor }))
+  let solution = initialSolution
+
+  // Re-solve only when a selected branch actually exceeds the limit. A few
+  // passes settle the equivalent resistance as the rest of the network reacts.
+  for (let pass = 0; pass < 5; pass++) {
+    let changed = false
+    for (const resistor of resistors) {
+      if (!limitedBranchIds.has(resistor.id)) continue
+      const current = Math.abs(solution.resistorCurrents.get(resistor.id) ?? 0)
+      if (current <= limit * 1.001) continue
+
+      const va = solution.nodeVoltages.get(resistor.a) ?? 0
+      const vb = solution.nodeVoltages.get(resistor.b) ?? 0
+      const branchVoltage = Math.abs(va - vb - (resistor.offsetVoltageVolts ?? 0))
+      const requiredResistance = branchVoltage / limit
+      if (requiredResistance > resistor.resistanceOhms * 1.001) {
+        resistor.resistanceOhms = requiredResistance
+        changed = true
+      }
+    }
+    if (!changed) break
+    solution = solveDcCircuit({ ...input, resistors })
+  }
+
+  return solution
+}
+
 /** Stable per-component manufacturing deviation, constrained by the tolerance band. */
 export function resistorToleranceOffsetPercent(componentKey: string, tolerancePercent = 5) {
   let hash = 2166136261
