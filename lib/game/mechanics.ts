@@ -52,7 +52,9 @@ const MOTOR_SIMULATION_TORQUE_SCALE = 120
 const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
-const SERVO_MAX_TORQUE_NM = 0.176
+// SG90 rated torque is about 0.176 N·m. Voxel blocks are metre-scale game units,
+// so scale the actuator torque to the same virtual-world units as the DC motors.
+const SERVO_MAX_TORQUE_NM = 0.176 * MOTOR_SIMULATION_TORQUE_SCALE
 
 function motorDriveCommand(
   variant: string | undefined,
@@ -260,9 +262,12 @@ interface FallingBody {
 
 interface ExtraRotor {
   motorKey: string
+  actuatorId: number
+  parent: 'chassis' | 'rotor'
   motorPos: [number, number, number]
   motorOffset: [number, number, number]
   motorState?: BlockState
+  servoCommandAngle?: number
   axis: THREE.Vector3
   facing: number
   blocks: CBlock[]
@@ -746,6 +751,15 @@ export class Mechanics {
         return machine.motorState
       }
     }
+    for (const machine of this.contraptions.values()) {
+      const extraServo = (machine.extraRotors ?? []).find((rotor) => rotor.motorKey === key && rotor.actuatorId === B.SERVO)
+      if (extraServo) {
+        extraServo.motorState ??= { facing: extraServo.facing, servoOffAngle: 0, servoOnAngle: 90 }
+        extraServo.motorState.servoOffAngle ??= 0
+        extraServo.motorState.servoOnAngle ??= 90
+        return extraServo.motorState
+      }
+    }
     const moving = this.findMovingBlock(key)
     if (moving?.id === B.SERVO) {
       moving.state ??= { servoOffAngle: 0, servoOnAngle: 90 }
@@ -795,8 +809,10 @@ export class Mechanics {
     } else {
       // During articulated simulation, the servo is temporarily absent from the
       // voxel grid. Store changes directly on the active assembly/block state.
+      const extra = this.findExtraRotor(key)
       const machine = this.contraptions.get(key)
-      if (machine?.actuatorId === B.SERVO) machine.motorState = { ...state }
+      if (extra?.rotor.actuatorId === B.SERVO) extra.rotor.motorState = { ...state }
+      else if (machine?.actuatorId === B.SERVO) machine.motorState = { ...state }
       else {
         const moving = this.findMovingBlock(key)
         if (moving?.id === B.SERVO) moving.state = { ...state }
@@ -1893,19 +1909,31 @@ export class Mechanics {
     // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
     const visited = new Set<string>(wheelOnlyRotor ? [] : [seedKey])
+    const nestedServoKeys = new Set<string>()
     const queue: [number, number, number][] = wheelOnlyRotor ? [] : [[sx, sy, sz]]
     while (queue.length) {
       const [x, y, z] = queue.shift()!
       if (y < GROUND_LEVEL || visited.size > MAX_CONTRAPTION) return 'stalled'
+      // A secondary servo belongs to this rigid arm as a housing, but its
+      // output payload is split into a child rotor below.
+      const currentId = this.world.getBlock(x, y, z)
+      if (currentId === B.SERVO || currentId === B.MOTOR) continue
       for (let face = 0; face < 6; face++) {
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
-        // Procedural floor is immutable terrain even when it has a generated
-        // glue mask. It must never be included in a robot's rigid body.
         if (ny < GROUND_LEVEL) continue
         const key = posKey(nx, ny, nz)
-        if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR || this.world.getBlock(nx, ny, nz) === B.SERVO) continue
-        if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
+        const neighborId = this.world.getBlock(nx, ny, nz)
+        if (visited.has(key) || key === motorKey || neighborId === B.MOTOR) continue
+        if (neighborId === B.SERVO) {
+          if (this.isGlued(x, y, z, face)) {
+            visited.add(key)
+            nestedServoKeys.add(key)
+            queue.push([nx, ny, nz])
+          }
+          continue
+        }
+        if (neighborId === B.AIR || !this.isGlued(x, y, z, face)) continue
         visited.add(key)
         queue.push([nx, ny, nz])
       }
@@ -1952,6 +1980,8 @@ export class Mechanics {
     // into its own Rapier rotor. The chassis remains a single shared rigid body.
     const extraRotorSpecs: {
       motorKey: string
+      actuatorId: number
+      parent: 'chassis' | 'rotor'
       motorPos: [number, number, number]
       motorOffset: [number, number, number]
       motorState?: BlockState
@@ -1962,19 +1992,30 @@ export class Mechanics {
       wheelOnly: boolean
     }[] = []
     const extraRotorKeys = new Set<string>()
-    for (const candidateKey of [...chassisVisited]) {
+    const extraCandidates: { key: string; parent: 'chassis' | 'rotor' }[] = [
+      ...[...chassisVisited].map((key) => ({ key, parent: 'chassis' as const })),
+      ...[...nestedServoKeys].map((key) => ({ key, parent: 'rotor' as const })),
+    ]
+    for (const candidate of extraCandidates) {
+      const candidateKey = candidate.key
+      const parent = candidate.parent
       const [rx, ry, rz] = parseKey(candidateKey)
-      if (this.world.getBlock(rx, ry, rz) !== B.MOTOR) continue
+      if (ry < GROUND_LEVEL) continue
+      const actuatorId = this.world.getBlock(rx, ry, rz)
+      if (actuatorId !== B.MOTOR && actuatorId !== B.SERVO) continue
       const motorState = this.world.getState(rx, ry, rz)
       const extraFacing = (((motorState?.facing ?? 2) % 6) + 6) % 6
       const extraDir = DIRS[extraFacing]
       const ex = rx + extraDir[0], ey = ry + extraDir[1], ez = rz + extraDir[2]
+      if (ey < GROUND_LEVEL) continue
       const seed = posKey(ex, ey, ez)
-      const wheelOnly = this.world.getBlock(ex, ey, ez) === B.AIR && Boolean(motorState?.mountedWheel)
-      if ((this.world.getBlock(ex, ey, ez) === B.AIR && !wheelOnly)
-        || this.world.getBlock(ex, ey, ez) === B.MOTOR || this.world.getBlock(ex, ey, ez) === B.SERVO
-        || (!wheelOnly && !this.isGlued(rx, ry, rz, extraFacing)) || visited.has(seed)
-        || chassisVisited.has(seed) || extraRotorKeys.has(seed)) continue
+      const outputBlock = this.world.getBlock(ex, ey, ez)
+      const wheelOnly = actuatorId === B.MOTOR && outputBlock === B.AIR && Boolean(motorState?.mountedWheel)
+      const seedAlreadyInParent = parent === 'rotor' ? visited.has(seed) : chassisVisited.has(seed)
+      if ((outputBlock === B.AIR && !wheelOnly)
+        || outputBlock === B.MOTOR || outputBlock === B.SERVO
+        || (!wheelOnly && !this.isGlued(rx, ry, rz, extraFacing)) || seedAlreadyInParent
+        || extraRotorKeys.has(seed)) continue
 
       // A motor-mounted wheel must keep its own angular body even without
       // a glued voxel attached to the shaft.
@@ -1987,6 +2028,7 @@ export class Mechanics {
         for (let face = 0; face < 6; face++) {
           const n = DIRS[face]
           const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+          if (ny < GROUND_LEVEL) continue
           const key = posKey(nx, ny, nz)
           const id = this.world.getBlock(nx, ny, nz)
           if (id === B.AIR || id === B.MOTOR || id === B.SERVO || key === motorKey || visited.has(key)
@@ -2014,6 +2056,8 @@ export class Mechanics {
       }
       extraRotorSpecs.push({
         motorKey: candidateKey,
+        actuatorId,
+        parent,
         motorPos: [rx, ry, rz],
         motorOffset: [rx - mx, ry - my, rz - mz],
         motorState: motorState ? { ...motorState } : undefined,
@@ -2245,8 +2289,9 @@ export class Mechanics {
       const extraChildAnchor = visual.wheelOnly
         ? new THREE.Vector3()
         : visual.axis.clone().multiplyScalar(0.36)
+      const extraParentBody = visual.parent === 'rotor' ? rotorBody : chassisBody
       const extraJoint = this.rigidPhysics.createRevoluteJoint(
-        chassisBody,
+        extraParentBody,
         extraBody,
         visual.axis,
         extraParentAnchor,
@@ -2254,7 +2299,8 @@ export class Mechanics {
       )
       if (extraJoint) {
         extraJoint.configureMotorModel(RAPIER.MotorModel.ForceBased)
-        extraJoint.setMotorMaxForce(MOTOR_COAST_TORQUE_NM)
+        extraJoint.setMotorMaxForce(visual.actuatorId === B.SERVO ? SERVO_MAX_TORQUE_NM : MOTOR_COAST_TORQUE_NM)
+        if (visual.actuatorId === B.SERVO) extraJoint.setLimits(0, SERVO_MAX_ANGLE_RAD)
       }
       if (!extraJoint) {
         this.rigidPhysics.removeRigidBody(extraBody)
@@ -2269,6 +2315,8 @@ export class Mechanics {
       }
       extraRotors.push({
         motorKey: visual.motorKey,
+        actuatorId: visual.actuatorId,
+        parent: visual.parent,
         motorPos: visual.motorPos,
         motorOffset: visual.motorOffset,
         motorState: visual.motorState,
@@ -3483,6 +3531,11 @@ export class Mechanics {
         continue
       }
       if (e.type === 'servo') {
+        const extraServo = this.findExtraRotor(key)?.rotor
+        if (extraServo?.actuatorId === B.SERVO) {
+          e.model.shaft.rotation.z = extraServo.angle
+          continue
+        }
         if (!this.contraptions.has(key)) {
           const state = this.getServoState(key)
           const programmed = this.programmedServoAngles.get(key)?.degrees
@@ -3584,7 +3637,9 @@ export class Mechanics {
         const angular = c.rotorBody.angvel()
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
-        const otherMotorPowered = (c.extraRotors ?? []).some((extra) => (this.motorPower.get(extra.motorKey) ?? 0) > 0)
+        const otherMotorPowered = (c.extraRotors ?? []).some((extra) =>
+          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0,
+        )
         if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered && c.disassemblyRetryCooldown <= 0) {
           // disassemble() removes the rigid bodies from Rapier. Immediately skip
           // the rest of this contraption's update on success; touching its body
@@ -3597,12 +3652,34 @@ export class Mechanics {
         }
       }
 
-      // Every secondary motor drives its own rotor against the same chassis.
-      const chassisRotation = c.chassisBody.rotation()
-      const chassisQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
+      // Each secondary actuator drives its own rotor relative to its parent body.
       for (const extra of c.extraRotors ?? []) {
-        const extraPower = this.motorPower.get(extra.motorKey) ?? 0
         const extraMotor = this.models.get(extra.motorKey)
+        if (extra.actuatorId === B.SERVO) {
+          const programmed = this.programmedServoAngles.get(extra.motorKey)?.degrees
+          const targetDegrees = programmed ?? (this.servoPowered.has(extra.motorKey)
+            ? extra.motorState?.servoOnAngle ?? 90
+            : extra.motorState?.servoOffAngle ?? 0)
+          const target = Math.min(SERVO_MAX_ANGLE_RAD, Math.max(0, Math.min(180, targetDegrees)) * Math.PI / 180)
+          const currentAngle = THREE.MathUtils.clamp(extra.angle, 0, SERVO_MAX_ANGLE_RAD)
+          const previousCommand = THREE.MathUtils.clamp(extra.servoCommandAngle ?? currentAngle, 0, SERVO_MAX_ANGLE_RAD)
+          const maxStep = SERVO_TARGET_SPEED_RAD * Math.max(0, Math.min(dt, 1 / 30))
+          const steppedTarget = previousCommand + THREE.MathUtils.clamp(target - previousCommand, -maxStep, maxStep)
+          const commandedTarget = THREE.MathUtils.clamp(
+            steppedTarget,
+            Math.max(0, currentAngle - SERVO_MAX_TRACK_ERROR_RAD),
+            Math.min(SERVO_MAX_ANGLE_RAD, currentAngle + SERVO_MAX_TRACK_ERROR_RAD),
+          )
+          extra.servoCommandAngle = commandedTarget
+          extra.speed = Math.max(-3.2, Math.min(3.2, (target - currentAngle) * 4.2))
+          extra.unpoweredTime = 0
+          extra.joint.setMotorMaxForce(SERVO_MAX_TORQUE_NM)
+          extra.joint.configureMotorPosition(commandedTarget, 18, 3)
+          if (extraMotor?.type === 'servo') extraMotor.status = Math.abs(target - currentAngle) > 0.025 ? 'driving' : 'idle'
+          continue
+        }
+
+        const extraPower = this.motorPower.get(extra.motorKey) ?? 0
         if (extraPower > 0) {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
           const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
@@ -4108,13 +4185,21 @@ export class Mechanics {
       if (motor?.type === 'motor' || motor?.type === 'servo') motor.model.shaft.rotation.z = c.angle
       for (const extra of c.extraRotors ?? []) {
         syncGroup(extra.group, extra.rotorBody)
+        const parentBody = extra.parent === 'rotor' ? c.rotorBody : c.chassisBody
+        const parentRotation = parentBody.rotation()
+        const parentQ = new THREE.Quaternion(parentRotation.x, parentRotation.y, parentRotation.z, parentRotation.w)
         const rr = extra.rotorBody.rotation()
-        const relative = chassisQ.clone().invert().multiply(new THREE.Quaternion(rr.x, rr.y, rr.z, rr.w))
+        const relative = parentQ.clone().invert().multiply(new THREE.Quaternion(rr.x, rr.y, rr.z, rr.w))
         const projectedExtra = relative.x * extra.axis.x + relative.y * extra.axis.y + relative.z * extra.axis.z
-        extra.angle = 2 * Math.atan2(projectedExtra, relative.w)
-        if (extra.angle < 0) extra.angle += Math.PI * 2
+        const signedExtraAngle = 2 * Math.atan2(projectedExtra, relative.w)
+        if (extra.actuatorId === B.SERVO) {
+          extra.angle = THREE.MathUtils.clamp(signedExtraAngle, 0, SERVO_MAX_ANGLE_RAD)
+        } else {
+          extra.angle = signedExtraAngle
+          if (extra.angle < 0) extra.angle += Math.PI * 2
+        }
         const extraMotor = this.models.get(extra.motorKey)
-        if (extraMotor?.type === 'motor') extraMotor.model.shaft.rotation.z = extra.angle
+        if (extraMotor?.type === 'motor' || extraMotor?.type === 'servo') extraMotor.model.shaft.rotation.z = extra.angle
         for (const end of extra.wireEnds) {
           const point = extra.group.localToWorld(end.local.clone())
           if (end.end === 'a') end.wire.pa.copy(point)
