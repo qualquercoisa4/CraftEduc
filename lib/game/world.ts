@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { B, CHUNK_SIZE, GROUND_LEVEL, WORLD_HEIGHT, isOpaque, posKey } from './constants'
 import { buffersToGeometry, emitCube, newBuffers } from './mesher'
-import { getTerrainBlock, getTerrainColor, type WorldType } from './world-generation'
+import { getTerrainBlock, getTerrainColor, getTerrainGlueMask, type WorldType } from './world-generation'
 import type { MotorVariantId } from './motor-specs'
 
 export interface BlockState {
@@ -150,6 +150,24 @@ export class World {
         this.type === 'flat' ? undefined : (x, y, z) => this.terrainBlockAt(x, y, z),
       )
       this.chunks.set(k, c)
+      // Generated Mars structures need face-glue metadata so roofs and walls
+      // stay attached as one rigid assembly when physics evaluates the colony.
+      if (this.type === 'mars_colony') {
+        const bx = cx * CS
+        const bz = cz * CS
+        for (let y = 0; y < WORLD_HEIGHT; y++) {
+          for (let z = 0; z < CS; z++) {
+            for (let x = 0; x < CS; x++) {
+              const id = c.data[idx(x, y, z)]
+              if (id === B.AIR || id === B.COLOR_BLOCK) continue
+              const wx = bx + x
+              const wz = bz + z
+              const glue = getTerrainGlueMask(this.type, this.seed, wx, y, wz)
+              if (glue) this.states.set(posKey(wx, y, wz), { glue })
+            }
+          }
+        }
+      }
     }
     return c
   }
