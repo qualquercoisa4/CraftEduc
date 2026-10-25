@@ -1825,7 +1825,10 @@ export class Mechanics {
       const ground = solution.nodeVoltages.get(node(key, 'GND')) ?? 0
       const vin = (solution.nodeVoltages.get(node(key, 'VIN')) ?? 0) - ground
       const five = (solution.nodeVoltages.get(node(key, '5V')) ?? 0) - ground
-      if ((vin >= 6.5 && vin <= 12) || (five >= 4.4 && five <= 5.5)) nextPoweredArduinoBoards.add(key)
+      // A three-cell battery box has 4.5 V open-circuit and the servo load plus wire
+      // resistance can pull the 5 V rail below 4.4 V. The simulated UNO must keep
+      // running through that realistic sag instead of repeatedly stopping its sketch.
+      if ((vin >= 6.5 && vin <= 12) || (five >= 4.0 && five <= 5.5)) nextPoweredArduinoBoards.add(key)
     }
     this.poweredArduinoBoards = nextPoweredArduinoBoards
 
