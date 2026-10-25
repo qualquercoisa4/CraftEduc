@@ -3681,26 +3681,32 @@ export class Mechanics {
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
         const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
-        const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
-        if (this.turboMotors) { drive.maxTorqueNm *= 1.8; drive.targetOmega *= 1.35 }
-        const requestedSpeed = drive.targetOmega * direction
-        // Slew-limit the velocity target. A moved/re-keyed block can change
-        // the solved voltage in one tick; the real rotor cannot instantly jump
-        // to a new speed, so cap command acceleration to avoid violent impulses.
+        const legacyDrive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
+        const requestedSpeed = legacyDrive.targetOmega * direction
+        // Drive with bounded electromagnetic torque, not a target-speed servo.
+        // A heavier glued load therefore accelerates more slowly and can stall.
+        const torqueNm = this.motorTorqueNm.get(c.motorKey)
+          ?? (legacyDrive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
+        const torqueWorld = Math.max(0.00001, Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE)
+        const signedTorque = Math.sign(torqueNm) || direction
         const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
         c.speed += THREE.MathUtils.clamp(requestedSpeed - c.speed, -maxSpeedStep, maxSpeedStep)
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
+        c.joint.setMotorMaxForce(torqueWorld)
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
+        // A signed current reversal is braking/reversing torque, not extra drive.
+        if (signedTorque !== direction) {
+          c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
+        }
         if (motor?.type === 'motor') motor.status = 'driving'
-      } else if ((this.motorBrakeTorqueNm.get(c.motorKey) ?? 0) > 0) {
-        // When shaft motion generates electrical power into a connected load,
-        // oppose the measured rotation rather than commanding the motor to spin.
-        const brakeTorque = this.motorBrakeTorqueNm.get(c.motorKey) ?? 0
+      } else if (Math.abs(this.motorTorqueNm.get(c.motorKey) ?? 0) > 0.000001) {
+        // Current induced by back-EMF generates opposing torque. Do not let a
+        // motor that is being back-driven become an unpowered free-spinning rotor.
+        const torqueNm = this.motorTorqueNm.get(c.motorKey) ?? 0
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(Math.max(0.00001, brakeTorque))
+        c.joint.setMotorMaxForce(Math.max(0.00001, Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE))
         c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
