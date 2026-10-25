@@ -1557,9 +1557,33 @@ export class Mechanics {
       if (conductivity > 0 && faceResistance !== undefined) {
         const faces = DIRS.map((_, i) => node(key, `face:${i}`))
         faces.forEach((face) => nodes.add(face))
+        // All six surfaces share the material's bulk resistance. Using a
+        // star equivalent keeps the voxel internally conductive without
+        // adding a complete 6×6 mesh of redundant branches.
         for (let i = 1; i < faces.length; i++) {
           addResistor(`material:${key}:${i}`, faces[0], faces[i], faceResistance)
         }
+      }
+    }
+
+    // Touching conductive voxels conduct through their shared interface.
+    // Add each interface once; this preserves separate electrical terminals
+    // on components while allowing conductive chassis blocks to carry current.
+    for (const [key, block] of electricalBlocks) {
+      if ((BLOCK_CONDUCTIVITY[block.id] ?? 0) <= 0 || !materialResistance.has(block.id)) continue
+      const [x, y, z] = parseKey(key)
+      for (const face of [0, 2, 4]) {
+        const [dx, dy, dz] = DIRS[face]
+        const neighborKey = posKey(x + dx, y + dy, z + dz)
+        const neighbor = electricalBlocks.get(neighborKey)
+        if (!neighbor || (BLOCK_CONDUCTIVITY[neighbor.id] ?? 0) <= 0 || !materialResistance.has(neighbor.id)) continue
+        const a = node(key, `face:${face}`)
+        const b = node(neighborKey, `face:${OPPOSITE[face]}`)
+        addResistor(
+          `contact:${key}:${face}:${neighborKey}`,
+          a, b,
+          (materialResistance.get(block.id)! + materialResistance.get(neighbor.id)!) / 2,
+        )
       }
     }
 
