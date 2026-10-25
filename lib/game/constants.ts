@@ -22,6 +22,7 @@ export const B = {
   COLOR_BLOCK: 13,
   SERVO: 14,
   ARDUINO_UNO: 15,
+  RESISTOR: 16,
 } as const
 
 export const ARDUINO_UNO_TERMINAL_IDS = [
@@ -90,11 +91,11 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO && id !== B.ARDUINO_UNO
+  return id !== B.AIR && id !== B.RESISTOR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO && id !== B.ARDUINO_UNO
 }
 
 export function isModelBlock(id: number) {
-  return id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO
+  return id === B.RESISTOR || id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
@@ -103,12 +104,14 @@ const BOX_BOUNDS: Bounds = [0.04, 0, 0.08, 0.96, 0.36, 0.92]
 const SWITCH_BOUNDS: Bounds = [0.01, 0.04, 0.03, 0.99, 0.38, 0.97]
 const SENSOR_BOUNDS: Bounds = [0.04, 0.08, 0.04, 0.96, 0.92, 0.96]
 const ARDUINO_UNO_BOUNDS: Bounds = [0.08, 0.1, 0.08, 1.92, 0.3, 1.92]
+const RESISTOR_BOUNDS: Bounds = [0.08, 0.34, 0.34, 0.92, 0.66, 0.66]
 
 export function blockBounds(id: number): Bounds {
   if (id === B.BATTERY_BOX) return BOX_BOUNDS
   if (id === B.SWITCH) return SWITCH_BOUNDS
   if (id === B.PROXIMITY_SENSOR) return SENSOR_BOUNDS
   if (id === B.ARDUINO_UNO) return ARDUINO_UNO_BOUNDS
+  if (id === B.RESISTOR) return RESISTOR_BOUNDS
   return FULL
 }
 
@@ -134,6 +137,7 @@ export type ItemId =
   | 'proximity_sensor'
   | 'servo'
   | 'arduino_uno'
+  | 'resistor'
   | 'programming_tablet'
   | 'scanner_dws'
   | 'paintbrush'
@@ -211,6 +215,13 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     description: 'Microservo posicional com engrenagens plásticas. Conecte GND, alimentação e sinal PWM; não é um motor de rotação contínua.', physicalInfo: 'TowerPro SG90 • 4,8 V • 9 g • Curso aproximado: 0°–180° • Torque de bloqueio: 0,176 N·m (1,8 kg·cm)',
     category: 'motors',
     block: B.SERVO,
+  },
+  resistor: {
+    name: 'Resistor de 4 faixas',
+    description: 'Resistor axial de dois terminais. Clique com o botão direito ou toque para configurar os dois dígitos, multiplicador e tolerância; a cor das faixas segue o código de cores.',
+    physicalInfo: 'Resistência configurável em ohms • Código de cores de 4 faixas • Tolerância nominal conforme a faixa final',
+    category: 'components',
+    block: B.RESISTOR,
   },
   arduino_uno: {
     name: 'Arduino UNO',
@@ -324,6 +335,7 @@ export const ITEM_ORDER: ItemId[] = [
   'proximity_sensor',
   'servo',
   'arduino_uno',
+  'resistor',
   'motor',
   'motor_tt',
   'motor_n20',
@@ -355,6 +367,7 @@ export const BLOCK_TO_ITEM: Record<number, ItemId> = {
   [B.PROXIMITY_SENSOR]: 'proximity_sensor',
   [B.SERVO]: 'servo',
   [B.ARDUINO_UNO]: 'arduino_uno',
+  [B.RESISTOR]: 'resistor',
   [B.COLOR_BLOCK]: 'colored_block_red',
   [B.MOTOR]: 'motor',
   [B.BATTERY_BOX]: 'battery_box',
