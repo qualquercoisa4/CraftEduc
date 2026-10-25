@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from './motor-model'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -301,6 +301,8 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
+  /** Electromagnetic braking torque for motors acting as generators, in world-scaled N·m. */
+  motorBrakeTorqueNm = new Map<string, number>()
   /** Last solved DC node voltages (volts) and named branch currents (amperes). */
   electricalNodeVoltages = new Map<string, number>()
   /** Floating-node reference domains. Never compare voltages across different domains. */
@@ -1811,20 +1813,31 @@ export class Mechanics {
     this.activeShortSources = currentShortSources
 
     this.motorPower.clear()
+    this.motorBrakeTorqueNm.clear()
     this.motorDirection.clear()
     for (const key of motorKeys) {
       const voltage = (solution.nodeVoltages.get(node(key, 'A')) ?? 0)
         - (solution.nodeVoltages.get(node(key, 'B')) ?? 0)
-      // Derive speed command from measured terminal voltage relative to the
-      // motor's rating. Permit bounded over-voltage operation, but avoid unbounded
-      // speeds when an assembly is moved or the circuit briefly becomes unstable.
+      const windingCurrent = solution.resistorCurrents.get(`motor:${key}`) ?? 0
+      const powerFlow = classifyMotorPowerFlow(voltage, windingCurrent)
+      // A spinning open-circuit motor can show back-EMF without receiving power.
+      // Do not let terminal voltage alone turn that generated voltage into a
+      // fictional drive command. Use P = V × I to distinguish motoring from
+      // generating, and apply electromagnetic braking in the latter case.
       const motorState = this.lookup(key).state
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
-      const normalized = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
-      if (Math.abs(voltage) >= Math.max(0.4, ratedVoltage * 0.08)) {
-        this.motorPower.set(key, normalized)
+      const voltageRatio = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
+      const usableTerminalVoltage = Math.abs(voltage) >= Math.max(0.4, ratedVoltage * 0.08)
+
+      if (powerFlow === 'motoring' && usableTerminalVoltage) {
+        this.motorPower.set(key, voltageRatio)
         this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
+      } else if (powerFlow === 'generating' && usableTerminalVoltage) {
+        const generatorDrive = motorDriveCommandForVoltageRatio(spec, voltageRatio, windingCurrent)
+        this.motorPower.set(key, 0)
+        this.motorDirection.set(key, 1)
+        this.motorBrakeTorqueNm.set(key, generatorDrive.maxTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE)
       } else {
         this.motorPower.set(key, 0)
         this.motorDirection.set(key, 1)
@@ -3666,6 +3679,15 @@ export class Mechanics {
         c.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
+      } else if ((this.motorBrakeTorqueNm.get(c.motorKey) ?? 0) > 0) {
+        // When shaft motion generates electrical power into a connected load,
+        // oppose the measured rotation rather than commanding the motor to spin.
+        const brakeTorque = this.motorBrakeTorqueNm.get(c.motorKey) ?? 0
+        c.unpoweredTime = 0
+        c.disassemblyRetryCooldown = 0
+        c.joint.setMotorMaxForce(Math.max(0.00001, brakeTorque))
+        c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
+        if (motor?.type === 'motor') motor.status = 'driving'
       } else {
         c.unpoweredTime += dt
         c.joint.setMotorMaxForce(MOTOR_COAST_TORQUE_NM)
@@ -3674,7 +3696,7 @@ export class Mechanics {
         if (motor?.type === 'motor') motor.status = 'idle'
         const spin = Math.hypot(angular.x, angular.y, angular.z)
         const otherMotorPowered = (c.extraRotors ?? []).some((extra) =>
-          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0,
+          extra.actuatorId === B.SERVO || (this.motorPower.get(extra.motorKey) ?? 0) > 0 || (this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0) > 0,
         )
         if (c.unpoweredTime >= 0.55 && spin < 0.65 && !otherMotorPowered && c.disassemblyRetryCooldown <= 0) {
           // disassemble() removes the rigid bodies from Rapier. Immediately skip
@@ -3727,6 +3749,12 @@ export class Mechanics {
           extra.unpoweredTime = 0
           extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
+          if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
+        } else if ((this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0) > 0) {
+          const brakeTorque = this.motorBrakeTorqueNm.get(extra.motorKey) ?? 0
+          extra.unpoweredTime = 0
+          extra.joint.setMotorMaxForce(Math.max(0.00001, brakeTorque))
+          extra.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
           extra.unpoweredTime += dt
