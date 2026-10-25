@@ -159,7 +159,7 @@ export class World {
           for (let z = 0; z < CS; z++) {
             for (let x = 0; x < CS; x++) {
               const id = c.data[idx(x, y, z)]
-              if (id === B.AIR || id === B.COLOR_BLOCK || id === B.ROBOTICS) continue
+              if (id === B.AIR || id === B.ROBOTICS || (id === B.COLOR_BLOCK && y < GROUND_LEVEL)) continue
               const wx = bx + x
               const wz = bz + z
               const glue = getTerrainGlueMask(this.type, this.seed, wx, y, wz)
