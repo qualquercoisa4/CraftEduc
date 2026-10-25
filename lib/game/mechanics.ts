@@ -4489,23 +4489,26 @@ export class Mechanics {
         const sourceId = `battery-pack:${key}`
         const state = this.lookup(key).state
         const current = this.electricalBranchCurrents.get(sourceId)
-        const connected = this.getTerminalConnections(key, '+').length + this.getTerminalConnections(key, '-').length
-        lines.push(`bateria ${key} células=${state?.batteries ?? 0}V=${((state?.batteries ?? 0) * 1.5).toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} terminaisLigados=${connected}`)
+        const positiveLinks = this.getTerminalConnections(key, '+').length
+        const negativeLinks = this.getTerminalConnections(key, '-').length
+        lines.push(`bateria ${key} células=${state?.batteries ?? 0} V=${((state?.batteries ?? 0) * 1.5).toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} +fios=${positiveLinks} -fios=${negativeLinks}`)
         shown++
       } else if (entry.type === 'resistor') {
         const va = this.electricalNodeVoltages.get(`${key}|A`)
         const vb = this.electricalNodeVoltages.get(`${key}|B`)
         const current = this.electricalBranchCurrents.get(`resistor:${key}`)
-        const connected = this.getTerminalConnections(key, 'A').length + this.getTerminalConnections(key, 'B').length
-        lines.push(`resistor ${key} V=${va === undefined || vb === undefined ? '—' : Math.abs(va - vb).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} terminaisLigados=${connected}`)
+        const aLinks = this.getTerminalConnections(key, 'A').length
+        const bLinks = this.getTerminalConnections(key, 'B').length
+        lines.push(`resistor ${key} V=${va === undefined || vb === undefined ? '—' : Math.abs(va - vb).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} A_fios=${aLinks} B_fios=${bLinks}`)
         shown++
       } else if (entry.type === 'led') {
         const va = this.electricalNodeVoltages.get(`${key}|anode`)
         const vc = this.electricalNodeVoltages.get(`${key}|cathode`)
         const current = this.electricalBranchCurrents.get(`led:${key}`)
         const state = this.lookup(key).state
-        const connected = this.getTerminalConnections(key, 'anode').length + this.getTerminalConnections(key, 'cathode').length
-        lines.push(`LED ${key} V=${va === undefined || vc === undefined ? '—' : (va - vc).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} queimado=${Boolean(state?.ledBurnedOut)} terminaisLigados=${connected}`)
+        const anodeLinks = this.getTerminalConnections(key, 'anode').length
+        const cathodeLinks = this.getTerminalConnections(key, 'cathode').length
+        lines.push(`LED ${key} V=${va === undefined || vc === undefined ? '—' : (va - vc).toFixed(3) + 'V'} I=${current === undefined ? '—' : current.toFixed(4) + 'A'} queimado=${Boolean(state?.ledBurnedOut)} anodo_fios=${anodeLinks} catodo_fios=${cathodeLinks}`)
         shown++
       }
     }
