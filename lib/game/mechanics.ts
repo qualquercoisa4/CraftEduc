@@ -3550,13 +3550,6 @@ export class Mechanics {
         c.joint.configureMotorPosition(commandedTarget, 18, 3)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
-        const rotorOmega = c.rotorBody.angvel()
-        const chassisOmega = c.chassisBody.angvel()
-        const relativeOmega = Math.hypot(
-          rotorOmega.x - chassisOmega.x,
-          rotorOmega.y - chassisOmega.y,
-          rotorOmega.z - chassisOmega.z,
-        )
         const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
         const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
         const requestedSpeed = drive.targetOmega * direction
@@ -3593,18 +3586,11 @@ export class Mechanics {
       // Every secondary motor drives its own rotor against the same chassis.
       const chassisRotation = c.chassisBody.rotation()
       const chassisQ = new THREE.Quaternion(chassisRotation.x, chassisRotation.y, chassisRotation.z, chassisRotation.w)
-      const chassisAngularVelocity = c.chassisBody.angvel()
       for (const extra of c.extraRotors ?? []) {
         const extraPower = this.motorPower.get(extra.motorKey) ?? 0
         const extraMotor = this.models.get(extra.motorKey)
         if (extraPower > 0) {
           const extraDirection = this.motorDirection.get(extra.motorKey) ?? 1
-          const rotorOmega = extra.rotorBody.angvel()
-          const relativeOmega = Math.hypot(
-            rotorOmega.x - chassisAngularVelocity.x,
-            rotorOmega.y - chassisAngularVelocity.y,
-            rotorOmega.z - chassisAngularVelocity.z,
-          )
           const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
           const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
           const requestedSpeed = drive.targetOmega * extraDirection
@@ -4571,7 +4557,11 @@ export class Mechanics {
       }
       const current = branchCurrent(first.key, firstId)
       if (current === undefined) return 'Corrente não disponível para este componente no modelo elétrico.'
-      return `Corrente DC calculada no ramo: ${Math.abs(current).toFixed(4)} A (simulação; não equivale a inserir fisicamente o aparelho em série)`
+      const magnitude = Math.abs(current)
+      const reading = magnitude > 0 && magnitude < 1
+        ? `${(magnitude * 1000).toFixed(1)} mA`
+        : `${magnitude.toFixed(3)} A`
+      return `Corrente do ramo: ${reading} (estimativa calculada; o multímetro ainda não é inserido fisicamente em série)`
     }
     if (mode === 'resistance' || mode === 'continuity') {
       if (first.key !== second.key) return 'Use as duas pontas nos terminais do mesmo componente. Desligue a alimentação antes de medir Ω/continuidade.'
@@ -4587,6 +4577,8 @@ export class Mechanics {
       return 'Teste de diodo: selecione os dois terminais do mesmo LED.'
     }
     if (first.terminal === second.terminal) return 'Selecione anodo e catodo do LED em pontas diferentes.'
+    if (!sameElectricalCircuit) return 'OL — circuito aberto, LED queimado ou terminais sem referência comum.'
+    if (!this.electricalSolverConverged) return 'ERRO: o circuito não convergiu; leitura de diodo indisponível.'
     const forward = first.terminal === 'anode' && second.terminal === 'cathode'
     const ledVoltage = voltage === null ? null : (forward ? voltage : -voltage)
     if (ledVoltage === null) return 'Leitura de diodo indisponível.'
