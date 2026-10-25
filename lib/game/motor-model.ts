@@ -9,6 +9,17 @@ import type { MotorSpec } from './motor-specs'
  */
 export const MAX_MOTOR_MODEL_RATIO = 2.25
 
+export type MotorPowerFlow = 'motoring' | 'generating' | 'idle'
+
+/** Classify power direction using the passive sign convention at the motor terminals. */
+export function classifyMotorPowerFlow(terminalVoltageV: number, windingCurrentA: number): MotorPowerFlow {
+  if (!Number.isFinite(terminalVoltageV) || !Number.isFinite(windingCurrentA)) return 'idle'
+  const electricalPowerW = terminalVoltageV * windingCurrentA
+  if (electricalPowerW > 0.001) return 'motoring'
+  if (electricalPowerW < -0.001) return 'generating'
+  return 'idle'
+}
+
 export interface MotorDriveCommand {
   targetOmega: number
   /** Shaft torque in N·m before the game's world-scale conversion. */
