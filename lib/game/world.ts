@@ -20,6 +20,13 @@ export interface BlockState {
   servoOnAngle?: number
   color?: string
   resinCoated?: boolean
+  resistorDigit1?: number
+  resistorDigit2?: number
+  /** Base-10 exponent for the resistor's multiplier band. */
+  resistorMultiplier?: number
+  resistorTolerance?: number
+  /** Set when excessive forward current permanently damages an LED. */
+  ledBurnedOut?: boolean
 }
 
 const CS = CHUNK_SIZE
