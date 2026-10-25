@@ -113,6 +113,51 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(classifyMotorPowerFlow(3, 0), 'idle', 'open-circuit back-EMF must not become a drive command')
 }
 
+// A back-driven DC motor with a load must deliver current to the load and
+// experience generating torque, rather than being commanded to accelerate itself.
+{
+  const motor = getMotorSpec('fa130')
+  const windingResistance = motor.nominalVoltageV / (motor.stallCurrentA ?? 1.5)
+  const nominalOmega = motor.noLoadRpm * Math.PI * 2 / 60
+  const backEmf = estimateMotorBackEmfVolts(motor, nominalOmega)
+  const solution = solveDcCircuit({
+    nodes: ['motor+', 'motor-'],
+    resistors: [
+      { id: 'generator-winding', a: 'motor+', b: 'motor-', resistanceOhms: windingResistance, offsetVoltageVolts: backEmf },
+      { id: 'generator-load', a: 'motor+', b: 'motor-', resistanceOhms: 10 },
+    ],
+    voltageSources: [],
+    diodes: [],
+  })
+  const voltage = (solution.nodeVoltages.get('motor+') ?? 0) - (solution.nodeVoltages.get('motor-') ?? 0)
+  const motorCurrent = solution.resistorCurrents.get('generator-winding') ?? NaN
+  const loadCurrent = solution.resistorCurrents.get('generator-load') ?? NaN
+  assert.ok(voltage > 0, 'back-EMF should create voltage across the load')
+  assert.ok(motorCurrent < 0, 'generated current must flow opposite to motor-driving current')
+  assert.ok(loadCurrent > 0, 'generated current must flow through the external load')
+  assert.equal(classifyMotorPowerFlow(voltage, motorCurrent), 'generating', 'motor should be classified as generating')
+}
+
+// A spinning motor with an open circuit has back-EMF but essentially no current;
+// terminal voltage alone must not be interpreted as electrical drive power.
+{
+  const motor = getMotorSpec('fa130')
+  const windingResistance = motor.nominalVoltageV / (motor.stallCurrentA ?? 1.5)
+  const nominalOmega = motor.noLoadRpm * Math.PI * 2 / 60
+  const backEmf = estimateMotorBackEmfVolts(motor, nominalOmega)
+  const solution = solveDcCircuit({
+    nodes: ['open+', 'open-'],
+    resistors: [{ id: 'open-motor-winding', a: 'open+', b: 'open-', resistanceOhms: windingResistance, offsetVoltageVolts: backEmf }],
+    voltageSources: [],
+    diodes: [],
+  })
+  const voltage = (solution.nodeVoltages.get('open+') ?? 0) - (solution.nodeVoltages.get('open-') ?? 0)
+  const current = solution.resistorCurrents.get('open-motor-winding') ?? NaN
+  assert.ok(Math.abs(voltage) > 1, 'spinning open-circuit motor should show back-EMF')
+  assert.ok(Math.abs(current) < 1e-6, 'open-circuit motor current should be essentially zero')
+  assert.equal(classifyMotorPowerFlow(voltage, current), 'idle', 'back-EMF with no current is not drive power')
+}
+
 // Unit formatting is shared by the simulation and multimeter; a 4.5 V source
 // must display as volts, not as 4500 volts or as 4500 millivolts without a unit.
 {
@@ -193,4 +238,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical and motor-model regression checks passed (8 circuits plus motor checks).')
+console.log('Electrical and motor-model regression checks passed (10 circuits plus motor checks).')
