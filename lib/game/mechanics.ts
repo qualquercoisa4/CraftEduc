@@ -1082,7 +1082,7 @@ export class Mechanics {
     rayDirection?: THREE.Vector3,
   ) {
     const [x, y, z] = parseKey(key)
-    const id = this.world.getBlock(x, y, z)
+    const id = this.lookup(key).id
     if (id === B.ARDUINO_UNO) {
       const entry = this.models.get(key)
       if (entry?.type !== 'arduino_uno') return null
