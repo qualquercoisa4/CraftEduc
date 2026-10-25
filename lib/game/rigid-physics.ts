@@ -35,6 +35,7 @@ export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.IRON]: 2.6,
   [B.PROXIMITY_SENSOR]: 0.18,
   [B.ARDUINO_UNO]: 0.08,
+  [B.RESISTOR]: 0.015,
 }
 
 export function blockMass(id: number, state?: PhysicsVoxel['state']) {
@@ -62,6 +63,7 @@ const BLOCK_FRICTION: Readonly<Record<number, number>> = {
   [B.IRON]: 0.58,
   [B.PROXIMITY_SENSOR]: 0.58,
   [B.ARDUINO_UNO]: 0.55,
+  [B.RESISTOR]: 0.45,
 }
 
 export function blockFriction(id: number) {
