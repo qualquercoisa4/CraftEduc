@@ -1536,9 +1536,16 @@ export class Mechanics {
         const motorResistance = spec.nominalVoltageV / (spec.stallCurrentA ?? 1.5)
         const mechanism = this.contraptions.get(key)
         const extra = this.findExtraRotor(key)
-        const angularSpeed = mechanism?.speed ?? extra?.rotor.speed ?? 0
+        // Back-EMF must use measured rotor angular velocity, not the requested
+        // target speed. Target speed can jump when a body is re-keyed after a
+        // block move, which previously fed an artificial voltage spike back
+        // into the electrical solver.
+        const angularSpeed = mechanism
+          ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return Math.abs(v.x * axis[0] + v.y * axis[1] + v.z * axis[2]) })()
+          : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return Math.abs(v.x * axis[0] + v.y * axis[1] + v.z * axis[2]) })()
+          : 0
         const noLoadAngularSpeed = spec.noLoadRpm * Math.PI * 2 / 60
-        const speedRatio = Math.min(0.95, Math.abs(angularSpeed) / Math.max(0.01, noLoadAngularSpeed))
+        const speedRatio = Math.min(0.92, Math.max(0, angularSpeed / Math.max(0.01, noLoadAngularSpeed)))
         const lastDirection = this.motorDirection.get(key) ?? 1
         addResistor(
           `motor:${key}`, node(key, 'A'), node(key, 'B'), motorResistance,
@@ -1758,9 +1765,20 @@ export class Mechanics {
     for (const key of motorKeys) {
       const voltage = (solution.nodeVoltages.get(node(key, 'A')) ?? 0)
         - (solution.nodeVoltages.get(node(key, 'B')) ?? 0)
-      if (Math.abs(voltage) >= 0.4) {
-        this.motorPower.set(key, Math.abs(voltage) / 1.5)
+      // Normalize against the actual motor's rated voltage and clamp the
+      // drive command. Moving/rebuilding an assembly must never produce >100%
+      // power from a stale or transient node voltage.
+      const [mx, my, mz] = parseKey(key)
+      const motorState = this.lookup(key).state
+      const spec = getMotorSpec(motorState?.motorType)
+      const ratedVoltage = Math.max(1, spec.nominalVoltageV)
+      const normalized = Math.max(0, Math.min(1, Math.abs(voltage) / ratedVoltage))
+      if (Math.abs(voltage) >= Math.max(0.4, ratedVoltage * 0.08)) {
+        this.motorPower.set(key, normalized)
         this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
+      } else {
+        this.motorPower.set(key, 0)
+        this.motorDirection.set(key, 1)
       }
     }
 
