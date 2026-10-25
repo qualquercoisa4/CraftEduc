@@ -1644,6 +1644,39 @@ export class Mechanics {
     }
 
     let solution = solveDcCircuit({ nodes: [...nodes], resistors, voltageSources: sources, diodes })
+
+    // Determine whether each LED has a complete external return path without
+    // using the LED itself. This prevents a floating, disconnected LED from
+    // being marked burned just because its unconnected cathode floats near 0 V.
+    const passiveAdjacency = new Map<string, Set<string>>()
+    const connectPassive = (a: string, b: string) => {
+      if (!passiveAdjacency.has(a)) passiveAdjacency.set(a, new Set())
+      if (!passiveAdjacency.has(b)) passiveAdjacency.set(b, new Set())
+      passiveAdjacency.get(a)!.add(b)
+      passiveAdjacency.get(b)!.add(a)
+    }
+    for (const branch of resistors) connectPassive(branch.a, branch.b)
+    for (const source of sources) {
+      const sourceInternal = `@source:${source.id}:positive`
+      connectPassive(source.positive, sourceInternal)
+      connectPassive(sourceInternal, source.negative)
+    }
+    const hasPassivePath = (start: string, end: string) => {
+      if (start === end) return false
+      const visited = new Set<string>([start])
+      const queue = [start]
+      while (queue.length) {
+        const current = queue.shift()!
+        if (current === end) return true
+        for (const next of passiveAdjacency.get(current) ?? []) {
+          if (visited.has(next)) continue
+          visited.add(next)
+          queue.push(next)
+        }
+      }
+      return false
+    }
+
     const burnedNow: string[] = []
     for (const ledKey of ledKeys) {
       const block = electricalBlocks.get(ledKey)
@@ -1657,7 +1690,7 @@ export class Mechanics {
       // with the diode state stale in a large circuit. Estimate forward current
       // from the measured terminal voltage as a fail-safe; an open/unpowered LED
       // still has no forward voltage and therefore cannot trip this check.
-      const voltageEstimatedCurrent = spec
+      const voltageEstimatedCurrent = spec && hasPassivePath(node(ledKey, 'anode'), node(ledKey, 'cathode'))
         ? Math.max(0, (anodeVoltage - cathodeVoltage - spec.forwardVoltageVolts) / spec.dynamicResistanceOhms)
         : 0
       const current = Math.max(solvedCurrent, voltageEstimatedCurrent)
@@ -1755,7 +1788,7 @@ export class Mechanics {
       const anode = solution.nodeVoltages.get(node(key, 'anode')) ?? 0
       const cathode = solution.nodeVoltages.get(node(key, 'cathode')) ?? 0
       const solvedCurrent = solution.diodeCurrents.get(`led:${key}`) ?? 0
-      const estimatedCurrent = spec
+      const estimatedCurrent = spec && hasPassivePath(node(key, 'anode'), node(key, 'cathode'))
         ? Math.max(0, (anode - cathode - spec.forwardVoltageVolts) / spec.dynamicResistanceOhms)
         : 0
       const current = Math.max(solvedCurrent, estimatedCurrent)
