@@ -1656,7 +1656,8 @@ export class Mechanics {
           voltageVolts: 5, internalResistanceOhms: 1.2,
         })
       }
-      boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.4 && five <= 5.5))
+      // Match the loaded-rail threshold below: a 3-cell 4.5 V pack may sag under load.
+      boardCanRun.set(key, (vin >= 6.5 && vin <= 12) || (five >= 4.0 && five <= 5.5))
     }
 
     // Digital outputs have finite drive strength. A direct pin-to-motor load
