@@ -164,7 +164,7 @@ export class Engine {
 
     const { settings } = gameStore.get()
     if (isTouch && settings.renderDistance > 5) gameStore.set({ settings: { ...settings, renderDistance: 5 } })
-    if (new URLSearchParams(window.location.search).get('physicsDebug') === '1') {
+    if (['1'].includes(new URLSearchParams(window.location.search).get('physicsDebug') ?? '') || new URLSearchParams(window.location.search).get('electricalDebug') === '1') {
       const label = document.createElement('pre')
       label.style.position = 'fixed'
       label.style.left = '8px'
@@ -2082,7 +2082,10 @@ export class Engine {
       const target = hit
         ? `\nray target: id=${hit.id} cell=(${hit.x},${hit.y},${hit.z}) dist=${hit.dist.toFixed(2)} moving=${hit.moving?.kind ?? 'static'} source=${hit.moving?.key ?? '-'}`
         : '\nray target: none'
-      this.physicsDebugLabel.textContent = this.mech.physicsDebugText() + target
+      const diagnostic = new URLSearchParams(window.location.search).get('electricalDebug') === '1'
+        ? this.mech.electricalDebugText()
+        : this.mech.physicsDebugText()
+      this.physicsDebugLabel.textContent = diagnostic + target
     }
 
     this.renderer.clear()
