@@ -295,7 +295,28 @@ export function ArduinoProgramming() {
         if (!loaded) {
           const presetKey = 'crafteduc:mars-hover-preset:' + key
           const hasMarsHoverPreset = window.localStorage.getItem(presetKey) === '1'
-          if (hasMarsHoverPreset) {
+          const facePresetKey = 'crafteduc:robot-city-face-preset:' + key
+          const hasRobotCityFacePreset = window.localStorage.getItem(facePresetKey) === '1'
+          if (hasRobotCityFacePreset) {
+            const created: Array<any> = []
+            const makeBlock = (type: string, fields: Record<string, string> = {}) => {
+              const block = workspace.newBlock(type)
+              for (const [field, value] of Object.entries(fields)) block.setFieldValue(value, field)
+              created.push(block)
+              return block
+            }
+            const connectNext = (a: any, b: any) => { if (a?.nextConnection && b?.previousConnection) a.nextConnection.connect(b.previousConnection) }
+            const start = makeBlock('arduino_when_start')
+            const cyan = makeBlock('arduino_digital_write', { PIN: 'D2', LEVEL: 'HIGH' })
+            const magenta = makeBlock('arduino_digital_write', { PIN: 'D3', LEVEL: 'HIGH' })
+            const yellow = makeBlock('arduino_digital_write', { PIN: 'D4', LEVEL: 'HIGH' })
+            connectNext(start, cyan); connectNext(cyan, magenta); connectNext(magenta, yellow)
+            created.forEach((block, index) => {
+              block.initSvg(); block.render()
+              if (index === 0) block.moveBy(24, 24)
+            })
+            window.localStorage.removeItem(facePresetKey)
+          } else if (hasMarsHoverPreset) {
             const created: Array<any> = []
             const makeBlock = (type: string, fields: Record<string, string> = {}) => {
               const block = workspace.newBlock(type)
