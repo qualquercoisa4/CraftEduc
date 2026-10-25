@@ -325,6 +325,7 @@ export class Mechanics {
   private readonly gravity = 18
   private physicsScanCooldown = 0
   private powerCooldown = 0
+  private circuitRefreshTimer = 0
   private proximityScanCooldown = 0
   private rigidPhysics: RigidPhysics
   private physicsSynced = false
@@ -3240,6 +3241,17 @@ export class Mechanics {
     this.proximityScanCooldown -= dt
     const shouldRefreshProximitySensors = this.proximityScanCooldown <= 0
     if (shouldRefreshProximitySensors) this.proximityScanCooldown = 0.1
+    // Back-EMF changes as the rotor accelerates. Re-solve moving circuits a
+    // few times per second so motor current and battery sag follow the motion,
+    // without scanning the whole world on every render frame.
+    this.circuitRefreshTimer -= dt
+    const electricalMotion = [...this.contraptions.values()].some((machine) =>
+      Math.abs(machine.speed) > 0.5 || (machine.extraRotors ?? []).some((rotor) => Math.abs(rotor.speed) > 0.5),
+    )
+    if (electricalMotion && this.circuitRefreshTimer <= 0) {
+      this.circuitRefreshTimer = 0.35
+      this.powerDirty = true
+    }
     this.powerCooldown -= dt
     if (this.powerDirty && this.powerCooldown <= 0) {
       this.powerCooldown = 0.08
