@@ -4544,10 +4544,10 @@ export class Mechanics {
       if (first.key !== second.key) return 'Use as duas pontas nos terminais do mesmo componente. Desligue a alimentação antes de medir Ω/continuidade.'
       const ohms = resistance(first.key, firstId, state)
       if (mode === 'resistance') {
-        if (Number.isFinite(voltage) && Math.abs(voltage) > 0.2) return 'ERRO: circuito energizado. Desligue a fonte antes de medir resistência.'
+        if ((voltageA !== undefined && Math.abs(voltageA) > 0.2) || (voltageB !== undefined && Math.abs(voltageB) > 0.2)) return 'ERRO: circuito energizado. Desligue a fonte antes de medir resistência.'
         return Number.isFinite(ohms) ? `Resistência: ${ohms >= 1000 ? (ohms / 1000).toFixed(3) + ' kΩ' : ohms.toFixed(2) + ' Ω'}` : 'OL — circuito aberto ou componente não resistivo.'
       }
-      if (Number.isFinite(voltage) && Math.abs(voltage) > 0.2) return 'ERRO: circuito energizado. Desligue a fonte antes do teste de continuidade.'
+      if ((voltageA !== undefined && Math.abs(voltageA) > 0.2) || (voltageB !== undefined && Math.abs(voltageB) > 0.2)) return 'ERRO: circuito energizado. Desligue a fonte antes do teste de continuidade.'
       return ohms < 50 ? `Continuidade: SIM (${ohms.toFixed(2)} Ω, bip)` : 'Continuidade: NÃO (circuito aberto ou resistência alta)'
     }
     if (first.key !== second.key || firstId !== B.LED || secondId !== B.LED) {
