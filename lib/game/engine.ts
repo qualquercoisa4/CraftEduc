@@ -1819,6 +1819,8 @@ export class Engine {
       hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
     } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
       hint = `${use} para abrir a programação do Arduino UNO`
+    } else if (hit?.id === B.RESISTOR && (item === null || item === 'resistor')) {
+      hint = `${use} para configurar a resistência e as faixas de cores`
     } else if (hit?.id === B.MOTOR && (item === null || isMotorItemId(item))) {
       const state = this.world.getState(hit.x, hit.y, hit.z)
       const key = posKey(hit.x, hit.y, hit.z)
