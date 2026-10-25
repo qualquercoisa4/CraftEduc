@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - work/servo-and-color-preservation
+      - feature/laboratory-test-world
   pull_request:
     branches:
       - main
