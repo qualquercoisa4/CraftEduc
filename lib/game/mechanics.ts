@@ -4534,11 +4534,11 @@ export class Mechanics {
     }
     if (mode === 'dc_current') {
       if (first.key !== second.key || first.terminal === second.terminal) {
-        return 'Corrente DC: coloque o multímetro em série, interrompendo um fio e usando as duas pontas nas extremidades da abertura.'
+        return 'Corrente DC: selecione os dois terminais do mesmo componente para consultar a corrente calculada no ramo.'
       }
       const current = branchCurrent(first.key, firstId)
-      if (current === undefined) return 'Corrente indisponível nesse componente. Para medir corrente, abra o circuito e insira o multímetro em série.'
-      return `Corrente DC no componente: ${Math.abs(current).toFixed(4)} A`
+      if (current === undefined) return 'Corrente não disponível para este componente no modelo elétrico.'
+      return `Corrente DC calculada no ramo: ${Math.abs(current).toFixed(4)} A (simulação; não equivale a inserir fisicamente o aparelho em série)`
     }
     if (mode === 'resistance' || mode === 'continuity') {
       if (first.key !== second.key) return 'Use as duas pontas nos terminais do mesmo componente. Desligue a alimentação antes de medir Ω/continuidade.'
