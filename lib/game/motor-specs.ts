@@ -18,6 +18,8 @@ export interface MotorSpec {
   stallTorqueNm: number
   /** Approximate stall current in amperes for the DC equivalent-circuit model. */
   stallCurrentA?: number
+  /** Approximate no-load current in amperes; subtract it when estimating useful torque. */
+  noLoadCurrentA?: number
   gearRatio: string
   description: string
   physicalInfo: string
@@ -35,6 +37,7 @@ export const MOTOR_SPECS: Record<MotorVariantId, MotorSpec> = {
     ratedTorqueNm: 0.00074,
     stallTorqueNm: 0.00353,
     stallCurrentA: 2.1,
+    noLoadCurrentA: 0.18,
     gearRatio: '1:1 (sem redução)',
     description: 'Motor CC escovado compacto, sem caixa de redução. Gira muito rápido, mas entrega pouco torque no eixo; indicado para mecanismos leves.',
     physicalInfo: 'Mabuchi FA-130RA-18100 • 3 V • 17 g • 12.300 rpm sem carga • Torque no ponto de máxima eficiência: 0,00074 N·m • Torque de bloqueio: 0,00353 N·m',
@@ -50,6 +53,7 @@ export const MOTOR_SPECS: Record<MotorVariantId, MotorSpec> = {
     ratedTorqueNm: 0.0196,
     stallTorqueNm: 0.07845,
     stallCurrentA: 1.5, // approximate; varies widely across inexpensive TT gearbox motors
+    noLoadCurrentA: 0.15,
     gearRatio: '1:48',
     description: 'Motor CC com caixa de redução plástica amarela. A redução diminui a velocidade e aumenta o torque de saída; comum em robótica educacional.',
     physicalInfo: 'Motor TT • 3–6 V • 30,6 g • 200 rpm sem carga a 6 V • Redução 1:48 • Torque de bloqueio: 0,078 N·m',
@@ -65,6 +69,7 @@ export const MOTOR_SPECS: Record<MotorVariantId, MotorSpec> = {
     ratedTorqueNm: 0.02845,
     stallTorqueNm: 0.1667,
     stallCurrentA: 1.6,
+    noLoadCurrentA: 0.10,
     gearRatio: '100,37:1',
     description: 'Micromotor CC com caixa de engrenagens metálica e eixo tipo D. Compacto, com mais força de saída do que um motor sem redução.',
     physicalInfo: 'Referência Pololu 100:1 HP • 6 V • 9,5 g • 310 rpm sem carga • Torque no ponto de máxima eficiência: 0,028 N·m • Torque de bloqueio extrapolado: 0,167 N·m',
@@ -80,6 +85,7 @@ export const MOTOR_SPECS: Record<MotorVariantId, MotorSpec> = {
     ratedTorqueNm: 0.1765,
     stallTorqueNm: 1.373,
     stallCurrentA: 5.5,
+    noLoadCurrentA: 0.20,
     gearRatio: '30:1',
     description: 'Motor CC de 12 V com caixa de engrenagens metálica, eixo de saída de 6 mm e alto torque. Consome corrente elevada sob carga.',
     physicalInfo: 'Referência Pololu 37D 30:1 • 12 V • 185 g • 330 rpm sem carga • Torque na máxima eficiência: 0,177 N·m • Torque de bloqueio extrapolado: 1,37 N·m',
