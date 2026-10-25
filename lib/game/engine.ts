@@ -250,6 +250,8 @@ export class Engine {
       this.restoreSavedWorld(startup.save)
     } else if (this.worldConfig.type === 'flat') {
       this.buildDemo()
+    } else if (this.worldConfig.type === 'mars_colony') {
+      this.buildMarsHoverRobot()
     }
 
     const spawn = getWorldSpawn(this.worldConfig.type)
@@ -280,6 +282,69 @@ export class Engine {
   }
 
   /* ---------------- Setup ---------------- */
+
+  private buildMarsHoverRobot() {
+    const y = GROUND_LEVEL
+    const baseX = 28
+    const baseZ = 5
+
+    // Low aluminium chassis with two independently driven, rubber-tired wheels.
+    for (let x = baseX - 1; x <= baseX + 1; x++) {
+      for (let z = baseZ - 1; z <= baseZ + 1; z++) {
+        this.world.setBlock(x, y + 1, z, B.ALUMINUM, {
+          glue: (1 << 0) | (1 << 1) | (1 << 4) | (1 << 5),
+        })
+      }
+    }
+    this.world.setBlock(baseX, y + 2, baseZ, B.ARDUINO_UNO)
+    this.world.setBlock(baseX, y + 2, baseZ - 2, B.PROXIMITY_SENSOR, {
+      facing: 5, proximityOperator: 'less', proximityDistance: 20,
+    })
+
+    // Shaft faces point outwards; each motor is glued to the chassis on its
+    // non-output face and has a wheel mounted directly to the output shaft.
+    this.world.setBlock(baseX - 2, y + 1, baseZ, B.MOTOR, {
+      facing: 1, mountedWheel: true, motorType: 'tt_motor', glue: 1 << 0,
+    })
+    this.world.setBlock(baseX + 2, y + 1, baseZ, B.MOTOR, {
+      facing: 0, mountedWheel: true, motorType: 'tt_motor', glue: 1 << 1,
+    })
+    // Aluminium top deck, a front bumper and a small rear battery bay.
+    this.world.setBlock(baseX, y + 2, baseZ + 1, B.ALUMINUM)
+    this.world.setBlock(baseX - 1, y + 2, baseZ + 1, B.ALUMINUM)
+    this.world.setBlock(baseX + 1, y + 2, baseZ + 1, B.ALUMINUM)
+    this.world.setBlock(baseX, y + 1, baseZ + 2, B.ALUMINUM)
+
+    // Arduino headers use local coordinates transformed by the board model.
+    const arduinoKey = posKey(baseX, y + 2, baseZ)
+    const boardTerminal = (id: string, lx: number, lz: number) =>
+      new THREE.Vector3(baseX + 1 + lx, y + 2 + 0.14 + 0.134, baseZ + 1 + lz)
+    const d2 = boardTerminal('D2', -0.35 + 2 * (0.70 / 13), -0.27)
+    const d3 = boardTerminal('D3', -0.35 + 3 * (0.70 / 13), -0.27)
+    const d5 = boardTerminal('D5', -0.35 + 5 * (0.70 / 13), -0.27)
+    const d6 = boardTerminal('D6', -0.35 + 6 * (0.70 / 13), -0.27)
+    const fiveV = boardTerminal('5V', -0.23, 0.28)
+    const gnd = boardTerminal('GND', -0.11, 0.28)
+    const sensorKey = posKey(baseX, y + 2, baseZ - 2)
+    const sensorTerminal = (lx: number, lz: number) =>
+      new THREE.Vector3(baseX + 0.5 + lx, y + 2 + 0.5, baseZ - 1.5 + lz)
+    const trig = sensorTerminal(-0.12, -0.22)
+    const echo = sensorTerminal(0, -0.22)
+    const vcc = sensorTerminal(-0.24, -0.22)
+    const sensorGnd = sensorTerminal(0.24, -0.22)
+    // Motor terminal coordinates are placed on the visible rear end of each model.
+    const leftMotorKey = posKey(baseX - 2, y + 1, baseZ)
+    const rightMotorKey = posKey(baseX + 2, y + 1, baseZ)
+    this.mech.addWire(arduinoKey, d2, 'D2', sensorKey, trig, 'TRIG', '#fdd835')
+    this.mech.addWire(arduinoKey, d3, 'D3', sensorKey, echo, 'ECHO', '#43a047')
+    this.mech.addWire(arduinoKey, fiveV, '5V', sensorKey, vcc, 'VCC', '#e53935')
+    this.mech.addWire(arduinoKey, gnd, 'GND', sensorKey, sensorGnd, 'GND', '#212121')
+    this.mech.addWire(arduinoKey, d5, 'D5', leftMotorKey, new THREE.Vector3(baseX - 1.7, y + 1.04, baseZ + 0.4), 'A', '#e53935')
+    this.mech.addWire(arduinoKey, d6, 'D6', leftMotorKey, new THREE.Vector3(baseX - 1.3, y + 1.04, baseZ + 0.4), 'B', '#212121')
+    this.mech.addWire(arduinoKey, d5.clone().add(new THREE.Vector3(0, 0.02, 0.08)), 'D5', rightMotorKey, new THREE.Vector3(baseX + 2.3, y + 1.04, baseZ + 0.4), 'A', '#e53935')
+    this.mech.addWire(arduinoKey, d6.clone().add(new THREE.Vector3(0, 0.02, 0.08)), 'D6', rightMotorKey, new THREE.Vector3(baseX + 2.7, y + 1.04, baseZ + 0.4), 'B', '#212121')
+    showToast('Hover de Marte construído: abra o Arduino para carregar o programa de desvio de obstáculos.')
+  }
 
   private buildDemo() {
     const y = GROUND_LEVEL
