@@ -41,6 +41,8 @@ export interface DcCircuitInput {
 
 export interface DcCircuitSolution {
   nodeVoltages: Map<string, number>
+  /** Connected-component identity; voltages from different floating components cannot be compared. */
+  nodeComponentIds: Map<string, string>
   resistorCurrents: Map<string, number>
   diodeCurrents: Map<string, number>
   sourceCurrents: Map<string, number>
@@ -127,6 +129,15 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
       }
     }
     components.push(component)
+  }
+
+  // Each graph component has its own voltage reference. Preserve membership so
+  // instruments never subtract two voltages that were solved against unrelated
+  // arbitrary references.
+  const nodeComponentIds = new Map<string, string>()
+  for (const component of components) {
+    const componentId = [...component].sort()[0] ?? ''
+    for (const node of component) nodeComponentIds.set(node, componentId)
   }
 
   const diodeOn = new Map(diodeList.map((d) => [d.id, false]))
@@ -259,7 +270,7 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
     const internal = voltage(internalNode(s.id))
     sourceCurrents.set(s.id, (internal - voltage(s.positive)) / s.internalResistanceOhms)
   }
-  return { nodeVoltages: finalVoltages, resistorCurrents, diodeCurrents, sourceCurrents, converged }
+  return { nodeVoltages: finalVoltages, nodeComponentIds, resistorCurrents, diodeCurrents, sourceCurrents, converged }
 }
 
 /** Stable per-component manufacturing deviation, constrained by the tolerance band. */
