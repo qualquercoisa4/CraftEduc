@@ -755,7 +755,7 @@ export class Engine {
       showToast('Esse espaço já está ocupado pela carcaça de um motor')
       return
     }
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
     if (block === B.MOTOR && this.motorModelOverlapsBlocks(x, y, z, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(cell.x, cell.y, cell.z))) {
       showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
       return
@@ -895,7 +895,7 @@ export class Engine {
   private restoreSavedWorld(save: SavedWorldRecord) {
     for (const block of save.data.blocks ?? []) {
       if (!block || ![block.x, block.y, block.z, block.id].every(Number.isInteger)) continue
-      if (block.y < 0 || block.y >= WORLD_HEIGHT || block.id < B.AIR || block.id > B.ARDUINO_UNO) continue
+      if (block.y < 0 || block.y >= WORLD_HEIGHT || block.id < B.AIR || block.id > B.RESISTOR) continue
       this.world.setBlock(block.x, block.y, block.z, block.id, block.state)
     }
 
@@ -1014,6 +1014,7 @@ export class Engine {
       if (s.screen === 'brush_color') gameStore.set({ screen: s.returnScreen === 'brush_color' ? 'playing' : s.returnScreen })
       else if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
       else if (s.screen === 'servo_config') gameStore.set({ servoConfigKey: null, screen: 'playing' })
+      else if (s.screen === 'resistor_config') gameStore.set({ resistorConfigKey: null, screen: 'playing' })
       else if (s.screen === 'arduino_programming') gameStore.set({ arduinoProgramKey: null, screen: 'playing' })
       else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
@@ -1326,6 +1327,14 @@ export class Engine {
 
     if (!hit) return
 
+    // Open the resistor's four-band value editor with the empty hand or resistor item.
+    // Wire use is resolved above so each lead remains independently connectable.
+    if (hit.id === B.RESISTOR && (item === null || item === 'resistor') && !this.player.sneaking) {
+      const key = hit.moving?.key ?? posKey(hit.x, hit.y, hit.z)
+      gameStore.set({ resistorConfigKey: key, screen: 'resistor_config' })
+      return
+    }
+
     // Match the motor's ergonomics: the empty hand or sensor item rotates it.
     // Holding a wire reaches the wiring handler above; the tablet opens its panel earlier.
     if (hit.id === B.SERVO && (item === null || item === 'servo') && !this.player.sneaking) {
@@ -1447,7 +1456,7 @@ export class Engine {
     }
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
-    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : undefined
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
     if (block === B.MOTOR && this.motorModelOverlapsBlocks(px, py, pz, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(hit.x, hit.y, hit.z))) {
       showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
       return
