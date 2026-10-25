@@ -303,6 +303,8 @@ export class Mechanics {
   /** Last solved DC node voltages (volts) and named branch currents (amperes). */
   electricalNodeVoltages = new Map<string, number>()
   electricalBranchCurrents = new Map<string, number>()
+  private activeShortSources = new Set<string>()
+  private shortCircuitEventQueue: string[] = []
   motorDirection = new Map<string, number>()
   servoPowered = new Set<string>()
   // Program output state is kept separate from battery-box power calculations.
@@ -1409,6 +1411,13 @@ export class Mechanics {
     return { id: this.world.getBlock(x, y, z), state: this.world.getState(x, y, z) }
   }
 
+  /** Drain one-shot short-circuit events for the renderer/audio layer. */
+  drainShortCircuitEvents() {
+    const events = this.shortCircuitEventQueue
+    this.shortCircuitEventQueue = []
+    return events
+  }
+
   private recomputePower() {
     // Build a circuit from the actual terminals, then solve node voltages and
     // branch currents with MNA instead of treating every connected net as a
@@ -1662,6 +1671,23 @@ export class Mechanics {
       ...solution.diodeCurrents.entries(),
       ...solution.sourceCurrents.entries(),
     ])
+
+    // A sustained short only creates one event. The event rearms after the
+    // current falls back below the trip threshold, avoiding frame-by-frame
+    // explosions while the player leaves the fault connected.
+    const shortThresholdAmps = 4.5
+    const currentShortSources = new Set<string>()
+    for (const source of sources) {
+      if (!source.id.startsWith('battery-pack:')) continue
+      const current = Math.abs(solution.sourceCurrents.get(source.id) ?? 0)
+      if (current >= shortThresholdAmps) {
+        currentShortSources.add(source.id)
+        if (!this.activeShortSources.has(source.id)) {
+          this.shortCircuitEventQueue.push(source.id.slice('battery-pack:'.length))
+        }
+      }
+    }
+    this.activeShortSources = currentShortSources
 
     this.motorPower.clear()
     this.motorDirection.clear()
