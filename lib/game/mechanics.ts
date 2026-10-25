@@ -260,9 +260,12 @@ interface FallingBody {
 
 interface ExtraRotor {
   motorKey: string
+  actuatorId: number
+  parent: 'chassis' | 'rotor'
   motorPos: [number, number, number]
   motorOffset: [number, number, number]
   motorState?: BlockState
+  servoCommandAngle?: number
   axis: THREE.Vector3
   facing: number
   blocks: CBlock[]
@@ -1893,19 +1896,31 @@ export class Mechanics {
     // The output-face glue component becomes the rotor rigid body.
     const seedKey = posKey(sx, sy, sz)
     const visited = new Set<string>(wheelOnlyRotor ? [] : [seedKey])
+    const nestedServoKeys = new Set<string>()
     const queue: [number, number, number][] = wheelOnlyRotor ? [] : [[sx, sy, sz]]
     while (queue.length) {
       const [x, y, z] = queue.shift()!
       if (y < GROUND_LEVEL || visited.size > MAX_CONTRAPTION) return 'stalled'
+      // A secondary servo belongs to this rigid arm as a housing, but its
+      // output payload is split into a child rotor below.
+      const currentId = this.world.getBlock(x, y, z)
+      if (currentId === B.SERVO || currentId === B.MOTOR) continue
       for (let face = 0; face < 6; face++) {
         const n = DIRS[face]
         const nx = x + n[0], ny = y + n[1], nz = z + n[2]
-        // Procedural floor is immutable terrain even when it has a generated
-        // glue mask. It must never be included in a robot's rigid body.
         if (ny < GROUND_LEVEL) continue
         const key = posKey(nx, ny, nz)
-        if (visited.has(key) || key === motorKey || this.world.getBlock(nx, ny, nz) === B.MOTOR || this.world.getBlock(nx, ny, nz) === B.SERVO) continue
-        if (this.world.getBlock(nx, ny, nz) === B.AIR || !this.isGlued(x, y, z, face)) continue
+        const neighborId = this.world.getBlock(nx, ny, nz)
+        if (visited.has(key) || key === motorKey || neighborId === B.MOTOR) continue
+        if (neighborId === B.SERVO) {
+          if (this.isGlued(x, y, z, face)) {
+            visited.add(key)
+            nestedServoKeys.add(key)
+            queue.push([nx, ny, nz])
+          }
+          continue
+        }
+        if (neighborId === B.AIR || !this.isGlued(x, y, z, face)) continue
         visited.add(key)
         queue.push([nx, ny, nz])
       }
@@ -1952,6 +1967,8 @@ export class Mechanics {
     // into its own Rapier rotor. The chassis remains a single shared rigid body.
     const extraRotorSpecs: {
       motorKey: string
+      actuatorId: number
+      parent: 'chassis' | 'rotor'
       motorPos: [number, number, number]
       motorOffset: [number, number, number]
       motorState?: BlockState
@@ -1962,19 +1979,30 @@ export class Mechanics {
       wheelOnly: boolean
     }[] = []
     const extraRotorKeys = new Set<string>()
-    for (const candidateKey of [...chassisVisited]) {
+    const extraCandidates: { key: string; parent: 'chassis' | 'rotor' }[] = [
+      ...[...chassisVisited].map((key) => ({ key, parent: 'chassis' as const })),
+      ...[...nestedServoKeys].map((key) => ({ key, parent: 'rotor' as const })),
+    ]
+    for (const candidate of extraCandidates) {
+      const candidateKey = candidate.key
+      const parent = candidate.parent
       const [rx, ry, rz] = parseKey(candidateKey)
-      if (this.world.getBlock(rx, ry, rz) !== B.MOTOR) continue
+      if (ry < GROUND_LEVEL) continue
+      const actuatorId = this.world.getBlock(rx, ry, rz)
+      if (actuatorId !== B.MOTOR && actuatorId !== B.SERVO) continue
       const motorState = this.world.getState(rx, ry, rz)
       const extraFacing = (((motorState?.facing ?? 2) % 6) + 6) % 6
       const extraDir = DIRS[extraFacing]
       const ex = rx + extraDir[0], ey = ry + extraDir[1], ez = rz + extraDir[2]
+      if (ey < GROUND_LEVEL) continue
       const seed = posKey(ex, ey, ez)
-      const wheelOnly = this.world.getBlock(ex, ey, ez) === B.AIR && Boolean(motorState?.mountedWheel)
-      if ((this.world.getBlock(ex, ey, ez) === B.AIR && !wheelOnly)
-        || this.world.getBlock(ex, ey, ez) === B.MOTOR || this.world.getBlock(ex, ey, ez) === B.SERVO
-        || (!wheelOnly && !this.isGlued(rx, ry, rz, extraFacing)) || visited.has(seed)
-        || chassisVisited.has(seed) || extraRotorKeys.has(seed)) continue
+      const outputBlock = this.world.getBlock(ex, ey, ez)
+      const wheelOnly = actuatorId === B.MOTOR && outputBlock === B.AIR && Boolean(motorState?.mountedWheel)
+      const seedAlreadyInParent = parent === 'rotor' ? visited.has(seed) : chassisVisited.has(seed)
+      if ((outputBlock === B.AIR && !wheelOnly)
+        || outputBlock === B.MOTOR || outputBlock === B.SERVO
+        || (!wheelOnly && !this.isGlued(rx, ry, rz, extraFacing)) || seedAlreadyInParent
+        || extraRotorKeys.has(seed)) continue
 
       // A motor-mounted wheel must keep its own angular body even without
       // a glued voxel attached to the shaft.
@@ -1987,6 +2015,7 @@ export class Mechanics {
         for (let face = 0; face < 6; face++) {
           const n = DIRS[face]
           const nx = x + n[0], ny = y + n[1], nz = z + n[2]
+          if (ny < GROUND_LEVEL) continue
           const key = posKey(nx, ny, nz)
           const id = this.world.getBlock(nx, ny, nz)
           if (id === B.AIR || id === B.MOTOR || id === B.SERVO || key === motorKey || visited.has(key)
@@ -2014,6 +2043,8 @@ export class Mechanics {
       }
       extraRotorSpecs.push({
         motorKey: candidateKey,
+        actuatorId,
+        parent,
         motorPos: [rx, ry, rz],
         motorOffset: [rx - mx, ry - my, rz - mz],
         motorState: motorState ? { ...motorState } : undefined,
@@ -2245,8 +2276,9 @@ export class Mechanics {
       const extraChildAnchor = visual.wheelOnly
         ? new THREE.Vector3()
         : visual.axis.clone().multiplyScalar(0.36)
+      const extraParentBody = visual.parent === 'rotor' ? rotorBody : chassisBody
       const extraJoint = this.rigidPhysics.createRevoluteJoint(
-        chassisBody,
+        extraParentBody,
         extraBody,
         visual.axis,
         extraParentAnchor,
@@ -2254,7 +2286,8 @@ export class Mechanics {
       )
       if (extraJoint) {
         extraJoint.configureMotorModel(RAPIER.MotorModel.ForceBased)
-        extraJoint.setMotorMaxForce(MOTOR_COAST_TORQUE_NM)
+        extraJoint.setMotorMaxForce(visual.actuatorId === B.SERVO ? SERVO_MAX_TORQUE_NM : MOTOR_COAST_TORQUE_NM)
+        if (visual.actuatorId === B.SERVO) extraJoint.setLimits(0, SERVO_MAX_ANGLE_RAD)
       }
       if (!extraJoint) {
         this.rigidPhysics.removeRigidBody(extraBody)
@@ -2269,6 +2302,8 @@ export class Mechanics {
       }
       extraRotors.push({
         motorKey: visual.motorKey,
+        actuatorId: visual.actuatorId,
+        parent: visual.parent,
         motorPos: visual.motorPos,
         motorOffset: visual.motorOffset,
         motorState: visual.motorState,
