@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { formatCurrentReading, formatVoltageReading, solveDcCircuit } from '../lib/game/electrical.ts'
-import { estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from '../lib/game/motor-model.ts'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
 const near = (actual, expected, tolerance, label) => {
@@ -107,6 +107,10 @@ const near = (actual, expected, tolerance, label) => {
   near(estimateMotorBackEmfVolts(motor, nominalOmega * 1.5), backEmfAtNoLoadSpeed * 1.5, 1e-8, 'over-speed back-EMF')
   near(estimateMotorBackEmfVolts(motor, nominalOmega * 10), backEmfAtNoLoadSpeed * MAX_MOTOR_MODEL_RATIO, 1e-8, 'numerical back-EMF safety bound')
   assert.ok(overVoltage.maxTorqueNm <= motor.stallTorqueNm * MAX_MOTOR_MODEL_RATIO, 'overcurrent torque must remain bounded')
+  assert.equal(classifyMotorPowerFlow(3, 0.18), 'motoring', 'positive terminal power drives the motor')
+  assert.equal(classifyMotorPowerFlow(3, -0.18), 'generating', 'reverse current under positive voltage means generation')
+  assert.equal(classifyMotorPowerFlow(-3, -0.18), 'motoring', 'reversed voltage and current still consume power')
+  assert.equal(classifyMotorPowerFlow(3, 0), 'idle', 'open-circuit back-EMF must not become a drive command')
 }
 
 // Unit formatting is shared by the simulation and multimeter; a 4.5 V source
