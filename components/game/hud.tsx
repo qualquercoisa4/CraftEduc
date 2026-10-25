@@ -160,7 +160,7 @@ export function Hud() {
           <p className="mt-1 min-h-9 border border-[#172c2a] bg-[#b9d8ca] px-2 py-1 font-mono text-xs text-[#17342e]">
             {meterFirstProbe ? 'PONTA 1 OK • selecione o segundo terminal' : meterReading}
           </p>
-          <p className="mt-1 text-[10px] text-white/75">Toque em dois terminais expostos. Corrente exige ligação em série; Ω/continuidade exigem fonte desligada.</p>
+          <p className="mt-1 text-[10px] text-white/75">Toque em dois terminais expostos. Corrente mostra o valor calculado no ramo; Ω/continuidade exigem fonte desligada.</p>
           <button
             type="button"
             onPointerDown={(e) => {
