@@ -3141,17 +3141,18 @@ export class Mechanics {
         // their specialized Three.js model attached below. Treating them as
         // generic cubes made tileFor() fall back to the iron texture while
         // the assembly was falling, making components appear to change type.
+        let geometry = new THREE.BufferGeometry()
         if (isOpaque(b.id)) {
           const buffers = newBuffers()
           emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.resinCoated ? '#e5c46a' : b.state?.color)
-          if (buffers.indices.length) {
-            const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
-            mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
-            mesh.castShadow = true
-            mesh.receiveShadow = true
-            group.add(mesh)
-          }
+          geometry.dispose()
+          geometry = buffersToGeometry(buffers)
         }
+        const mesh = new THREE.Mesh(geometry, this.blockMaterial)
+        mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
+        mesh.castShadow = true
+        mesh.receiveShadow = true
+        if (isOpaque(b.id)) group.add(mesh)
         falling.push({
           id: b.id, state: b.state ? { ...b.state } : undefined,
           x: b.x, y: b.y, z: b.z, originKey: b.key,
