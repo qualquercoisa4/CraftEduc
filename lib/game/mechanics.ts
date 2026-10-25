@@ -1461,7 +1461,6 @@ export class Mechanics {
       [B.ALUMINUM, 0.025],
       [B.GEAR, 0.04],
     ])
-    const batteryBoxes: { key: string; count: number }[] = []
     const ledKeys: string[] = []
     const motorKeys: string[] = []
     const servoKeys: string[] = []
@@ -1481,7 +1480,6 @@ export class Mechanics {
         const count = Math.max(0, Math.min(3, Math.floor(state.batteries ?? 0)))
         if (count > 0) {
           addTerminals(key, ['+', '-'])
-          batteryBoxes.push({ key, count })
           sources.push({
             id: `battery-pack:${key}`,
             positive: node(key, '+'), negative: node(key, '-'),
@@ -1597,8 +1595,8 @@ export class Mechanics {
           nodes.add(driveNode)
           sources.push({
             id: `arduino-high:${key}:${pin}`,
-            positive: driveNode, negative: ground,
-            voltageVolts: 5, internalResistanceOhms: 0.25,
+            positive: driveNode, negative: node(key, '5V'),
+            voltageVolts: 0, internalResistanceOhms: 0.25,
           })
           addResistor(`arduino-pin-resistance:${key}:${pin}`, driveNode, node(key, pin), 100)
         } else {
