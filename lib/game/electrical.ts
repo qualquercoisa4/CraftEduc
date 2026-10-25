@@ -178,11 +178,31 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
         positive: internalNode(source.id),
         negative: source.negative,
       }))
+      // An unpowered passive component has the zero-volt solution; avoid
+      // dense matrix allocation for large, unenergized metal structures.
+      const hasOffsetDrive = componentResistors.some((r) =>
+        Math.abs(r.offsetVoltageVolts ?? 0) > 1e-12,
+      )
+      if (voltageBranches.length === 0 && !hasOffsetDrive) {
+        for (const n of componentNodes) voltages.set(n, 0)
+        continue
+      }
+
       const size = unknownNodes.length + voltageBranches.length
       if (size === 0) {
         voltages.set(reference, 0)
         continue
       }
+      // The solver below uses dense Gauss-Jordan elimination (O(n^3)).
+      // Bound connected-component size so oversized player-built circuits fail
+      // safe instead of exhausting memory or freezing the browser main thread.
+      const MAX_DENSE_COMPONENT_NODES = 256
+      if (size > MAX_DENSE_COMPONENT_NODES) {
+        allComponentsSolved = false
+        for (const n of componentNodes) voltages.set(n, 0)
+        continue
+      }
+
       const matrix = Array.from({ length: size }, () => Array<number>(size).fill(0))
       const rhs = Array<number>(size).fill(0)
       const stampConductance = (a: string, b: string, conductance: number) => {

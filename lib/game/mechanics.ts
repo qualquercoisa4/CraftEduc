@@ -1494,6 +1494,12 @@ export class Mechanics {
           for (let x = minX; x < minX + CHUNK_SIZE; x++) {
             const id = this.world.getBlock(x, y, z)
             if (id === B.AIR) continue
+            // The lab's generated iron walls and aluminium roof are decorative
+            // architecture, not user-built circuit elements. Feeding thousands
+            // of joined metal voxels into the dense MNA solver creates a huge
+            // connected component and can freeze the browser during startup.
+            // Player edits that differ from the generated terrain remain usable.
+            if (this.world.type === 'test_lab' && id === this.world.terrainBlockAt(x, y, z)) continue
             electricalBlocks.set(posKey(x, y, z), { id, state: this.world.getState(x, y, z) })
           }
         }
@@ -3026,7 +3032,11 @@ export class Mechanics {
       // Procedural ground, roads and seabed are static supports. They do not
       // need independent Rapier bodies and must not become thousands of
       // single-block groups in the gravity solver.
-      if (id === generatedId && y <= GROUND_LEVEL && !state?.glue) {
+      if (id === generatedId && !state?.glue &&
+        (y <= GROUND_LEVEL || this.world.type === 'test_lab')) {
+        // The enclosed test lab is a static architectural shell. Treat its
+        // generated walls, windows and roof as terrain, not thousands of
+        // independent loose rigid bodies when the gravity scanner runs.
         staticTerrain.add(key)
         return
       }
