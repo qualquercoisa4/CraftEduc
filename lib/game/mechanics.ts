@@ -3089,20 +3089,19 @@ export class Mechanics {
       const falling: FallingBlock[] = []
       const keys = new Set(blocksInGroup.map((b) => b.key))
       for (const b of blocksInGroup) {
-        // Model-only components (servos, motors, sensors, etc.) render from
-        // their specialized Three.js model attached below. Treating them as
-        // generic cubes made tileFor() fall back to the iron texture while
-        // the assembly was falling, making components appear to change type.
+        // Model-only components render from their specialized model below.
+        // Keep an empty placeholder for non-cube blocks so FallingBlock remains
+        // structurally complete without creating an iron-looking generic cube.
+        let mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.blockMaterial)
         if (isOpaque(b.id)) {
           const buffers = newBuffers()
           emitCube(buffers, -0.5, -0.5, -0.5, b.id, false, () => false, b.state?.resinCoated ? '#e5c46a' : b.state?.color)
-          if (buffers.indices.length) {
-            const mesh = new THREE.Mesh(buffersToGeometry(buffers), this.blockMaterial)
-            mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
-            mesh.castShadow = true
-            mesh.receiveShadow = true
-            group.add(mesh)
-          }
+          mesh.geometry.dispose()
+          mesh.geometry = buffersToGeometry(buffers)
+          mesh.position.set(b.x + 0.5 - pivot.x, b.y + 0.5 - pivot.y, b.z + 0.5 - pivot.z)
+          mesh.castShadow = true
+          mesh.receiveShadow = true
+          if (buffers.indices.length) group.add(mesh)
         }
         falling.push({
           id: b.id, state: b.state ? { ...b.state } : undefined,
