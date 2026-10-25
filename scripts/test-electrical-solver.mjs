@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { solveDcCircuit } from '../lib/game/electrical.ts'
+import { formatCurrentReading, formatVoltageReading, solveDcCircuit } from '../lib/game/electrical.ts'
 
 const near = (actual, expected, tolerance, label) => {
   assert.ok(Number.isFinite(actual), `${label}: expected finite value, got ${actual}`)
@@ -42,6 +42,15 @@ const near = (actual, expected, tolerance, label) => {
     diodes: [],
   })
   near(solution.resistorCurrents.get('load'), 5 / 100.5, 1e-7, '5 V load current (A)')
+}
+
+// Unit formatting is shared by the simulation and multimeter; a 4.5 V source
+// must display as volts, not as 4500 volts or as 4500 millivolts without a unit.
+{
+  assert.equal(formatVoltageReading(4.5), '4.500 V', '4.5 volts display in volts')
+  assert.equal(formatVoltageReading(0.45), '450.0 mV', 'sub-volt readings display in millivolts')
+  assert.equal(formatCurrentReading(0.45), '450.0 mA', 'sub-amp readings display in milliamperes')
+  assert.equal(formatCurrentReading(4.5), '4.500 A', 'amp readings display in amperes')
 }
 
 // An unconnected circuit gets its own arbitrary voltage reference. A meter must
