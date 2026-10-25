@@ -2949,10 +2949,20 @@ export class Mechanics {
       this.physicsDirty = false
       const changedKeys = new Set(this.physicsDirtyKeys)
       this.physicsDirtyKeys.clear()
-      // A block edit only affects its vertical support column and any
-      // glue-connected assembly touching that column. Avoid re-scanning every
-      // loaded terrain voxel after each ordinary placement.
-      this.detectUnsupportedBodies(undefined, changedKeys.size ? changedKeys : undefined)
+      // The test laboratory is a fixed, prebuilt facility with thousands of
+      // structural voxels. A full startup support scan treats every unglued
+      // wall/floor/ceiling voxel as an independent candidate and repeatedly
+      // propagates support across all candidates, which can become quadratic
+      // and freeze slower devices. In this bounded world, only scan the local
+      // area after an actual block edit; the prebuilt lab shell is static.
+      if (this.world.type === 'test_lab') {
+        if (changedKeys.size) this.detectUnsupportedBodies(undefined, changedKeys)
+      } else {
+        // A block edit only affects its vertical support column and any
+        // glue-connected assembly touching that column. Avoid re-scanning every
+        // loaded terrain voxel after each ordinary placement.
+        this.detectUnsupportedBodies(undefined, changedKeys.size ? changedKeys : undefined)
+      }
     }
 
     // Rapier resolves motion and contacts. A body is written back to the voxel
