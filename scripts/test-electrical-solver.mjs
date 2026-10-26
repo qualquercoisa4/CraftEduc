@@ -119,6 +119,26 @@ const near = (actual, expected, tolerance, label) => {
   near(motorGeneratingTorqueNm(motor, (motor.stallCurrentA ?? 1.5) * 0.1), motor.stallTorqueNm * 0.1, 1e-8, 'small generated current still produces braking torque')
 }
 
+// The four motor families must retain their individual no-load speeds and stall-torque classes.
+// This protects the physical data that the rigid-body controller now uses without one shared speed cap.
+{
+  const ids = ['fa130', 'tt48', 'n20_100', '37d_30']
+  const results = ids.map((id) => {
+    const motor = getMotorSpec(id)
+    const command = motorDriveCommandForVoltageRatio(motor, 1, motor.stallCurrentA ?? 0)
+    near(command.targetOmega, motor.noLoadRpm * Math.PI * 2 / 60, 1e-7, id + ' nominal no-load speed')
+    near(command.maxTorqueNm, motor.stallTorqueNm, 1e-7, id + ' stall torque')
+    return { id, speed: command.targetOmega, torque: command.maxTorqueNm }
+  })
+  const byId = new Map(results.map((result) => [result.id, result]))
+  assert.ok(byId.get('fa130').speed > byId.get('37d_30').speed, 'FA-130 must be much faster than geared motors')
+  assert.ok(byId.get('37d_30').speed > byId.get('n20_100').speed, '37D 30:1 speed should exceed N20 100:1')
+  assert.ok(byId.get('n20_100').speed > byId.get('tt48').speed, 'N20 speed should exceed TT 1:48')
+  assert.ok(byId.get('37d_30').torque > byId.get('n20_100').torque, '37D must provide more stall torque than N20')
+  assert.ok(byId.get('n20_100').torque > byId.get('tt48').torque, 'N20 must provide more stall torque than TT')
+  assert.ok(byId.get('tt48').torque > byId.get('fa130').torque, 'geared TT must provide more stall torque than FA-130')
+}
+
 // A back-driven DC motor with a load must deliver current to the load and
 // experience generating torque, rather than being commanded to accelerate itself.
 {
