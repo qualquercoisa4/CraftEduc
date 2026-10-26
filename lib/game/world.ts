@@ -29,6 +29,8 @@ export interface BlockState {
   resistorActualOffsetPct?: number
   /** Set when excessive forward current permanently damages an LED. */
   ledBurnedOut?: boolean
+  /** Set when a direct terminal short permanently damages a DC motor. */
+  motorBurnedOut?: boolean
 }
 
 const CS = CHUNK_SIZE
