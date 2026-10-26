@@ -33,6 +33,7 @@ import {
   disposeObject,
   setBatteryCount,
   setMotorFacing,
+  setMotorBurnedOut,
   setSwitchState,
   motorOrientationQuaternion,
   facingQuaternion,
@@ -48,7 +49,8 @@ const MOTOR_COAST_TORQUE_NM = 0.001
 // Blocks are metre-scale in the game, but torque must still accelerate the
 // actual rigid-body inertia. A moderate scale avoids the old velocity-servo
 // behavior flinging large payloads toward a motor's no-load RPM.
-const MOTOR_SIMULATION_TORQUE_SCALE = 5
+const MOTOR_SIMULATION_TORQUE_SCALE = 120
+const MAX_MOTOR_SIMULATION_TORQUE_NM = 20
 const SERVO_SIMULATION_TORQUE_SCALE = 120
 const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
@@ -183,6 +185,21 @@ function estimateWheelNormalLoadShares(points: readonly THREE.Vector3[], centerO
   const shares = points.map(() => 0)
   for (const index of active) shares[index] = 1 / Math.max(1, active.length)
   return shares.some((share) => share > 0) ? shares : points.map(() => 1 / points.length)
+}
+
+function relativeAngularSpeed(
+  parentBody: RAPIER.RigidBody,
+  rotorBody: RAPIER.RigidBody,
+  localAxis: THREE.Vector3,
+) {
+  const rotation = parentBody.rotation()
+  const parentQuaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+  const worldAxis = localAxis.clone().applyQuaternion(parentQuaternion).normalize()
+  const rotor = rotorBody.angvel()
+  const parent = parentBody.angvel()
+  return (rotor.x - parent.x) * worldAxis.x
+    + (rotor.y - parent.y) * worldAxis.y
+    + (rotor.z - parent.z) * worldAxis.z
 }
 
 type ModelEntry =
@@ -403,6 +420,7 @@ export class Mechanics {
       st.facing ??= 2
       st.motorRoll ??= 0
       const model = createMotorModel(st.facing, st.motorType, st.motorRoll)
+      if (st.motorBurnedOut) setMotorBurnedOut(model, true)
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'motor', model, spin: 0, status: 'idle' })
@@ -476,6 +494,46 @@ export class Mechanics {
     if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
     if (newId !== B.AIR && this.world.getState(x, y, z)?.resinCoated) this.syncResinVisual(x, y, z)
     this.physicsDirty = true
+  }
+
+  /** Permanently records a motor damaged by a direct battery-terminal short. */
+  private markMotorBurnedOut(key: string) {
+    let changed = false
+    const markState = (state?: BlockState): BlockState => {
+      if (state?.motorBurnedOut) return state
+      changed = true
+      return { ...(state ?? {}), motorBurnedOut: true }
+    }
+    const [x, y, z] = parseKey(key)
+    if (this.world.getBlock(x, y, z) === B.MOTOR) {
+      const state = this.world.ensureState(x, y, z)
+      if (!state.motorBurnedOut) {
+        state.motorBurnedOut = true
+        changed = true
+        this.world.markBlockDirty(x, y, z)
+      }
+    }
+    // During articulated motion, the motor voxel is temporarily outside World.
+    // Keep the stored machine/rotor snapshots in sync so the fault persists.
+    for (const machine of this.contraptions.values()) {
+      if (machine.motorKey === key) machine.motorState = markState(machine.motorState)
+      for (const block of [...machine.blocks, ...machine.chassisBlocks]) {
+        if (block.origKey === key) block.state = markState(block.state)
+      }
+      for (const extra of machine.extraRotors ?? []) {
+        if (extra.motorKey === key) extra.motorState = markState(extra.motorState)
+        for (const block of extra.blocks) {
+          if (block.origKey === key) block.state = markState(block.state)
+        }
+      }
+    }
+    const entry = this.models.get(key)
+    if (entry?.type === 'motor') setMotorBurnedOut(entry.model, true)
+    if (changed) {
+      this.powerDirty = true
+      this.mechDirty = true
+    }
+    return changed
   }
 
   private removeResinVisual(key: string) {
@@ -567,6 +625,7 @@ export class Mechanics {
       const nextVariant = next?.motorType
       if (nextVariant && nextVariant !== previous?.motorType) {
         const replacement = createMotorModel(next?.facing ?? previous?.facing ?? 2, nextVariant, next?.motorRoll ?? 0)
+        if (next?.motorBurnedOut || previous?.motorBurnedOut) setMotorBurnedOut(replacement, true)
         replacement.group.position.copy(model.model.group.position)
         this.scene.add(replacement.group)
         disposeObject(model.model.group)
@@ -575,6 +634,7 @@ export class Mechanics {
       } else {
         setMotorFacing(model.model, next?.facing ?? previous?.facing ?? 2, next?.motorRoll ?? 0)
       }
+      if (next?.motorBurnedOut || previous?.motorBurnedOut) setMotorBurnedOut(model.model, true)
       this.refreshMotorTerminalWires(key)
       if (!this.contraptions.has(key) && !this.findExtraRotor(key)) this.rigidPhysics.syncStaticBlock(x, y, z)
     }
@@ -1581,6 +1641,8 @@ export class Mechanics {
       } else if (block.id === B.MOTOR) {
         addTerminals(key, ['A', 'B'])
         motorKeys.push(key)
+        // A short-damaged winding is now an open circuit; keep its terminals.
+        if (state.motorBurnedOut) continue
         const spec = getMotorSpec(state.motorType)
         const motorResistance = spec.nominalVoltageV / (spec.stallCurrentA ?? 1.5)
         const mechanism = this.contraptions.get(key)
@@ -1589,10 +1651,14 @@ export class Mechanics {
         // target speed. Target speed can jump when a body is re-keyed after a
         // block move, which previously fed an artificial voltage spike back
         // into the electrical solver.
+        // Use speed relative to the motor housing on the rotated shaft axis.
         const angularSpeed = mechanism
-          ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
-          : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
-          : 0
+          ? relativeAngularSpeed(mechanism.chassisBody, mechanism.rotorBody, mechanism.axis)
+          : extra ? relativeAngularSpeed(
+            extra.rotor.parent === 'rotor' ? extra.machine.rotorBody : extra.machine.chassisBody,
+            extra.rotor.rotorBody,
+            extra.rotor.axis,
+          ) : 0
         // Back-EMF follows the measured shaft speed and can exceed nominal voltage
         // when the motor is over-volted or externally driven. Bound only extreme
         // speeds to keep malformed contraptions from destabilizing the circuit solver.
@@ -1821,6 +1887,40 @@ export class Mechanics {
     }
     this.activeShortSources = currentShortSources
 
+    // A motor is marked damaged only when its same terminal directly bridges
+    // both poles of a battery pack and that pack has a confirmed short current.
+    const shortedBatteryKeys = new Set(
+      [...currentShortSources].map((sourceId) => sourceId.slice('battery-pack:'.length)),
+    )
+    const directlyShortedMotors = new Set<string>()
+    if (!this.noShortCircuit && shortedBatteryKeys.size > 0) {
+      for (const key of motorKeys) {
+        if (electricalBlocks.get(key)?.state?.motorBurnedOut) continue
+        for (const terminal of ['A', 'B'] as const) {
+          let positiveBattery: string | null = null
+          let negativeBattery: string | null = null
+          for (const wire of this.wires) {
+            let otherKey: string
+            let otherTerminal: string
+            if (wire.a === key && wire.ta === terminal) {
+              otherKey = wire.b
+              otherTerminal = wire.tb
+            } else if (wire.b === key && wire.tb === terminal) {
+              otherKey = wire.a
+              otherTerminal = wire.ta
+            } else continue
+            if (electricalBlocks.get(otherKey)?.id !== B.BATTERY_BOX) continue
+            if (otherTerminal === '+') positiveBattery = otherKey
+            if (otherTerminal === '-') negativeBattery = otherKey
+          }
+          if (positiveBattery && positiveBattery === negativeBattery && shortedBatteryKeys.has(positiveBattery)) {
+            directlyShortedMotors.add(key)
+            break
+          }
+        }
+      }
+    }
+
     this.motorPower.clear()
     this.motorTorqueNm.clear()
     this.motorDirection.clear()
@@ -1832,6 +1932,17 @@ export class Mechanics {
       // Assemblies temporarily remove the motor voxel from World; use the
       // canonical electrical-block snapshot so variant-specific ratings survive.
       const motorState = electricalBlocks.get(key)?.state
+      if (directlyShortedMotors.has(key) && !motorState?.motorBurnedOut) {
+        this.markMotorBurnedOut(key)
+        const snapshot = electricalBlocks.get(key)
+        if (snapshot) snapshot.state = { ...(snapshot.state ?? {}), motorBurnedOut: true }
+      }
+      if (motorState?.motorBurnedOut || directlyShortedMotors.has(key)) {
+        this.motorPower.set(key, 0)
+        this.motorTorqueNm.set(key, 0)
+        this.motorDirection.set(key, voltage >= 0 ? 1 : -1)
+        continue
+      }
       const spec = getMotorSpec(motorState?.motorType)
       const ratedVoltage = Math.max(1, spec.nominalVoltageV)
       const voltageRatio = Math.max(0, Math.min(MAX_MOTOR_MODEL_RATIO, Math.abs(voltage) / ratedVoltage))
@@ -1842,9 +1953,12 @@ export class Mechanics {
       const mechanism = this.contraptions.get(key)
       const extra = this.findExtraRotor(key)
       const angularSpeed = mechanism
-        ? (() => { const v = mechanism.rotorBody.angvel(); const axis = DIRS[mechanism.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
-        : extra ? (() => { const v = extra.rotor.rotorBody.angvel(); const axis = DIRS[extra.rotor.facing]; return v.x * axis[0] + v.y * axis[1] + v.z * axis[2] })()
-        : 0
+        ? relativeAngularSpeed(mechanism.chassisBody, mechanism.rotorBody, mechanism.axis)
+        : extra ? relativeAngularSpeed(
+          extra.rotor.parent === 'rotor' ? extra.machine.rotorBody : extra.machine.chassisBody,
+          extra.rotor.rotorBody,
+          extra.rotor.axis,
+        ) : 0
       this.motorTorqueNm.set(key, motorTorqueFromCurrent(spec, windingCurrent, angularSpeed))
 
       if (powerFlow === 'motoring' && usableTerminalVoltage) {
@@ -3680,32 +3794,45 @@ export class Mechanics {
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
         const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
-        const legacyDrive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
-        const requestedSpeed = legacyDrive.targetOmega * direction
-        // Drive with bounded electromagnetic torque, not a target-speed servo.
-        // A heavier glued load therefore accelerates more slowly and can stall.
+        const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
+        const requestedSpeed = drive.targetOmega * direction
         const torqueNm = this.motorTorqueNm.get(c.motorKey)
-          ?? (legacyDrive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
-        const torqueWorld = Math.max(0.00001, Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE)
+          ?? (drive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
+        const torqueWorld = THREE.MathUtils.clamp(
+          Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE,
+          0.00001,
+          MAX_MOTOR_SIMULATION_TORQUE_NM,
+        )
         const signedTorque = Math.sign(torqueNm) || direction
-        const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
-        c.speed += THREE.MathUtils.clamp(requestedSpeed - c.speed, -maxSpeedStep, maxSpeedStep)
+        const actualSpeed = relativeAngularSpeed(c.chassisBody, c.rotorBody, c.axis)
+        const approximateInertia = Math.max(0.025, c.rotorBody.mass() / 3)
+        // Advance the setpoint from measured speed only as fast as the
+        // available electromagnetic torque can accelerate the payload.
+        const targetLead = THREE.MathUtils.clamp(
+          torqueWorld / (approximateInertia * MOTOR_VELOCITY_DAMPING) * 1.25,
+          0.05,
+          8,
+        )
+        c.speed = requestedSpeed >= actualSpeed
+          ? Math.min(requestedSpeed, actualSpeed + targetLead)
+          : Math.max(requestedSpeed, actualSpeed - targetLead)
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
         c.joint.setMotorMaxForce(torqueWorld)
         c.joint.configureMotorVelocity(c.speed, MOTOR_VELOCITY_DAMPING)
-        // A signed current reversal is braking/reversing torque, not extra drive.
-        if (signedTorque !== direction) {
-          c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
-        }
+        // A current reversal creates braking torque instead of extra drive.
+        if (signedTorque !== direction) c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else if (Math.abs(this.motorTorqueNm.get(c.motorKey) ?? 0) > 0.000001) {
-        // Current induced by back-EMF generates opposing torque. Do not let a
-        // motor that is being back-driven become an unpowered free-spinning rotor.
         const torqueNm = this.motorTorqueNm.get(c.motorKey) ?? 0
+        const torqueWorld = THREE.MathUtils.clamp(
+          Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE,
+          0.00001,
+          MAX_MOTOR_SIMULATION_TORQUE_NM,
+        )
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
-        c.joint.setMotorMaxForce(Math.max(0.00001, Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE))
+        c.joint.setMotorMaxForce(torqueWorld)
         c.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
         if (motor?.type === 'motor') motor.status = 'driving'
       } else {
@@ -3764,16 +3891,37 @@ export class Mechanics {
           const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
           if (this.turboMotors) { drive.maxTorqueNm *= 1.8; drive.targetOmega *= 1.35 }
           const requestedSpeed = drive.targetOmega * extraDirection
-          const maxSpeedStep = 18 * Math.max(0, Math.min(dt, 1 / 30))
-          extra.speed += THREE.MathUtils.clamp(requestedSpeed - extra.speed, -maxSpeedStep, maxSpeedStep)
+          const rawTorqueNm = this.motorTorqueNm.get(extra.motorKey)
+            ?? (drive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
+          const torqueWorld = THREE.MathUtils.clamp(
+            Math.abs(rawTorqueNm) * MOTOR_SIMULATION_TORQUE_SCALE * (this.turboMotors ? 1.8 : 1),
+            0.00001,
+            MAX_MOTOR_SIMULATION_TORQUE_NM,
+          )
+          const parentBody = extra.parent === 'rotor' ? c.rotorBody : c.chassisBody
+          const actualSpeed = relativeAngularSpeed(parentBody, extra.rotorBody, extra.axis)
+          const approximateInertia = Math.max(0.025, extra.rotorBody.mass() / 3)
+          const targetLead = THREE.MathUtils.clamp(
+            torqueWorld / (approximateInertia * MOTOR_VELOCITY_DAMPING) * 1.25,
+            0.05,
+            8,
+          )
+          extra.speed = requestedSpeed >= actualSpeed
+            ? Math.min(requestedSpeed, actualSpeed + targetLead)
+            : Math.max(requestedSpeed, actualSpeed - targetLead)
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(Math.max(0.00001, drive.maxTorqueNm))
+          extra.joint.setMotorMaxForce(torqueWorld)
           extra.joint.configureMotorVelocity(extra.speed, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
-        } else if ((this.motorTorqueNm.get(extra.motorKey) ?? 0) > 0) {
+        } else if (Math.abs(this.motorTorqueNm.get(extra.motorKey) ?? 0) > 0.000001) {
           const brakeTorque = this.motorTorqueNm.get(extra.motorKey) ?? 0
+          const torqueWorld = THREE.MathUtils.clamp(
+            Math.abs(brakeTorque) * MOTOR_SIMULATION_TORQUE_SCALE,
+            0.00001,
+            MAX_MOTOR_SIMULATION_TORQUE_NM,
+          )
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(Math.max(0.00001, brakeTorque))
+          extra.joint.setMotorMaxForce(torqueWorld)
           extra.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else {
