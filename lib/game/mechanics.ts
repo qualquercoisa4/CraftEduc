@@ -49,8 +49,9 @@ const MOTOR_COAST_TORQUE_NM = 0.001
 // Convert small real-world motor torques to metre-scale voxel mechanics. The
 // output torque is capped separately, while the target follows measured speed.
 const MOTOR_SIMULATION_TORQUE_SCALE = 120
+// Kept only as a compatibility ceiling for old saves with no explicit motor type.
+// Typed motors use a torque ceiling derived from their own stall-torque rating.
 const MAX_MOTOR_SIMULATION_TORQUE_NM = 4
-const MAX_MOTOR_GAME_ANGULAR_SPEED = 4.5
 const MAX_MOTOR_TARGET_LEAD = 0.4
 const SERVO_SIMULATION_TORQUE_SCALE = 120
 const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
@@ -83,6 +84,22 @@ function motorDriveCommand(
     maxTorqueNm: drive.maxTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE,
   }
 }
+
+/** Per-motor torque ceiling: typed motors retain their own torque class instead of
+ * all saturating at one global gameplay limit. The legacy fallback preserves old saves. */
+function motorTorqueWorldLimit(variant: string | undefined, multiplier = 1) {
+  const physicalLimit = variant
+    ? getMotorSpec(variant).stallTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE * MAX_MOTOR_MODEL_RATIO
+    : MAX_MOTOR_SIMULATION_TORQUE_NM
+  return Math.max(0.00001, physicalLimit * multiplier)
+}
+
+function motorTorqueWorld(variant: string | undefined, torqueNm: number, multiplier = 1) {
+  const torque = Math.abs(Number.isFinite(torqueNm) ? torqueNm : 0)
+    * MOTOR_SIMULATION_TORQUE_SCALE * multiplier
+  return THREE.MathUtils.clamp(torque, 0.00001, motorTorqueWorldLimit(variant, multiplier))
+}
+
 // Avoid the exact PI boundary in revolute-joint limits.
 const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
@@ -3573,11 +3590,7 @@ export class Mechanics {
       // so the velocity target could propel a heavy chassis with near-unlimited
       // force even when the tiny motor had very little torque available.
       const motorTorqueNm = Math.abs(this.motorTorqueNm.get(wheel.motorKey) ?? 0)
-      const driveTorque = THREE.MathUtils.clamp(
-        motorTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE,
-        0,
-        MAX_MOTOR_SIMULATION_TORQUE_NM,
-      )
+      const driveTorque = Math.max(0, motorTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE)
       contacts.push({
         axis: axle, drive, lateral, rotorBody: wheel.rotorBody, point: contactPoint, gap,
         // At the bottom of a wheel, v = omega x r points opposite axle x up.
@@ -3821,14 +3834,10 @@ export class Mechanics {
       } else if (power > 0) {
         const windingCurrent = this.electricalBranchCurrents.get(`motor:${c.motorKey}`) ?? 0
         const drive = motorDriveCommand(c.motorState?.motorType, power, windingCurrent)
-        const requestedSpeed = Math.min(drive.targetOmega, MAX_MOTOR_GAME_ANGULAR_SPEED) * direction
+        const requestedSpeed = drive.targetOmega * direction
         const torqueNm = this.motorTorqueNm.get(c.motorKey)
           ?? (drive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
-        const torqueWorld = THREE.MathUtils.clamp(
-          Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE,
-          0.00001,
-          MAX_MOTOR_SIMULATION_TORQUE_NM,
-        )
+        const torqueWorld = motorTorqueWorld(c.motorState?.motorType, torqueNm)
         const signedTorque = Math.sign(torqueNm) || direction
         const actualSpeed = relativeAngularSpeed(c.chassisBody, c.rotorBody, c.axis)
         const approximateInertia = Math.max(0.025, c.rotorBody.mass() / 3)
@@ -3837,7 +3846,7 @@ export class Mechanics {
         const targetLead = THREE.MathUtils.clamp(
           torqueWorld / (approximateInertia * MOTOR_VELOCITY_DAMPING) * 0.15,
           0.01,
-          MAX_MOTOR_TARGET_LEAD,
+          Math.max(MAX_MOTOR_TARGET_LEAD, drive.targetOmega / 60),
         )
         c.speed = requestedSpeed >= actualSpeed
           ? Math.min(requestedSpeed, actualSpeed + targetLead)
@@ -3851,11 +3860,7 @@ export class Mechanics {
         if (motor?.type === 'motor') motor.status = 'driving'
       } else if (Math.abs(this.motorTorqueNm.get(c.motorKey) ?? 0) > 0.000001) {
         const torqueNm = this.motorTorqueNm.get(c.motorKey) ?? 0
-        const torqueWorld = THREE.MathUtils.clamp(
-          Math.abs(torqueNm) * MOTOR_SIMULATION_TORQUE_SCALE,
-          0.00001,
-          MAX_MOTOR_SIMULATION_TORQUE_NM,
-        )
+        const torqueWorld = motorTorqueWorld(c.motorState?.motorType, torqueNm)
         c.unpoweredTime = 0
         c.disassemblyRetryCooldown = 0
         c.joint.setMotorMaxForce(torqueWorld)
@@ -3916,13 +3921,11 @@ export class Mechanics {
           const windingCurrent = this.electricalBranchCurrents.get(`motor:${extra.motorKey}`) ?? 0
           const drive = motorDriveCommand(extra.motorState?.motorType, extraPower, windingCurrent)
           if (this.turboMotors) { drive.maxTorqueNm *= 1.8; drive.targetOmega *= 1.35 }
-          const requestedSpeed = Math.min(drive.targetOmega, MAX_MOTOR_GAME_ANGULAR_SPEED) * extraDirection
+          const requestedSpeed = drive.targetOmega * extraDirection
           const rawTorqueNm = this.motorTorqueNm.get(extra.motorKey)
             ?? (drive.maxTorqueNm / MOTOR_SIMULATION_TORQUE_SCALE)
-          const torqueWorld = THREE.MathUtils.clamp(
-            Math.abs(rawTorqueNm) * MOTOR_SIMULATION_TORQUE_SCALE * (this.turboMotors ? 1.8 : 1),
-            0.00001,
-            MAX_MOTOR_SIMULATION_TORQUE_NM,
+          const torqueWorld = motorTorqueWorld(
+            extra.motorState?.motorType, rawTorqueNm, this.turboMotors ? 1.8 : 1,
           )
           const parentBody = extra.parent === 'rotor' ? c.rotorBody : c.chassisBody
           const actualSpeed = relativeAngularSpeed(parentBody, extra.rotorBody, extra.axis)
@@ -3930,7 +3933,7 @@ export class Mechanics {
           const targetLead = THREE.MathUtils.clamp(
             torqueWorld / (approximateInertia * MOTOR_VELOCITY_DAMPING) * 0.15,
             0.01,
-            MAX_MOTOR_TARGET_LEAD,
+            Math.max(MAX_MOTOR_TARGET_LEAD, drive.targetOmega / 60),
           )
           extra.speed = requestedSpeed >= actualSpeed
             ? Math.min(requestedSpeed, actualSpeed + targetLead)
@@ -3941,11 +3944,7 @@ export class Mechanics {
           if (extraMotor?.type === 'motor') extraMotor.status = 'driving'
         } else if (Math.abs(this.motorTorqueNm.get(extra.motorKey) ?? 0) > 0.000001) {
           const brakeTorque = this.motorTorqueNm.get(extra.motorKey) ?? 0
-          const torqueWorld = THREE.MathUtils.clamp(
-            Math.abs(brakeTorque) * MOTOR_SIMULATION_TORQUE_SCALE,
-            0.00001,
-            MAX_MOTOR_SIMULATION_TORQUE_NM,
-          )
+          const torqueWorld = motorTorqueWorld(extra.motorState?.motorType, brakeTorque)
           extra.unpoweredTime = 0
           extra.joint.setMotorMaxForce(torqueWorld)
           extra.joint.configureMotorVelocity(0, MOTOR_VELOCITY_DAMPING)
