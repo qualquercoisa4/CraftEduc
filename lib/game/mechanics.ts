@@ -46,9 +46,8 @@ const HALF_PI = Math.PI / 2
 // Approximate electromechanical limits in SI units.
 const MOTOR_VELOCITY_DAMPING = 2.0
 const MOTOR_COAST_TORQUE_NM = 0.001
-// Blocks are metre-scale in the game, but torque must still accelerate the
-// actual rigid-body inertia. A moderate scale avoids the old velocity-servo
-// behavior flinging large payloads toward a motor's no-load RPM.
+// Convert small real-world motor torques to metre-scale voxel mechanics. The
+// output torque is capped separately, while the target follows measured speed.
 const MOTOR_SIMULATION_TORQUE_SCALE = 120
 const MAX_MOTOR_SIMULATION_TORQUE_NM = 20
 const SERVO_SIMULATION_TORQUE_SCALE = 120
@@ -510,6 +509,7 @@ export class Mechanics {
       if (!state.motorBurnedOut) {
         state.motorBurnedOut = true
         changed = true
+        this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
         this.world.markBlockDirty(x, y, z)
       }
     }
