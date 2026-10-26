@@ -70,6 +70,26 @@ export function formatCurrentReading(currentAmps: number): string {
     : `${magnitude.toFixed(3)} A`
 }
 
+/**
+ * High source current alone is not enough to identify a short: several
+ * legitimate motors can draw substantial start-up current in parallel.
+ * Require both an over-current and a collapsed battery terminal voltage.
+ */
+export function isBatteryShortCircuit(
+  sourceCurrentAmps: number,
+  terminalVoltageVolts: number,
+  sourceVoltageVolts: number,
+  minimumCurrentAmps = 4.5,
+  maximumTerminalVoltageRatio = 0.35,
+) {
+  if (![sourceCurrentAmps, terminalVoltageVolts, sourceVoltageVolts,
+    minimumCurrentAmps, maximumTerminalVoltageRatio].every(Number.isFinite)) return false
+  const sourceVoltage = Math.abs(sourceVoltageVolts)
+  if (sourceVoltage < 0.1 || minimumCurrentAmps < 0 || maximumTerminalVoltageRatio < 0) return false
+  return Math.abs(sourceCurrentAmps) >= minimumCurrentAmps
+    && Math.abs(terminalVoltageVolts) <= sourceVoltage * maximumTerminalVoltageRatio
+}
+
 function clampResistance(value: number) {
   return Number.isFinite(value) ? Math.max(MIN_RESISTANCE, value) : 1e12
 }

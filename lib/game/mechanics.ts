@@ -2,8 +2,8 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorTorqueFromCurrent } from './motor-model'
-import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorTorqueFromCurrent, stepFreeMotorAngularSpeed } from './motor-model'
+import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
 import {
@@ -336,6 +336,8 @@ export class Mechanics {
   contraptions = new Map<string, Contraption>()
   glows = new Map<string, THREE.Sprite>()
   motorPower = new Map<string, number>()
+  /** Signed angular speed for motors whose output shaft is not attached to a physics assembly. */
+  private freeMotorAngularSpeeds = new Map<string, number>()
   /** Signed shaft torque calculated from current (N·m before world-scale conversion). */
   motorTorqueNm = new Map<string, number>()
   /** Last solved DC node voltages (volts) and named branch currents (amperes). */
@@ -415,6 +417,7 @@ export class Mechanics {
     if (!this.suppress) this.physicsDirtyKeys.add(key)
     this.removeResinVisual(key)
     if (this.suppress) return
+    if (oldId === B.MOTOR && newId !== B.MOTOR) this.freeMotorAngularSpeeds.delete(key)
     if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
     if (oldId === B.SERVO) this.programmedServoAngles.delete(key)
     if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO || oldId === B.RESISTOR) {
@@ -1677,7 +1680,7 @@ export class Mechanics {
             extra.rotor.parent === 'rotor' ? extra.machine.rotorBody : extra.machine.chassisBody,
             extra.rotor.rotorBody,
             extra.rotor.axis,
-          ) : 0
+          ) : (this.freeMotorAngularSpeeds.get(key) ?? 0)
         // Back-EMF follows the measured shaft speed and can exceed nominal voltage
         // when the motor is over-volted or externally driven. Bound only extreme
         // speeds to keep malformed contraptions from destabilizing the circuit solver.
@@ -1897,7 +1900,13 @@ export class Mechanics {
     for (const source of sources) {
       if (!source.id.startsWith('battery-pack:')) continue
       const current = Math.abs(solution.sourceCurrents.get(source.id) ?? 0)
-      if (!this.noShortCircuit && current >= shortThresholdAmps) {
+      const terminalVoltage = Math.abs(
+        (solution.nodeVoltages.get(source.positive) ?? 0)
+        - (solution.nodeVoltages.get(source.negative) ?? 0),
+      )
+      if (!this.noShortCircuit && isBatteryShortCircuit(
+        current, terminalVoltage, source.voltageVolts, shortThresholdAmps,
+      )) {
         currentShortSources.add(source.id)
         if (!this.activeShortSources.has(source.id)) {
           this.shortCircuitEventQueue.push(source.id.slice('battery-pack:'.length))
@@ -1977,7 +1986,7 @@ export class Mechanics {
           extra.rotor.parent === 'rotor' ? extra.machine.rotorBody : extra.machine.chassisBody,
           extra.rotor.rotorBody,
           extra.rotor.axis,
-        ) : 0
+        ) : (this.freeMotorAngularSpeeds.get(key) ?? 0)
       this.motorTorqueNm.set(key, motorTorqueFromCurrent(spec, windingCurrent, angularSpeed))
 
       if (powerFlow === 'motoring' && usableTerminalVoltage) {
@@ -2562,6 +2571,8 @@ export class Mechanics {
       wireEnds,
       extraRotors,
     })
+    this.freeMotorAngularSpeeds.delete(motorKey)
+    for (const extra of extraRotors) this.freeMotorAngularSpeeds.delete(extra.motorKey)
     this.physicsDirty = true
     this.powerDirty = true
     return 'driving'
@@ -2569,6 +2580,11 @@ export class Mechanics {
 
   private disassemble(c: Contraption, quarterTurns: number): Map<string, string> | null {
     const rotorTranslation = c.rotorBody.translation()
+    this.freeMotorAngularSpeeds.set(c.motorKey, relativeAngularSpeed(c.chassisBody, c.rotorBody, c.axis))
+    for (const extra of c.extraRotors ?? []) {
+      const parentBody = extra.parent === 'rotor' ? c.rotorBody : c.chassisBody
+      this.freeMotorAngularSpeeds.set(extra.motorKey, relativeAngularSpeed(parentBody, extra.rotorBody, extra.axis))
+    }
     const chassisTranslation = c.chassisBody.translation()
     const rotorPivot = new THREE.Vector3(rotorTranslation.x, rotorTranslation.y, rotorTranslation.z)
     const chassisPivot = new THREE.Vector3(chassisTranslation.x, chassisTranslation.y, chassisTranslation.z)
@@ -3672,7 +3688,11 @@ export class Mechanics {
     const electricalMotion = [...this.contraptions.values()].some((machine) =>
       Math.abs(machine.speed) > 0.5 || (machine.extraRotors ?? []).some((rotor) => Math.abs(rotor.speed) > 0.5),
     )
-    if (electricalMotion && this.circuitRefreshTimer <= 0) {
+    const freeMotorElectricalMotion = this.networkAuthority && [...this.models.entries()].some(([key, entry]) =>
+      entry.type === 'motor' && !this.contraptions.has(key) && !this.findExtraRotor(key)
+      && ((this.motorPower.get(key) ?? 0) > 0 || Math.abs(this.freeMotorAngularSpeeds.get(key) ?? 0) > 1),
+    )
+    if ((electricalMotion || freeMotorElectricalMotion) && this.circuitRefreshTimer <= 0) {
       this.circuitRefreshTimer = 0.12
       this.powerDirty = true
     }
@@ -3771,8 +3791,19 @@ export class Mechanics {
         e.model.shaft.rotation.z = extra.angle
       } else if (c) {
         e.model.shaft.rotation.z = c.angle
-      } else if (power > 0 && e.status !== 'stalled') {
-        if (this.networkAuthority || this.desiredNetworkMachines !== null) e.spin += power * 2.4 * dt * (this.motorDirection.get(key) ?? 1)
+      } else {
+        if (this.networkAuthority || this.desiredNetworkMachines !== null) {
+          const currentSpeed = this.freeMotorAngularSpeeds.get(key) ?? 0
+          const windingCurrent = this.electricalBranchCurrents.get(`motor:${key}`) ?? 0
+          const spec = getMotorSpec(this.lookup(key).state?.motorType)
+          const drive = motorDriveCommand(this.lookup(key).state?.motorType, power, windingCurrent)
+          const targetSpeed = power > 0 && e.status !== 'stalled'
+            ? drive.targetOmega * (this.motorDirection.get(key) ?? 1)
+            : 0
+          const nextSpeed = stepFreeMotorAngularSpeed(spec, currentSpeed, targetSpeed, windingCurrent, dt)
+          this.freeMotorAngularSpeeds.set(key, nextSpeed)
+          e.spin += nextSpeed * dt
+        }
         e.model.shaft.rotation.z = e.spin
       }
       const mounted = this.mountedWheels.get(key)

@@ -33,6 +33,42 @@ export function motorNoLoadAngularSpeed(spec: MotorSpec) {
   return Math.max(0, spec.noLoadRpm) * Math.PI * 2 / 60
 }
 
+/**
+ * Advance the exposed shaft of a motor that is powered but has no articulated
+ * load yet. Terminal voltage sets the target; current controls response speed.
+ * An open-circuit motor coasts down rather than freezing its animation.
+ *
+ * Rotor inertia is not available for every reference motor, so these time
+ * constants are stable first-order approximations, not catalog measurements.
+ */
+export function stepFreeMotorAngularSpeed(
+  spec: MotorSpec,
+  currentOmega: number,
+  targetOmega: number,
+  windingCurrentA: number,
+  deltaSeconds: number,
+) {
+  if (!Number.isFinite(currentOmega)) currentOmega = 0
+  if (!Number.isFinite(targetOmega)) targetOmega = 0
+  const dt = clamp(deltaSeconds, 0, 0.1)
+  if (dt <= 0) return currentOmega
+
+  const current = Math.abs(Number.isFinite(windingCurrentA) ? windingCurrentA : 0)
+  if (Math.abs(targetOmega) < 1e-4 && current < 0.01) {
+    const coastTimeConstant = spec.id === 'fa130' ? 0.8 : 1.1
+    return currentOmega * Math.exp(-dt / coastTimeConstant)
+  }
+
+  const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
+  const currentRatio = clamp(current / stallCurrentA, 0.08, MAX_MOTOR_MODEL_RATIO)
+  const baseTimeConstant = spec.id === 'fa130' ? 0.035
+    : spec.id === 'tt48' ? 0.085
+      : spec.id === 'n20_100' ? 0.10 : 0.12
+  const timeConstant = baseTimeConstant / Math.sqrt(currentRatio)
+  const response = 1 - Math.exp(-dt / timeConstant)
+  return currentOmega + (targetOmega - currentOmega) * response
+}
+
 /** Estimate signed armature back-EMF from measured shaft speed, not target speed. */
 export function estimateMotorBackEmfVolts(spec: MotorSpec, angularSpeedRadPerSec: number) {
   const nominalOmega = motorNoLoadAngularSpeed(spec)

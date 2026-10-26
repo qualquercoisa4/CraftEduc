@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { formatCurrentReading, formatVoltageReading, limitResistorBranchCurrent, solveDcCircuit } from '../lib/game/electrical.ts'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm } from '../lib/game/motor-model.ts'
+import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, solveDcCircuit } from '../lib/game/electrical.ts'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, stepFreeMotorAngularSpeed } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
 const near = (actual, expected, tolerance, label) => {
@@ -137,6 +137,69 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(byId.get('37d_30').torque > byId.get('n20_100').torque, '37D must provide more stall torque than N20')
   assert.ok(byId.get('n20_100').torque > byId.get('tt48').torque, 'N20 must provide more stall torque than TT')
   assert.ok(byId.get('tt48').torque > byId.get('fa130').torque, 'geared TT must provide more stall torque than FA-130')
+}
+
+// A standalone motor must ramp toward its rated no-load speed instead of using
+// an arbitrary slow animation; the four motor types retain distinct speeds.
+{
+  for (const id of ['fa130', 'tt48', 'n20_100', '37d_30']) {
+    const spec = getMotorSpec(id)
+    const targetOmega = spec.noLoadRpm * Math.PI * 2 / 60
+    let omega = 0
+    for (let step = 0; step < 500; step++) {
+      omega = stepFreeMotorAngularSpeed(spec, omega, targetOmega, spec.stallCurrentA ?? 1.5, 0.01)
+    }
+    near(omega, targetOmega, Math.max(0.01, targetOmega * 1e-4), id + ' free shaft reaches rated speed')
+    const halfVoltageTarget = targetOmega * 0.5
+    for (let step = 0; step < 500; step++) {
+      omega = stepFreeMotorAngularSpeed(spec, omega, halfVoltageTarget, spec.stallCurrentA ?? 1.5, 0.01)
+    }
+    near(omega, halfVoltageTarget, Math.max(0.01, targetOmega * 1e-4), id + ' lower supply reduces free shaft speed')
+  }
+  const spec = getMotorSpec('fa130')
+  const coasting = stepFreeMotorAngularSpeed(spec, 100, 0, 0, 0.016)
+  assert.ok(coasting > 0 && coasting < 100, 'an open-circuit free shaft coasts down rather than freezing or snapping to zero')
+}
+
+// Adding a second motor in parallel increases total start-up current and sags
+// the common battery voltage, so both motors receive less voltage than the
+// single-motor case. This is a battery-current sharing effect, not equal current division.
+{
+  const pack = { id: 'three-cells', positive: 'pack+', negative: 'pack-', voltageVolts: 4.5, internalResistanceOhms: 0.45 }
+  const solveStart = (motorIds) => {
+    const specs = motorIds.map((id) => getMotorSpec(id))
+    const solution = solveDcCircuit({
+      nodes: ['pack+', 'pack-'],
+      resistors: specs.map((spec, index) => ({
+        id: `motor-${index}`, a: 'pack+', b: 'pack-',
+        resistanceOhms: spec.nominalVoltageV / (spec.stallCurrentA ?? 1.5),
+      })),
+      voltageSources: [pack],
+      diodes: [],
+    })
+    const voltage = (solution.nodeVoltages.get('pack+') ?? 0) - (solution.nodeVoltages.get('pack-') ?? 0)
+    const current = solution.sourceCurrents.get(pack.id) ?? 0
+    return { voltage, current, solution, specs }
+  }
+  const single = solveStart(['fa130'])
+  const shared = solveStart(['fa130', 'n20_100'])
+  assert.ok(shared.current > single.current, 'two motors draw more start-up current than one')
+  assert.ok(shared.voltage < single.voltage, 'shared battery terminal voltage sags more with two motors')
+  assert.ok(shared.voltage / getMotorSpec('fa130').nominalVoltageV
+    < single.voltage / getMotorSpec('fa130').nominalVoltageV,
+  'the FA-130 no-load target must fall with the shared supply voltage')
+  near(
+    shared.specs.reduce((sum, spec, index) => sum + (shared.solution.resistorCurrents.get(`motor-${index}`) ?? 0), 0),
+    shared.current, 1e-6, 'parallel motor currents add to battery source current',
+  )
+}
+
+// High current by itself does not prove a battery short; require the pack voltage
+// to collapse as well. A real near-zero-ohm bridge still trips the detector.
+{
+  assert.equal(isBatteryShortCircuit(5.2, 2.4, 4.5), false, 'high start-up current with a healthy terminal voltage is not a short')
+  assert.equal(isBatteryShortCircuit(9.5, 0.08, 4.5), true, 'a high current with collapsed battery voltage is a short')
+  assert.equal(isBatteryShortCircuit(2.0, 0.01, 4.5), false, 'a low-current near-zero reading does not trip the current threshold')
 }
 
 // A back-driven DC motor with a load must deliver current to the load and
