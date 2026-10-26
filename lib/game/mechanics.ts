@@ -3506,18 +3506,19 @@ export class Mechanics {
       gap: number
       surfaceSpeed: number
       friction: number
+      maxDriveForce: number
     }
     const hasPrimaryWheel = Boolean(c.motorState?.mountedWheel) || this.mountedWheels.has(c.motorKey)
-    const wheels: { axisLocal: THREE.Vector3; offsetLocal: THREE.Vector3; rotorBody: RAPIER.RigidBody }[] = []
+    const wheels: { motorKey: string; axisLocal: THREE.Vector3; offsetLocal: THREE.Vector3; rotorBody: RAPIER.RigidBody }[] = []
     if (hasPrimaryWheel) {
-      wheels.push({ axisLocal: c.axis.clone(), offsetLocal: c.axis.clone().multiplyScalar(0.36), rotorBody: c.rotorBody })
+      wheels.push({ motorKey: c.motorKey, axisLocal: c.axis.clone(), offsetLocal: c.axis.clone().multiplyScalar(0.36), rotorBody: c.rotorBody })
     }
     for (const block of c.chassisBlocks ?? []) {
       if (block.id !== B.MOTOR || !block.state?.mountedWheel) continue
       const rotor = c.extraRotors.find((candidate) => candidate.motorKey === block.origKey)
       if (!rotor) continue
       const axis = new THREE.Vector3(...DIRS[rotor.facing])
-      wheels.push({ axisLocal: axis, offsetLocal: new THREE.Vector3(...block.rel).addScaledVector(axis, 0.36), rotorBody: rotor.rotorBody })
+      wheels.push({ motorKey: rotor.motorKey, axisLocal: axis, offsetLocal: new THREE.Vector3(...block.rel).addScaledVector(axis, 0.36), rotorBody: rotor.rotorBody })
     }
     if (wheels.length === 0) return
 
@@ -3567,10 +3568,21 @@ export class Mechanics {
         rotorAngular.z - chassisAngular.z,
       )
       const friction = THREE.MathUtils.clamp(Math.sqrt(blockFriction(B.WHEEL) * blockFriction(supportBlockId)), 0.15, 1.15)
+      // Limit tractive force by both tyre grip and the torque the motor can
+      // actually deliver. Previously the tyre model only enforced friction,
+      // so the velocity target could propel a heavy chassis with near-unlimited
+      // force even when the tiny motor had very little torque available.
+      const motorTorqueNm = Math.abs(this.motorTorqueNm.get(wheel.motorKey) ?? 0)
+      const driveTorque = THREE.MathUtils.clamp(
+        motorTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE,
+        0,
+        MAX_MOTOR_SIMULATION_TORQUE_NM,
+      )
       contacts.push({
         axis: axle, drive, lateral, rotorBody: wheel.rotorBody, point: contactPoint, gap,
         // At the bottom of a wheel, v = omega x r points opposite axle x up.
         surfaceSpeed: -relativeSpin.dot(axle) * radius, friction,
+        maxDriveForce: driveTorque / radius,
       })
     }
     if (contacts.length === 0) return
@@ -3596,11 +3608,23 @@ export class Mechanics {
     contacts.forEach((contact, index) => {
       const staticNormalLoad = totalMass * 9.81 * normalLoadShares[index]
       const contactVelocity = chassisVelocity.clone().add(chassisAngular.clone().cross(contact.point.clone().sub(chassisPosition)))
-      const normalForce = THREE.MathUtils.clamp(staticNormalLoad - contact.gap * 520 - contactVelocity.y * 34, 0, staticNormalLoad * 3)
+      // The contact patch cannot support arbitrarily large forces when the
+      // wheel penetrates the floor. Keep the numerical suspension correction
+      // close to the static wheel load instead of creating bounce/launch impulses.
+      const normalForce = THREE.MathUtils.clamp(
+        staticNormalLoad - contact.gap * 520 - contactVelocity.y * 34,
+        0,
+        staticNormalLoad * 1.5,
+      )
       const maxTyreForce = normalForce * contact.friction
+      const maxLongitudinalForce = Math.min(maxTyreForce, contact.maxDriveForce)
       const forwardSpeed = contactVelocity.dot(contact.drive)
       const lateralSpeed = contactVelocity.dot(contact.lateral)
-      const longitudinalForce = THREE.MathUtils.clamp((contact.surfaceSpeed - forwardSpeed) * 24, -maxTyreForce, maxTyreForce)
+      const longitudinalForce = THREE.MathUtils.clamp(
+        (contact.surfaceSpeed - forwardSpeed) * 24,
+        -maxLongitudinalForce,
+        maxLongitudinalForce,
+      )
       const lateralLimit = Math.sqrt(Math.max(0, maxTyreForce * maxTyreForce - longitudinalForce * longitudinalForce))
       const lateralForce = THREE.MathUtils.clamp(-lateralSpeed * 28, -lateralLimit, lateralLimit)
       const force = contact.drive.clone().multiplyScalar(longitudinalForce)
