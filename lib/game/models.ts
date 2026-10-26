@@ -317,6 +317,33 @@ export function createMotorModel(facing: number, variant: MotorVariantId = 'fa13
   return { group, shaft, terminals }
 }
 
+/** Darken a motor permanently after an electrical short without mutating shared materials. */
+export function setMotorBurnedOut(model: MotorModel, burnedOut: boolean) {
+  if (model.group.userData.motorBurnedOut === burnedOut) return
+  if (burnedOut) {
+    model.group.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      const mesh = object
+      if (!mesh.userData.motorOriginalMaterial) mesh.userData.motorOriginalMaterial = mesh.material
+      const original = mesh.userData.motorOriginalMaterial as THREE.Material | THREE.Material[]
+      const darken = (source: THREE.Material) => {
+        const material = source.clone() as THREE.Material & {
+          color?: THREE.Color
+          map?: THREE.Texture | null
+          emissive?: THREE.Color
+        }
+        if (material.color) material.color.set('#080808')
+        if ('map' in material) material.map = null
+        if (material.emissive) material.emissive.set('#000000')
+        material.needsUpdate = true
+        return material
+      }
+      mesh.material = Array.isArray(original) ? original.map(darken) : darken(original)
+    })
+  }
+  model.group.userData.motorBurnedOut = burnedOut
+}
+
 export function setMotorFacing(model: MotorModel, facing: number, roll = 0) {
   model.group.quaternion.copy(motorOrientationQuaternion(facing, roll))
 }
