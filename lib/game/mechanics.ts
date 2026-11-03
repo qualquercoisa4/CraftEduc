@@ -105,7 +105,7 @@ const SERVO_MAX_ANGLE_RAD = Math.PI - 0.02
 const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
 const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
-import { measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
+import { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 export { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 
 /**
