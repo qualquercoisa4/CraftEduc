@@ -10,7 +10,8 @@ async function main() {
   assert.equal(DEFAULT_HOTBAR.length, 9, 'hotbar must contain exactly nine slots')
   assert.ok(blockMass(B.ALUMINUM) < blockMass(B.WOOD), 'aluminum must be lighter than wood')
   assert.ok(blockMass(B.WOOD) < blockMass(B.IRON), 'wood must be lighter than iron')
-  assert.ok(blockMass(B.MOTOR) > blockMass(B.ALUMINUM), 'a motor must weigh more than aluminum')
+  assert.ok(blockMass(B.MOTOR) > blockMass(B.RESISTOR), 'a motor must weigh more than a resistor')
+  assert.ok(blockMass(B.MOTOR) < blockMass(B.ALUMINUM), 'the FA-130 motor must remain lighter than an aluminum block')
 
   // Use the production rigid-body factory and its actual per-material collider
   // densities; no mocked physics response is used in the collision experiment.
