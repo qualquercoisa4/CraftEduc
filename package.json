@@ -5,9 +5,11 @@
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "next dev",
-    "build": "pnpm test:electrical && next build",
+    "build": "pnpm test && next build",
     "start": "next start",
-    "test:electrical": "node --experimental-strip-types scripts/test-electrical-solver.mjs"
+    "test": "pnpm test:electrical && pnpm test:regressions",
+    "test:electrical": "node --experimental-strip-types scripts/test-electrical-solver.mjs",
+    "test:regressions": "pnpm exec tsc tests/arduino-terminals.test.ts tests/multi-motor.test.ts tests/physics-mass.test.ts tests/proximity-sensor.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck && node .test-dist/tests/arduino-terminals.test.js && node .test-dist/tests/multi-motor.test.js && node .test-dist/tests/physics-mass.test.js && node .test-dist/tests/proximity-sensor.test.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",

@@ -13,4 +13,6 @@ __v0_jsx-dev-runtime.ts
 # Common ignores
 node_modules
 .next/
+.test-dist/
+*.tsbuildinfo
 .DS_Store
