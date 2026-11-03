@@ -115,7 +115,15 @@ async function main() {
   const applyTraction = (mechanics as unknown as {
     applyMountedWheelTraction: (machine: unknown, power: number, direction: number) => void
   }).applyMountedWheelTraction.bind(mechanics)
-  const tractionMachine = { motorKey: tractionKey, axis: new THREE.Vector3(1, 0, 0), chassisBody: tractionBody }
+  const tractionMachine = {
+    motorKey: tractionKey,
+    axis: new THREE.Vector3(1, 0, 0),
+    chassisBody: tractionBody,
+    rotorBody: tractionBody,
+    motorState: { mountedWheel: true },
+    extraRotors: [],
+  }
+  mechanics.motorTorqueNm.set(tractionKey, 3)
   const tractionStart = { ...tractionBody.translation() }
   for (let step = 0; step < 45; step++) {
     applyTraction(tractionMachine, 3, 1)
