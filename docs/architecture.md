@@ -17,6 +17,7 @@ O projeto é uma aplicação Next.js/React que inicializa um ambiente 3D com Thr
 | Regras e sistemas | `lib/game/mechanics.ts` | Orquestração das interações entre blocos, máquinas, circuitos e física |
 | Eletricidade | `lib/game/electrical.ts` | Solver e operações de análise de circuitos |
 | Modelo de motores | `lib/game/motor-model.ts`, `motor-specs.ts` | Parâmetros e cálculos de motores |
+| Sensores de proximidade | `lib/game/proximity.ts` | Cálculos puros de leitura por raio e comparação de distância |
 | Modelos e apresentação 3D | `lib/game/models.ts`, `textures.ts`, `particles.ts`, `sky.ts`, `audio.ts` | Modelos, materiais e recursos visuais/sonoros |
 | Persistência | `lib/game/world-saves.ts` | Serialização e armazenamento local de mundos |
 | Interface | `components/game/` | HUD, inventário, configurações e programação |
@@ -28,7 +29,7 @@ O projeto é uma aplicação Next.js/React que inicializa um ambiente 3D com Thr
 - A página inicial cria e descarta a instância do motor do jogo.
 - O motor coordena o mundo, os sistemas de mecânica, a física e a renderização.
 - Sistemas de domínio devem depender de tipos e funções de domínio; evite importar componentes React para dentro de `lib/game`.
-- Cálculos determinísticos e sem dependência de cena devem permanecer em módulos puros, como o solver elétrico e o modelo de motores.
+- Cálculos determinísticos e sem dependência de cena devem permanecer em módulos puros, como o solver elétrico, o modelo de motores e as leituras de proximidade.
 - A persistência deve continuar isolada do ciclo de renderização.
 
 ## Limites de segurança para refatorações
