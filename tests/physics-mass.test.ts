@@ -69,6 +69,7 @@ async function main() {
     chunks,
     states: stateMap,
     poweredLeds: new Set<string>(),
+    terrainBlockAt() { return B.AIR },
     markBlockDirty() {},
     getBlock(x: number, y: number, z: number) { return blockMap.get(posKey(x, y, z)) ?? B.AIR },
     getState(x: number, y: number, z: number) { return stateMap.get(posKey(x, y, z)) },
