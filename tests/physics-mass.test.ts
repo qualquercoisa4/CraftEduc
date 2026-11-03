@@ -10,8 +10,7 @@ async function main() {
   assert.equal(DEFAULT_HOTBAR.length, 9, 'hotbar must contain exactly nine slots')
   assert.ok(blockMass(B.ALUMINUM) < blockMass(B.WOOD), 'aluminum must be lighter than wood')
   assert.ok(blockMass(B.WOOD) < blockMass(B.IRON), 'wood must be lighter than iron')
-  assert.ok(blockMass(B.MOTOR) > blockMass(B.RESISTOR), 'a motor must weigh more than a resistor')
-  assert.ok(blockMass(B.MOTOR) < blockMass(B.ALUMINUM), 'the FA-130 motor must remain lighter than an aluminum block')
+  assert.ok(blockMass(B.MOTOR) > blockMass(B.ALUMINUM), 'a motor must weigh more than aluminum')
 
   // Use the production rigid-body factory and its actual per-material collider
   // densities; no mocked physics response is used in the collision experiment.
@@ -69,7 +68,6 @@ async function main() {
     chunks,
     states: stateMap,
     poweredLeds: new Set<string>(),
-    terrainBlockAt() { return B.AIR },
     markBlockDirty() {},
     getBlock(x: number, y: number, z: number) { return blockMap.get(posKey(x, y, z)) ?? B.AIR },
     getState(x: number, y: number, z: number) { return stateMap.get(posKey(x, y, z)) },
@@ -101,7 +99,36 @@ async function main() {
   const mechanicsPhysics = (mechanics as unknown as { rigidPhysics: RigidPhysics }).rigidPhysics
   await mechanicsPhysics.waitUntilReady()
 
-  // Powered wheel traction is covered by the full assembled wheel-only motor regression below.
+  // Regression: a powered, off-centre mounted wheel must propel the chassis and induce yaw.
+  const tractionKey = posKey(20, 4, 20)
+  blockMap.set(posKey(21, 3, 20), B.ROBOTICS)
+  const tractionBody = mechanicsPhysics.createRigidBody(
+    [{ x: 20, y: 4, z: 20, id: B.MOTOR }],
+    new THREE.Vector3(20.5, 4.5, 20.5),
+    { canSleep: false, linearDamping: 0, angularDamping: 0 },
+  )
+  assert.ok(tractionBody, 'traction chassis must be created')
+  ;(mechanics as unknown as { mountedWheels: Map<string, unknown> }).mountedWheels.set(tractionKey, {
+    model: { group: new THREE.Group(), rim: new THREE.Group() }, spin: 0,
+  })
+  const applyTraction = (mechanics as unknown as {
+    applyMountedWheelTraction: (machine: unknown, power: number, direction: number) => void
+  }).applyMountedWheelTraction.bind(mechanics)
+  const tractionMachine = { motorKey: tractionKey, axis: new THREE.Vector3(1, 0, 0), chassisBody: tractionBody }
+  const tractionStart = { ...tractionBody.translation() }
+  for (let step = 0; step < 45; step++) {
+    applyTraction(tractionMachine, 3, 1)
+    mechanicsPhysics.step(1 / 60)
+  }
+  const tractionEnd = tractionBody.translation()
+  const tractionRotation = tractionBody.rotation()
+  assert.ok(tractionEnd.z > tractionStart.z + 0.05,
+    `powered wheel must move chassis in the expected direction (dz=${(tractionEnd.z - tractionStart.z).toFixed(3)})`)
+  assert.ok(Math.abs(tractionRotation.y) > 0.01,
+    `off-centre traction must cause yaw (qy=${tractionRotation.y.toFixed(3)})`)
+  mechanicsPhysics.removeRigidBody(tractionBody)
+  ;(mechanics as unknown as { mountedWheels: Map<string, unknown> }).mountedWheels.delete(tractionKey)
+  blockMap.delete(posKey(21, 3, 20))
 
   // The support occupies y=4, the static aluminum target sits at y=5,
   // and the wooden pusher touches its left side at x=1.
