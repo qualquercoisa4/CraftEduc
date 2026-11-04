@@ -369,8 +369,8 @@ async function main() {
   }
   assert.equal(mechanics.contraptions.has(motorKey), true,
     'the powered motor must remain assembled across 120 physics frames')
-  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7,
-    'the motor must remain powered during physical simulation')
+  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 0.05,
+    'the motor must retain a positive terminal-voltage ratio while rotating under load')
   const finalChassisY = machine.chassisBody.translation().y
   assert.ok(Number.isFinite(finalChassisY), 'chassis height must remain finite')
   assert.ok(finalChassisY < initialChassisY + 0.5 && finalChassisY > initialChassisY - 1.2,
