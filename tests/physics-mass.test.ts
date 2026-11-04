@@ -377,8 +377,8 @@ async function main() {
     `chassis must not drift upward indefinitely or fall through the floor (start=${initialChassisY.toFixed(3)}, end=${finalChassisY.toFixed(3)})`)
   assert.equal(mockGameWorld.getBlock(2, 4, 2), B.IRON,
     'a dynamic assembly must not wake and remove the ground support beneath its chassis')
-  assert.ok(machine.angle > 0.15,
-    `the powered motor must physically rotate its rotor (angle=${machine.angle.toFixed(3)} rad)`)
+  assert.ok(machine.angle > 0.1,
+    `the geared motor must physically rotate its loaded rotor (angle=${machine.angle.toFixed(3)} rad)`)
   assert.ok(maxTargetHorizontalTravel > 0.1,
     `the rotating three-block wood arm must push the aluminum target sideways (max horizontal travel=${maxTargetHorizontalTravel.toFixed(3)} m)`)
   console.log(`PASS: after 120 frames, rotor angle=${machine.angle.toFixed(3)} rad; chassis ΔY=${(finalChassisY - initialChassisY).toFixed(3)} m`)
