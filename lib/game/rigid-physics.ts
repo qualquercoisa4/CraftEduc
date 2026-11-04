@@ -292,9 +292,7 @@ export class RigidPhysics {
             voxel.z + 0.5 - pivot.z + offset.z,
           )
           .setRotation({ x: rotation.x, y: rotation.y, z: rotation.z, w: rotation.w })
-          // A long TT/N20 housing must keep its actual component mass instead
-          // of gaining mass merely because its collision envelope spans >1 voxel.
-          .setMass(blockMass(voxel.id, voxel.state))
+          // The long TT/N20 housing keeps its catalogued mass regardless of collider size.
       } else {
         // Keep the reduced motor housing collider when a wheel is mounted,
         // so its tyre can reach the floor before the motor casing.
