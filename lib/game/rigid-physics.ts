@@ -39,11 +39,11 @@ export const BLOCK_MASS: Readonly<Record<number, number>> = {
 }
 
 export function blockMass(id: number, state?: PhysicsVoxel['state']) {
-  if (id === B.MOTOR) return getMotorSpec(state?.motorType).massKg
   const base = BLOCK_MASS[id] ?? 0.8
-  // Battery cells and the mounted wheel affect the centre of mass and inertia.
+  // Battery cells and mounted accessories contribute to the assembly's mass
+  // and inertia. Keep the wheel contribution even for catalogued motor variants.
   if (id === B.BATTERY_BOX) return base + Math.max(0, Math.min(3, Math.floor(state?.batteries ?? 0))) * 0.12
-  if (id === B.MOTOR && state?.mountedWheel) return base + 0.08
+  if (id === B.MOTOR) return getMotorSpec(state?.motorType).massKg + (state?.mountedWheel ? 0.08 : 0)
   return base
 }
 
@@ -296,15 +296,17 @@ export class RigidPhysics {
           // of gaining mass merely because its collision envelope spans >1 voxel.
           .setMass(blockMass(voxel.id, voxel.state))
       } else {
-        // Keep the existing reduced housing collider when a wheel is mounted,
+        // Keep the reduced motor housing collider when a wheel is mounted,
         // so its tyre can reach the floor before the motor casing.
         const motorHousingHalfExtent = voxel.id === B.MOTOR && voxel.state?.mountedWheel ? 0.28 : 0.5
         colliderDesc = RAPIER.ColliderDesc.cuboid(motorHousingHalfExtent, motorHousingHalfExtent, motorHousingHalfExtent)
           .setTranslation(voxel.x + 0.5 - pivot.x, voxel.y + 0.5 - pivot.y, voxel.z + 0.5 - pivot.z)
-          .setDensity(blockMass(voxel.id, voxel.state))
       }
+      // Mass is specified per voxel, not per cubic metre. Use setMass for every
+      // collider so changing a collision envelope never silently changes mass.
       this.rapierWorld.createCollider(
         colliderDesc
+          .setMass(blockMass(voxel.id, voxel.state))
           .setFriction(blockFriction(voxel.id))
           .setRestitution(0.005),
         body,
@@ -347,10 +349,15 @@ export class RigidPhysics {
     childAnchor = new THREE.Vector3(),
   ) {
     if (!this.rapierWorld) return null
+    if (![axis.x, axis.y, axis.z, parentAnchor.x, parentAnchor.y, parentAnchor.z,
+      childAnchor.x, childAnchor.y, childAnchor.z].every(Number.isFinite) || axis.lengthSq() < 1e-10) {
+      return null
+    }
+    const normalizedAxis = axis.clone().normalize()
     const joint = RAPIER.JointData.revolute(
       { x: parentAnchor.x, y: parentAnchor.y, z: parentAnchor.z },
       { x: childAnchor.x, y: childAnchor.y, z: childAnchor.z },
-      { x: axis.x, y: axis.y, z: axis.z },
+      { x: normalizedAxis.x, y: normalizedAxis.y, z: normalizedAxis.z },
     )
     const connectedJoint = this.rapierWorld.createImpulseJoint(joint, parent, child, true) as RAPIER.RevoluteImpulseJoint
     // Avoid self-contact jamming at the hinge; the joint governs rotor/chassis coupling.
@@ -378,7 +385,9 @@ export class RigidPhysics {
 
     // Fixed 60 Hz integration with bounded catch-up prevents the same build
     // behaving differently at 25 FPS and 60 FPS.
-    this.accumulator += Math.max(0, Math.min(dt, 0.1))
+    // Invalid frame deltas must never poison the accumulator with NaN/Infinity.
+    const safeDt = Number.isFinite(dt) ? Math.max(0, Math.min(dt, 0.1)) : 0
+    this.accumulator += safeDt
     let steps = 0
     while (this.accumulator >= this.fixedStep && steps < this.maxSubsteps) {
       this.rapierWorld.timestep = this.fixedStep
