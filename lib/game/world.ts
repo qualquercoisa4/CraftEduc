@@ -31,6 +31,10 @@ export interface BlockState {
   ledBurnedOut?: boolean
   /** Set when a direct terminal short permanently damages a DC motor. */
   motorBurnedOut?: boolean
+  gearTeeth?: number
+  gearFacing?: number
+  gearShaftMounted?: boolean
+  gearWheelMounted?: boolean
 }
 
 const CS = CHUNK_SIZE
@@ -266,7 +270,7 @@ export class World {
   isSolid(x: number, y: number, z: number) {
     const id = this.getBlock(x, y, z)
     // The switch uses a model instead of an opaque cube, but remains solid for player collision.
-    return id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO || id === B.RESISTOR || isOpaque(id)
+    return id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO || id === B.RESISTOR || id === B.GEAR || isOpaque(id)
   }
 
   buildChunkMesh(c: Chunk) {
