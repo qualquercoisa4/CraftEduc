@@ -239,11 +239,11 @@ async function main() {
   putTestBlock(2, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 2) })
   putTestBlock(2, 6, 2, B.BATTERY_BOX, { glue: 1 << 3, batteries: 3 })
   putTestBlock(3, 5, 2, B.ALUMINUM, { glue: (1 << 0) | (1 << 1) })
-  putTestBlock(4, 5, 2, B.MOTOR, { facing: 0, glue: (1 << 0) | (1 << 1) | (1 << 2), motorType: 'fa130' })
+  putTestBlock(4, 5, 2, B.MOTOR, { facing: 0, glue: (1 << 0) | (1 << 1) | (1 << 2), motorType: 'n20_100' })
   putTestBlock(4, 6, 2, B.SWITCH, { switchOn: true, glue: 1 << 3 })
   // A second independent load verifies both poles of the switch, not just pole 1.
   const secondMotorKey = posKey(7, 5, 2)
-  putTestBlock(7, 5, 2, B.MOTOR, { facing: 2, motorType: 'fa130' })
+  putTestBlock(7, 5, 2, B.MOTOR, { facing: 2, motorType: 'n20_100' })
   putTestBlock(5, 5, 2, B.WOOD, { glue: (1 << 1) | (1 << 2) })
   putTestBlock(5, 6, 2, B.WOOD, { glue: (1 << 3) | (1 << 2) })
   putTestBlock(5, 7, 2, B.WOOD, { glue: 1 << 3 })
