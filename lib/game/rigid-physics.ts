@@ -196,7 +196,7 @@ export class RigidPhysics {
     }
     if (y < this.minimumColliderY(x, z) || y >= WORLD_HEIGHT) return
     const id = this.voxelWorld.getBlock(x, y, z)
-    if (id === B.AIR) return
+    if (id === B.AIR || id === B.GEAR) return
     if (this.voxelWorld.type === 'test_lab' && y === GROUND_LEVEL + 10 && id === B.ALUMINUM) return
     let colliderDesc: RAPIER.ColliderDesc
     if (id === B.MOTOR) {
