@@ -288,10 +288,21 @@ async function main() {
     makeTestWire(107, secondMotorKey, 'B', batteryKey, '-'),
   ] as never
 
-  // Simulate the real powered assembly transition. tryAssemble removes all
-  // moving blocks from World, just as it does during gameplay.
+  // Capture the actual supply ratio before assembly. motorPower is a
+  // normalized terminal-voltage ratio, not a voltage in volts.
   mechanics.motorPower.set(motorKey, 3)
   mechanics.motorDirection.set(motorKey, 1)
+  const recomputePower = (mechanics as unknown as { recomputePower: () => void }).recomputePower.bind(mechanics)
+  recomputePower()
+  const initialMotorPower = mechanics.motorPower.get(motorKey) ?? 0
+  const initialSecondMotorPower = mechanics.motorPower.get(secondMotorKey) ?? 0
+  assert.ok(initialMotorPower > 0.5 && initialMotorPower <= 2.25,
+    `initial motor terminal-voltage ratio should be finite and useful (got ${initialMotorPower.toFixed(3)})`)
+  assert.ok(initialSecondMotorPower > 0.5 && initialSecondMotorPower <= 2.25,
+    `second motor terminal-voltage ratio should be finite and useful (got ${initialSecondMotorPower.toFixed(3)})`)
+
+  // Simulate the real powered assembly transition. tryAssemble removes all
+  // moving blocks from World, just as it does during gameplay.
   const assemble = (mechanics as unknown as { tryAssemble: (key: string) => string }).tryAssemble(motorKey)
   assert.equal(assemble, 'driving', 'the glued rotor and chassis must assemble')
   const machine = mechanics.contraptions.get(motorKey)
@@ -304,12 +315,11 @@ async function main() {
   // This is the regression for the actual bug: rebuilding the circuit graph
   // after assembly used to see the motor but not the battery/conductive chassis,
   // dropping motor power to zero and triggering repeated disassembly/reassembly.
-  const recomputePower = (mechanics as unknown as { recomputePower: () => void }).recomputePower.bind(mechanics)
   for (let pass = 0; pass < 12; pass++) {
     recomputePower()
     const delivered = mechanics.motorPower.get(motorKey) ?? 0
-    assert.ok(delivered > 2.7 && delivered <= 3,
-      `motor power must persist after assembly (pass ${pass + 1}, delivered ${delivered.toFixed(3)})`)
+    assert.ok(delivered >= initialMotorPower * 0.95 && delivered <= initialMotorPower * 1.05,
+      `motor terminal-voltage ratio must persist after assembly (pass ${pass + 1}, initial ${initialMotorPower.toFixed(3)}, delivered ${delivered.toFixed(3)})`)
   }
   assert.equal(mechanics.contraptions.has(motorKey), true,
     'a powered assembly must not leave the active-contraption state during circuit refresh')
@@ -321,8 +331,10 @@ async function main() {
   assert.equal(mechanics.motorPower.get(secondMotorKey) ?? 0, 0, 'an open switch must interrupt pole 2')
   assert.equal(mechanics.toggleSwitchAtKey(switchKey), true, 'switch should turn on again')
   recomputePower()
-  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) > 2.7, 'a closed switch must restore pole 1 power')
-  assert.ok((mechanics.motorPower.get(secondMotorKey) ?? 0) > 2.7, 'a closed switch must restore pole 2 power')
+  assert.ok((mechanics.motorPower.get(motorKey) ?? 0) >= initialMotorPower * 0.95,
+    'a closed switch must restore pole 1 terminal-voltage ratio')
+  assert.ok((mechanics.motorPower.get(secondMotorKey) ?? 0) >= initialSecondMotorPower * 0.95,
+    'a closed switch must restore pole 2 terminal-voltage ratio')
 
   // Exercise the production frame update for two seconds: the motor must keep
   // applying torque, the chassis/rotor must stay assembled, and no re-grid
