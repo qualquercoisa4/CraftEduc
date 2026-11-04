@@ -15,9 +15,9 @@ export interface PhysicsVoxel {
 }
 
 /**
- * Relative block mass in kilograms per voxel. Density is applied to each
- * Rapier collider, so multi-block assemblies get their mass and inertia from
- * the actual material mix instead of treating every block as equally heavy.
+ * Relative block mass in kilograms per voxel. Each Rapier collider receives
+ * its explicit voxel mass, so changing collider dimensions cannot change the
+ * assembly's mass or inertia contribution.
  */
 export const BLOCK_MASS: Readonly<Record<number, number>> = {
   [B.AIR]: 0,
@@ -347,8 +347,9 @@ export class RigidPhysics {
     childAnchor = new THREE.Vector3(),
   ) {
     if (!this.rapierWorld) return null
+    const axisLengthSq = axis.lengthSq()
     if (![axis.x, axis.y, axis.z, parentAnchor.x, parentAnchor.y, parentAnchor.z,
-      childAnchor.x, childAnchor.y, childAnchor.z].every(Number.isFinite) || axis.lengthSq() < 1e-10) {
+      childAnchor.x, childAnchor.y, childAnchor.z, axisLengthSq].every(Number.isFinite) || axisLengthSq < 1e-10) {
       return null
     }
     const normalizedAxis = axis.clone().normalize()
