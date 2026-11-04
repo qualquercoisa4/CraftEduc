@@ -6,6 +6,7 @@ on:
       - work/servo-and-color-preservation
       - feature/laboratory-test-world
       - refactor/singleplayer-infrastructure
+      - feature/physics-electronics-upgrade-preview
   pull_request:
     branches:
       - main
