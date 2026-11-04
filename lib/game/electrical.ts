@@ -173,9 +173,32 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
   // instruments never subtract two voltages that were solved against unrelated
   // arbitrary references.
   const nodeComponentIds = new Map<string, string>()
-  for (const component of components) {
+  const componentIndexByNode = new Map<string, number>()
+  for (let componentIndex = 0; componentIndex < components.length; componentIndex++) {
+    const component = components[componentIndex]
     const componentId = [...component].sort()[0] ?? ''
-    for (const node of component) nodeComponentIds.set(node, componentId)
+    for (const node of component) {
+      nodeComponentIds.set(node, componentId)
+      componentIndexByNode.set(node, componentIndex)
+    }
+  }
+
+  // Bucket each branch once. Filtering every global branch list for every
+  // component made many small, disconnected circuits scale quadratically.
+  const resistorsByComponent = components.map(() => [] as ElectricalResistor[])
+  const diodesByComponent = components.map(() => [] as ElectricalDiode[])
+  const sourcesByComponent = components.map(() => [] as ElectricalVoltageSource[])
+  for (const resistor of resistorList) {
+    const componentIndex = componentIndexByNode.get(resistor.a)
+    if (componentIndex !== undefined) resistorsByComponent[componentIndex].push(resistor)
+  }
+  for (const diode of diodeList) {
+    const componentIndex = componentIndexByNode.get(diode.anode)
+    if (componentIndex !== undefined) diodesByComponent[componentIndex].push(diode)
+  }
+  for (const source of sourceList) {
+    const componentIndex = componentIndexByNode.get(source.positive)
+    if (componentIndex !== undefined) sourcesByComponent[componentIndex].push(source)
   }
 
   const diodeOn = new Map(diodeList.map((d) => [d.id, false]))
@@ -185,11 +208,11 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
   const solveWithDiodeState = () => {
     const voltages = new Map<string, number>()
     let allComponentsSolved = true
-    for (const componentNodes of components) {
-      const set = new Set(componentNodes)
-      const componentResistors = resistorList.filter((r) => set.has(r.a) && set.has(r.b))
-      const componentDiodes = diodeList.filter((d) => set.has(d.anode) && set.has(d.cathode))
-      const componentSources = sourceList.filter((s) => set.has(s.positive) && set.has(s.negative))
+    for (let componentIndex = 0; componentIndex < components.length; componentIndex++) {
+      const componentNodes = components[componentIndex]
+      const componentResistors = resistorsByComponent[componentIndex]
+      const componentDiodes = diodesByComponent[componentIndex]
+      const componentSources = sourcesByComponent[componentIndex]
       const reference = componentSources[0]?.negative ?? componentNodes[0]
       const unknownNodes = componentNodes.filter((n) => n !== reference)
       const index = new Map(unknownNodes.map((n, i) => [n, i]))
