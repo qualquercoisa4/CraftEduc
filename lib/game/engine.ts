@@ -1098,6 +1098,7 @@ export class Engine {
       else if (s.screen === 'sensor_config') gameStore.set({ sensorConfigKey: null, screen: 'playing' })
       else if (s.screen === 'servo_config') gameStore.set({ servoConfigKey: null, screen: 'playing' })
       else if (s.screen === 'resistor_config') gameStore.set({ resistorConfigKey: null, screen: 'playing' })
+      else if (s.screen === 'gear_config') gameStore.set({ gearConfigKey: null, screen: 'playing' })
       else if (s.screen === 'arduino_programming') gameStore.set({ arduinoProgramKey: null, screen: 'playing' })
       else if (s.screen === 'inventory') gameStore.set({ screen: 'playing' })
       else if (s.screen === 'playing') gameStore.set({ screen: 'paused' })
@@ -1156,6 +1157,12 @@ export class Engine {
     if (e.button === 2 && e.shiftKey && this.selectedItem() === 'paintbrush') {
       e.preventDefault()
       gameStore.set({ returnScreen: 'playing', screen: 'brush_color' })
+      return
+    }
+    if (e.button === 2 && !e.shiftKey && this.selectedItem() === 'gear' && this.target?.id === B.GEAR) {
+      e.preventDefault()
+      if (this.multiplayerBridge) { showToast('A configuração mecânica está disponível primeiro no Single Player'); return }
+      gameStore.set({gearConfigKey:posKey(this.target.x,this.target.y,this.target.z),returnScreen:'playing',screen:'gear_config'})
       return
     }
     if (!this.locked && !this.lockFailed) {
@@ -1438,6 +1445,19 @@ export class Engine {
     }
 
     if (!hit) return
+
+    if (hit.id === B.GEAR && (item === 'shaft' || item === 'wheel')) {
+      if (this.multiplayerBridge) { showToast('Eixos e engrenagens estão disponíveis primeiro no Single Player'); return }
+      const key=posKey(hit.x,hit.y,hit.z)
+      if(item==='shaft'){
+        const mounted=this.mech.mountGearShaft(key)
+        showToast(mounted?'Eixo encaixado na engrenagem':'Esta engrenagem já possui um eixo')
+      }else{
+        const mounted=this.mech.mountGearWheel(key),config=this.mech.getGearConfig(key)
+        showToast(mounted?'Roda montada no eixo da engrenagem':config?.shaftMounted?'Esta engrenagem já possui uma roda no eixo':'Encaixe primeiro um eixo na engrenagem')
+      }
+      return
+    }
 
     // Open the resistor's four-band value editor with the empty hand or resistor item.
     // Wire use is resolved above so each lead remains independently connectable.
