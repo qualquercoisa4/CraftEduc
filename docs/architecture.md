@@ -44,9 +44,9 @@ O projeto é uma aplicação Next.js/React que inicializa um ambiente 3D com Thr
 ## Validação
 
 - `pnpm test:electrical`: testes determinísticos do solver elétrico e dos modelos associados.
-- `pnpm test:regressions`: testes TypeScript de terminais Arduino, múltiplos motores e sensores de proximidade.
+- `pnpm test:regressions`: testes TypeScript de terminais Arduino, múltiplos motores, física/massa e sensores de proximidade.
 - `tests/physics-core.test.ts`: valida massas efetivas dos corpos, acessórios montados, e proteção do passo fixo contra deltas de tempo inválidos.
-- `tests/physics-mass.test.ts` permanece no repositório, mas não integra a validação padrão: seus fixtures e expectativas antigas não correspondem integralmente à API e ao comportamento atuais da física. Deve ser revisado em uma tarefa específica, sem enfraquecer as verificações nem alterar a simulação nesta refatoração.
+- `tests/physics-mass.test.ts`: valida colisões, tração de rodas, despertar de blocos estáticos e persistência de energia em mecanismos montados.
 - `pnpm test`: executa as duas suítes.
 - `pnpm build`: executa a suíte completa e depois a build de produção.
 
