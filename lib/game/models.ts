@@ -447,6 +447,34 @@ export function createArduinoWheelModel(facing = 0): WheelModel {
 }
 
 
+export interface GearModel { group: THREE.Group; rotor: THREE.Group; shaft: THREE.Group; wheel: WheelModel | null }
+
+/** Fixed-envelope spur gear; axle and mounted wheel share the gear rotor. */
+export function createGearModel(teeth:number,facing:number,shaftMounted:boolean,wheelMounted:boolean):GearModel {
+  const m=getMaterials(),safeTeeth=Math.max(12,Math.min(48,Math.round(Number.isFinite(teeth)?teeth:24)))
+  const group=new THREE.Group(),rotor=new THREE.Group();group.add(rotor)
+  const rootRadius=.355,tipRadius=.455,pitch=Math.PI*2/safeTeeth,shape=new THREE.Shape()
+  for(let tooth=0;tooth<safeTeeth;tooth++){
+    const base=tooth*pitch
+    const points=[[base-pitch*.46,rootRadius],[base-pitch*.30,rootRadius],[base-pitch*.20,tipRadius],[base+pitch*.20,tipRadius],[base+pitch*.30,rootRadius],[base+pitch*.46,rootRadius]] as const
+    for(let index=0;index<points.length;index++){
+      const [angle,radius]=points[index],x=Math.cos(angle)*radius,y=Math.sin(angle)*radius
+      if(tooth===0&&index===0)shape.moveTo(x,y);else shape.lineTo(x,y)
+    }
+  }
+  shape.closePath()
+  const bore=new THREE.Path();bore.absarc(0,0,.105,0,Math.PI*2,true);shape.holes.push(bore)
+  const geometry=new THREE.ExtrudeGeometry(shape,{depth:.12,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.008,bevelThickness:.008,curveSegments:2})
+  geometry.translate(0,0,-.06);rotor.add(new THREE.Mesh(geometry,m.steel))
+  rotor.add(cylZ(.145,.17,m.brass,0,20));rotor.add(cylZ(.092,.19,m.solder,0,16))
+  const shaft=new THREE.Group();rotor.add(shaft);let wheel:WheelModel|null=null
+  if(shaftMounted){
+    shaft.add(cylZ(.045,1.62,m.servoWhite,0,12));shaft.add(cylZ(.075,.07,m.steel,-.78,12));shaft.add(cylZ(.075,.07,m.steel,.78,12))
+    if(wheelMounted){wheel=createArduinoWheelModel(4);wheel.group.position.set(0,0,.82);wheel.group.scale.setScalar(.78);shaft.add(wheel.group)}
+  }
+  group.quaternion.copy(facingQuaternion(facing));return {group,rotor,shaft,wheel}
+}
+
 export interface ProximitySensorModel {
   group: THREE.Group
   indicator: THREE.Mesh
