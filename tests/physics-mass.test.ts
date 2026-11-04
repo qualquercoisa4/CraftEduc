@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import * as THREE from 'three'
 import { B, DEFAULT_HOTBAR } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
+import { getMotorSpec } from '../lib/game/motor-specs'
 import { Mechanics } from '../lib/game/mechanics'
 import { posKey } from '../lib/game/constants'
 import type { World } from '../lib/game/world'
@@ -10,7 +11,8 @@ async function main() {
   assert.equal(DEFAULT_HOTBAR.length, 9, 'hotbar must contain exactly nine slots')
   assert.ok(blockMass(B.ALUMINUM) < blockMass(B.WOOD), 'aluminum must be lighter than wood')
   assert.ok(blockMass(B.WOOD) < blockMass(B.IRON), 'wood must be lighter than iron')
-  assert.ok(blockMass(B.MOTOR) > blockMass(B.ALUMINUM), 'a motor must weigh more than aluminum')
+  assert.ok(blockMass(B.MOTOR) > blockMass(B.RESISTOR), 'the FA-130 motor must weigh more than a resistor')
+  assert.ok(blockMass(B.MOTOR) < blockMass(B.ALUMINUM), 'the 17 g FA-130 motor must remain lighter than an aluminum block')
 
   // Use the production rigid-body factory and its actual per-material collider
   // densities; no mocked physics response is used in the collision experiment.
@@ -61,13 +63,14 @@ async function main() {
   // an immovable world collider. A moving wooden arm must wake it into Rapier
   // when the arm is travelling into it, then push the now-dynamic aluminum.
   const blockMap = new Map<string, number>()
-  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number; mountedWheel?: boolean; switchOn?: boolean }>()
+  const stateMap = new Map<string, { glue?: number; facing?: number; batteries?: number; mountedWheel?: boolean; switchOn?: boolean; motorType?: string }>()
   const chunks = new Map([['0,0', { cx: 0, cz: 0, maxY: 8 }]])
   let mechanicsRef: Mechanics | null = null
   const mockGameWorld = {
     chunks,
     states: stateMap,
     poweredLeds: new Set<string>(),
+    terrainBlockAt() { return B.AIR },
     markBlockDirty() {},
     getBlock(x: number, y: number, z: number) { return blockMap.get(posKey(x, y, z)) ?? B.AIR },
     getState(x: number, y: number, z: number) { return stateMap.get(posKey(x, y, z)) },
@@ -182,7 +185,7 @@ async function main() {
   blockMap.set(chassisKey, B.ALUMINUM)
   stateMap.set(chassisKey, { glue: 1 << 0 })
   blockMap.set(wheelMotorKey, B.MOTOR)
-  stateMap.set(wheelMotorKey, { facing: 0, glue: 1 << 1, mountedWheel: true })
+  stateMap.set(wheelMotorKey, { facing: 0, glue: 1 << 1, mountedWheel: true, motorType: 'fa130' })
   const wheelMotorGroup = new THREE.Group()
   const wheelShaft = new THREE.Group()
   wheelMotorGroup.position.set(21.5, 5.5, 20.5)
@@ -209,7 +212,8 @@ async function main() {
     assert.ok(wheelOrientation.angleTo(motorOrientation) < 1e-5, `mounted wheel axle must follow motor facing ${face}`)
     mechanics.rotateMotor(21, 5, 20)
   }
-  mechanics.motorPower.set(wheelMotorKey, 3)
+  mechanics.motorPower.set(wheelMotorKey, 1)
+  mechanics.motorTorqueNm.set(wheelMotorKey, getMotorSpec('fa130').stallTorqueNm)
   mechanics.motorDirection.set(wheelMotorKey, 1)
   const wheelInternals = mechanics as unknown as {
     tryAssemble: (key: string) => string
@@ -240,6 +244,7 @@ async function main() {
   mechanics.models.delete(wheelMotorKey)
   mountedWheels.delete(wheelMotorKey)
   mechanics.motorPower.delete(wheelMotorKey)
+  mechanics.motorTorqueNm.delete(wheelMotorKey)
   mechanics.motorDirection.delete(wheelMotorKey)
   blockMap.delete(posKey(20, 5, 20)); blockMap.delete(wheelMotorKey)
   stateMap.delete(posKey(20, 5, 20)); stateMap.delete(wheelMotorKey)
