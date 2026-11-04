@@ -9,7 +9,7 @@
     "start": "next start",
     "test": "pnpm test:electrical && pnpm test:regressions",
     "test:electrical": "node --experimental-strip-types scripts/test-electrical-solver.mjs",
-    "test:regressions": "pnpm exec tsc tests/arduino-terminals.test.ts tests/multi-motor.test.ts tests/proximity-sensor.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck && node .test-dist/tests/arduino-terminals.test.js && node .test-dist/tests/multi-motor.test.js && node .test-dist/tests/proximity-sensor.test.js"
+    "test:regressions": "pnpm exec tsc tests/arduino-terminals.test.ts tests/multi-motor.test.ts tests/physics-core.test.ts tests/proximity-sensor.test.ts --outDir .test-dist --module commonjs --moduleResolution node --target ES2022 --esModuleInterop --noEmit false --incremental false --skipLibCheck && node .test-dist/tests/arduino-terminals.test.js && node .test-dist/tests/multi-motor.test.js && node .test-dist/tests/physics-core.test.js && node .test-dist/tests/proximity-sensor.test.js"
   },
   "dependencies": {
     "@base-ui/react": "^1.5.0",
