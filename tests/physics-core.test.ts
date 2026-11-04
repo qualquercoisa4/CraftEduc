@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { B } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
 import { getMotorSpec } from '../lib/game/motor-specs'
+import { calculateWheelNormalForce } from '../lib/game/wheel-traction'
 import type { World } from '../lib/game/world'
 
 const near = (actual: number, expected: number, tolerance: number, label: string) => {
@@ -12,6 +13,13 @@ const near = (actual: number, expected: number, tolerance: number, label: string
 }
 
 async function main() {
+  near(calculateWheelNormalForce(5, 0.01, 0), 4.75, 1e-8,
+    'a small positive wheel gap must retain suspension-supported normal load')
+  near(calculateWheelNormalForce(5, 0.2, 0), 0, 1e-8,
+    'a wheel beyond suspension reach must lose normal load')
+  near(calculateWheelNormalForce(5, -0.01, 0), 7.5, 1e-8,
+    'wheel compression must be capped to prevent launch impulses')
+
   const tt = getMotorSpec('tt48')
   near(blockMass(B.MOTOR, { motorType: 'tt48' }), tt.massKg, 1e-9, 'TT motor catalog mass')
   near(blockMass(B.MOTOR, { motorType: 'tt48', mountedWheel: true }), tt.massKg + 0.08, 1e-9,
@@ -60,7 +68,7 @@ async function main() {
   physics.removeRigidBody(motorBody)
   physics.removeRigidBody(ordinaryBody)
   physics.dispose()
-  console.log('PASS: voxel mass accounting, mounted wheel mass, fixed-step input guards, and joint-axis validation')
+  console.log('PASS: voxel mass accounting, mounted wheel mass, fixed-step input guards, joint-axis validation, and tyre normal-force response')
 }
 
 main().catch((error) => {
