@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, solveDcCircuit } from '../lib/game/electrical.ts'
+import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, resistorValueOhms, solveDcCircuit } from '../lib/game/electrical.ts'
 import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, stepFreeMotorAngularSpeed } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
@@ -270,6 +270,27 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(pinVoltage > 4.4, 'ordinary GPIO load should retain a healthy logic-high voltage')
 }
 
+// Invalid numeric input must not leak NaN into resistor values or solved currents.
+{
+  assert.equal(Number.isFinite(resistorValueOhms(Number.NaN, 2, 1)), true,
+    'non-finite resistor colour digits must fall back to a safe value')
+  const solution = solveDcCircuit({
+    resistors: [
+      { id: 'valid-load', a: 'supply+', b: 'gnd', resistanceOhms: 100 },
+      { id: 'invalid-offset', a: 'supply+', b: 'gnd', resistanceOhms: 100, offsetVoltageVolts: Number.NaN },
+    ],
+    voltageSources: [{
+      id: 'safe-source', positive: 'supply+', negative: 'gnd',
+      voltageVolts: 5, internalResistanceOhms: 0.5,
+    }],
+    diodes: [],
+  })
+  assert.equal(solution.converged, true, 'a non-finite optional branch offset must not break a valid circuit')
+  for (const current of solution.resistorCurrents.values()) {
+    assert.ok(Number.isFinite(current), 'all reported resistor currents must remain finite')
+  }
+}
+
 // Unit formatting is shared by the simulation and multimeter; a 4.5 V source
 // must display as volts, not as 4500 volts or as 4500 millivolts without a unit.
 {
@@ -350,4 +371,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical and motor-model regression checks passed (11 circuits plus motor checks).')
+console.log('Electrical and motor-model regression checks passed (12 circuits plus motor checks).')
