@@ -451,6 +451,11 @@ function drawItemPixels(item: ItemId, px: Px) {
       for (const lead of leads) rect(lead.x, 12, 1, 3, lead.color)
       break
     }
+    case 'shaft': {
+      rect(1,7,14,2,[172,180,190]);rect(2,6,2,4,[224,228,233]);rect(12,6,2,4,[224,228,233])
+      rect(5,5,6,1,[110,119,130]);rect(5,10,6,1,[110,119,130])
+      break
+    }
     case 'paintbrush': {
       rect(3, 10, 9, 3, [109, 72, 42])
       rect(8, 4, 4, 8, [170, 120, 68])
