@@ -3737,7 +3737,10 @@ export class Mechanics {
         const motor=this.models.get(motorKey)
         if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
         const motorFacing=this.world.getState(mx,my,mz)?.facing??2
-        if(motorFacing!==OPPOSITE[face])continue
+        // A spur gear meshes with a motor when their shafts are parallel and
+        // their centres are separated in the gear plane. The motor must NOT
+        // point toward the gear: that would make its shaft radial/perpendicular
+        // to the gear axle and contradict calculateGearPair's axial-offset test.
         const alignment=gearAxis.dot(new THREE.Vector3(...DIRS[motorFacing]))
         if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
         const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1),prior=angles.get(gearKey)
