@@ -106,6 +106,7 @@ const SERVO_TARGET_SPEED_RAD = Math.PI * 0.75
 const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
 import { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
+import { calculateWheelNormalForce } from './wheel-traction'
 export { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 
 /**
@@ -3590,10 +3591,8 @@ export class Mechanics {
       // The contact patch cannot support arbitrarily large forces when the
       // wheel penetrates the floor. Keep the numerical suspension correction
       // close to the static wheel load instead of creating bounce/launch impulses.
-      const normalForce = THREE.MathUtils.clamp(
-        staticNormalLoad - contact.gap * 520 - contactVelocity.y * 34,
-        0,
-        staticNormalLoad * 1.5,
+      const normalForce = calculateWheelNormalForce(
+        staticNormalLoad, contact.gap, contactVelocity.y,
       )
       const maxTyreForce = normalForce * contact.friction
       const maxLongitudinalForce = Math.min(maxTyreForce, contact.maxDriveForce)
