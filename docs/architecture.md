@@ -19,6 +19,7 @@ O projeto é uma aplicação Next.js/React que inicializa um ambiente 3D com Thr
 | Modelo de motores | `lib/game/motor-model.ts`, `motor-specs.ts` | Parâmetros e cálculos de motores |
 | Sensores de proximidade | `lib/game/proximity.ts` | Cálculos puros de leitura por raio e comparação de distância |
 | Tração de rodas | `lib/game/wheel-traction.ts` | Cálculos puros de reação normal do pneu e suspensão virtual |
+| Transmissão | `lib/game/gear-train.ts` | Compatibilidade de engrenagens, módulo comum e relações de velocidade/torque |
 | Modelos e apresentação 3D | `lib/game/models.ts`, `textures.ts`, `particles.ts`, `sky.ts`, `audio.ts` | Modelos, materiais e recursos visuais/sonoros |
 | Persistência | `lib/game/world-saves.ts` | Serialização e armazenamento local de mundos |
 | Interface | `components/game/` | HUD, inventário, configurações e programação |
@@ -45,7 +46,7 @@ O projeto é uma aplicação Next.js/React que inicializa um ambiente 3D com Thr
 ## Validação
 
 - `pnpm test:electrical`: testes determinísticos do solver elétrico e dos modelos associados.
-- `pnpm test:regressions`: testes TypeScript de terminais Arduino, múltiplos motores, física/massa e sensores de proximidade.
+- `pnpm test:regressions`: testes TypeScript de terminais Arduino, múltiplos motores, física/massa, sensores de proximidade e transmissão por engrenagens.
 - `tests/physics-core.test.ts`: valida massas efetivas dos corpos, acessórios montados, e proteção do passo fixo contra deltas de tempo inválidos.
 - `tests/physics-mass.test.ts`: valida colisões, tração de rodas, despertar de blocos estáticos e persistência de energia em mecanismos montados.
 - `pnpm test`: executa as duas suítes.
