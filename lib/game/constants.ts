@@ -93,11 +93,11 @@ export const OPPOSITE = [1, 0, 3, 2, 5, 4]
 export const DIR_NAMES = ['Leste', 'Oeste', 'Cima', 'Baixo', 'Sul', 'Norte']
 
 export function isOpaque(id: number) {
-  return id !== B.AIR && id !== B.RESISTOR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO && id !== B.ARDUINO_UNO
+  return id !== B.AIR && id !== B.RESISTOR && id !== B.MOTOR && id !== B.BATTERY_BOX && id !== B.WHEEL && id !== B.SWITCH && id !== B.PROXIMITY_SENSOR && id !== B.SERVO && id !== B.ARDUINO_UNO && id !== B.GEAR
 }
 
 export function isModelBlock(id: number) {
-  return id === B.RESISTOR || id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO
+  return id === B.RESISTOR || id === B.MOTOR || id === B.BATTERY_BOX || id === B.WHEEL || id === B.SWITCH || id === B.PROXIMITY_SENSOR || id === B.SERVO || id === B.ARDUINO_UNO || id === B.GEAR
 }
 
 export type Bounds = readonly [number, number, number, number, number, number]
@@ -135,6 +135,7 @@ export type ItemId =
   | 'battery_box'
   | 'battery'
   | 'wheel'
+  | 'shaft'
   | 'switch'
   | 'proximity_sensor'
   | 'servo'
@@ -195,7 +196,8 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     block: B.ALUMINUM,
   },
   window: { name: 'Bloco Janela', description: 'Bloco sólido azul-claro translúcido, ideal para paredes, divisórias e janelas de laboratórios.', physicalInfo: 'Bloco estrutural sólido • Transmissão visual parcial • Isolante elétrico', category: 'blocks', block: B.WINDOW },
-  gear: { name: 'Bloco de Engrenagem', description: 'Bloco de engrenagem metálica para montagens mecânicas e transmissão de movimento.', physicalInfo: 'Massa: 0,42 kg • Condutividade: 90% • Atrito: 0,58 • Volume: 1 m³', category: 'blocks', block: B.GEAR },
+  gear: { name: 'Bloco de Engrenagem', description: 'Engrenagem cilíndrica configurável para transmitir movimento e torque.', physicalInfo: 'Massa: 0,42 kg • Dentes configuráveis • Eixos paralelos • Perfil de dentes aproximado', category: 'blocks', block: B.GEAR },
+  shaft: { name: 'Eixo metálico', description: 'Eixo de aço que se encaixa no centro de uma engrenagem e permite montar rodas no conjunto rotativo.', physicalInfo: 'Acessório mecânico • Só encaixa em engrenagens • Acompanha o eixo de rotação da engrenagem', category: 'tools' },
   wheel: { name: 'Roda de Arduino', description: 'Roda de borracha com aro de cinco raios, feita para tração em veículos robóticos.', physicalInfo: 'Massa: 0,32 kg • Atrito: 1,05 • Peça móvel; aderência depende da carga normal', category: 'motors', block: B.WHEEL },
   led: {
     name: 'LED',
@@ -361,6 +363,7 @@ export const ITEM_ORDER: ItemId[] = [
   'battery_box',
   'battery',
   'wheel',
+  'shaft',
   'paintbrush',
   ...COLOR_VARIANTS.flatMap((variant) => [
     `colored_block_${variant.id}` as ItemId,
