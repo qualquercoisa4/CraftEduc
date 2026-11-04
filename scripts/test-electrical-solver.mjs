@@ -270,6 +270,30 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(pinVoltage > 4.4, 'ordinary GPIO load should retain a healthy logic-high voltage')
 }
 
+// Many disconnected circuits should solve independently without rescanning
+// every global branch list for each connected component.
+{
+  const count = 300
+  const nodes = []
+  const resistors = []
+  const voltageSources = []
+  for (let index = 0; index < count; index++) {
+    const positive = `component-${index}+`
+    const negative = `component-${index}-`
+    nodes.push(positive, negative)
+    resistors.push({ id: `load-${index}`, a: positive, b: negative, resistanceOhms: 100 })
+    voltageSources.push({
+      id: `source-${index}`, positive, negative,
+      voltageVolts: 5, internalResistanceOhms: 0.5,
+    })
+  }
+  const solution = solveDcCircuit({ nodes, resistors, voltageSources, diodes: [] })
+  assert.equal(solution.converged, true, 'all independent small circuits must converge')
+  near(solution.resistorCurrents.get('load-0'), 5 / 100.5, 1e-7, 'first independent component current')
+  near(solution.resistorCurrents.get(`load-${count - 1}`), 5 / 100.5, 1e-7,
+    'last independent component current')
+}
+
 // Invalid numeric input must not leak NaN into resistor values or solved currents.
 {
   assert.equal(Number.isFinite(resistorValueOhms(Number.NaN, 2, 1)), true,
@@ -371,4 +395,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical and motor-model regression checks passed (12 circuits plus motor checks).')
+console.log('Electrical and motor-model regression checks passed (13 circuit groups plus motor checks).')
