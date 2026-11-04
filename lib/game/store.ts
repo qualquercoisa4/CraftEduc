@@ -15,7 +15,7 @@ export interface ScannerReport {
   composition: { name: string; count: number; massKg: number }[]
 }
 
-export type Screen = 'scanner' | 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'resistor_config' | 'arduino_programming' | 'brush_color'
+export type Screen = 'scanner' | 'title' | 'playing' | 'paused' | 'inventory' | 'options' | 'controls' | 'sensor_config' | 'servo_config' | 'resistor_config' | 'gear_config' | 'arduino_programming' | 'brush_color'
 
 export interface Settings {
   renderDistance: number
@@ -46,6 +46,7 @@ export interface GameState {
   sensorConfigKey: string | null
   servoConfigKey: string | null
   resistorConfigKey: string | null
+  gearConfigKey: string | null
   arduinoProgramKey: string | null
   scannerReport: ScannerReport | null
   brushColor: string
@@ -100,6 +101,7 @@ export const gameStore = createStore({
   sensorConfigKey: null,
   servoConfigKey: null,
   resistorConfigKey: null,
+  gearConfigKey: null,
   arduinoProgramKey: null,
   scannerReport: null,
   brushColor: '#e53935',
