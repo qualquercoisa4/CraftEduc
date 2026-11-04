@@ -16,6 +16,8 @@ import {
   type ServoModel,
   type ArduinoUnoModel,
   type ResistorModel,
+  type GearModel,
+  createGearModel,
   createArduinoUnoModel,
   createResistorModel,
   createProximitySensorModel,
@@ -107,6 +109,7 @@ const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
 import { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 import { calculateWheelNormalForce } from './wheel-traction'
+import { calculateGearPair, drivenGearAngle, normalizeGearTeeth } from './gear-train'
 export { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 
 /**
@@ -318,6 +321,8 @@ export class Mechanics {
   private physicsDirty = true
   private physicsDirtyKeys = new Set<string>()
   private mountedWheels = new Map<string, { model: WheelModel; spin: number }>()
+  private gearModels = new Map<string, GearModel>()
+  private gearAngles = new Map<string, number>()
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
@@ -369,6 +374,15 @@ export class Mechanics {
     this.removeResinVisual(key)
     if (this.suppress) return
     if (oldId === B.MOTOR && newId !== B.MOTOR) this.freeMotorAngularSpeeds.delete(key)
+    if (oldId === B.GEAR && newId !== B.GEAR) {
+      const gear = this.gearModels.get(key)
+      if (gear) {
+        this.scene.remove(gear.group)
+        disposeObject(gear.group)
+        this.gearModels.delete(key)
+      }
+      this.gearAngles.delete(key)
+    }
     if (oldId === B.ARDUINO_UNO) this.clearArduinoProgram(key)
     if (oldId === B.SERVO) this.programmedServoAngles.delete(key)
     if (oldId === B.MOTOR || oldId === B.SERVO || oldId === B.BATTERY_BOX || oldId === B.LED || oldId === B.WHEEL || oldId === B.SWITCH || oldId === B.PROXIMITY_SENSOR || oldId === B.ARDUINO_UNO || oldId === B.RESISTOR) {
@@ -387,7 +401,15 @@ export class Mechanics {
         this.glows.delete(key)
       }
     }
-    if (newId === B.MOTOR) {
+    if (newId === B.GEAR) {
+      const state = this.world.ensureState(x, y, z)
+      state.gearTeeth = normalizeGearTeeth(state.gearTeeth)
+      state.gearFacing = Math.max(0, Math.min(5, Math.floor(state.gearFacing ?? 2)))
+      const gear = createGearModel(state.gearTeeth, state.gearFacing, Boolean(state.gearShaftMounted), Boolean(state.gearWheelMounted))
+      gear.group.position.set(x + .5, y + .5, z + .5)
+      this.scene.add(gear.group)
+      this.gearModels.set(key, gear)
+    } else if (newId === B.MOTOR) {
       const st = this.world.ensureState(x, y, z)
       st.facing ??= 2
       st.motorRoll ??= 0
@@ -677,6 +699,68 @@ export class Mechanics {
     this.world.ensureState(x, y, z).mountedWheel = true
     this.mountedWheels.set(key, { model: wheel, spin: 0 })
     this.mechDirty = true
+    return true
+  }
+
+  /* ---------------- Gear and axle interactions ---------------- */
+
+  private rebuildGearModel(key: string) {
+    const [x,y,z]=parseKey(key)
+    if(this.world.getBlock(x,y,z)!==B.GEAR)return false
+    const state=this.world.getState(x,y,z)??{}
+    const previous=this.gearModels.get(key)
+    const previousAngle=previous?.rotor.rotation.z??this.gearAngles.get(key)??0
+    if(previous){this.scene.remove(previous.group);disposeObject(previous.group)}
+    const gear=createGearModel(normalizeGearTeeth(state.gearTeeth),Math.max(0,Math.min(5,Math.floor(state.gearFacing??2))),Boolean(state.gearShaftMounted),Boolean(state.gearWheelMounted))
+    gear.group.position.set(x+.5,y+.5,z+.5)
+    gear.rotor.rotation.z=previousAngle
+    this.scene.add(gear.group)
+    this.gearModels.set(key,gear)
+    this.gearAngles.set(key,previousAngle)
+    return true
+  }
+
+  getGearConfig(key:string){
+    const [x,y,z]=parseKey(key)
+    if(this.world.getBlock(x,y,z)!==B.GEAR)return null
+    const state=this.world.getState(x,y,z)??{}
+    return {teeth:normalizeGearTeeth(state.gearTeeth),facing:Math.max(0,Math.min(5,Math.floor(state.gearFacing??2))),shaftMounted:Boolean(state.gearShaftMounted),wheelMounted:Boolean(state.gearWheelMounted)}
+  }
+
+  configureGear(key:string,teeth:number){
+    if(!Number.isFinite(teeth))return false
+    const [x,y,z]=parseKey(key)
+    if(this.world.getBlock(x,y,z)!==B.GEAR)return false
+    const state={...(this.world.getState(x,y,z)??{}),gearTeeth:normalizeGearTeeth(teeth)}
+    this.world.setBlock(x,y,z,B.GEAR,state)
+    this.world.ensureChunk(Math.floor(x/CHUNK_SIZE),Math.floor(z/CHUNK_SIZE)).modified=true
+    this.world.markBlockDirty(x,y,z)
+    this.rebuildGearModel(key)
+    this.mechDirty=true
+    return true
+  }
+
+  mountGearShaft(key:string){
+    const [x,y,z]=parseKey(key)
+    if(this.world.getBlock(x,y,z)!==B.GEAR)return false
+    const previous=this.world.getState(x,y,z)??{}
+    if(previous.gearShaftMounted)return false
+    this.world.setBlock(x,y,z,B.GEAR,{...previous,gearShaftMounted:true})
+    this.world.ensureChunk(Math.floor(x/CHUNK_SIZE),Math.floor(z/CHUNK_SIZE)).modified=true
+    this.world.markBlockDirty(x,y,z)
+    this.rebuildGearModel(key)
+    return true
+  }
+
+  mountGearWheel(key:string){
+    const [x,y,z]=parseKey(key)
+    if(this.world.getBlock(x,y,z)!==B.GEAR)return false
+    const previous=this.world.getState(x,y,z)??{}
+    if(!previous.gearShaftMounted||previous.gearWheelMounted)return false
+    this.world.setBlock(x,y,z,B.GEAR,{...previous,gearWheelMounted:true})
+    this.world.ensureChunk(Math.floor(x/CHUNK_SIZE),Math.floor(z/CHUNK_SIZE)).modified=true
+    this.world.markBlockDirty(x,y,z)
+    this.rebuildGearModel(key)
     return true
   }
 
@@ -3614,6 +3698,70 @@ export class Mechanics {
     })
   }
 
+  /** First-pass kinematic propagation; reaction-load coupling is a separate Rapier milestone. */
+  private updateGearAnimations() {
+    if(this.gearModels.size===0)return
+    const gearKeys=[...this.gearModels.keys()].sort()
+    const moduleByGear=new Map<string,number>()
+    const edges:{a:string;b:string;teethA:number;teethB:number}[]=[]
+    for(const key of gearKeys){
+      const [x,y,z]=parseKey(key),stateA=this.world.getState(x,y,z)??{}
+      const axisA=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(stateA.gearFacing??2)))])
+      for(let face=0;face<DIRS.length;face++){
+        const d=DIRS[face],nx=x+d[0],ny=y+d[1],nz=z+d[2],otherKey=posKey(nx,ny,nz)
+        if(otherKey<=key||this.world.getBlock(nx,ny,nz)!==B.GEAR)continue
+        const stateB=this.world.getState(nx,ny,nz)??{}
+        const axisB=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(stateB.gearFacing??2)))])
+        const delta=new THREE.Vector3(d[0],d[1],d[2])
+        const pair=calculateGearPair({
+          teethA:normalizeGearTeeth(stateA.gearTeeth),teethB:normalizeGearTeeth(stateB.gearTeeth),
+          centerDistance:delta.length(),axisAlignment:axisA.dot(axisB),axialOffset:delta.dot(axisA),
+          moduleA:moduleByGear.get(key),moduleB:moduleByGear.get(otherKey),
+        })
+        if(!pair)continue
+        moduleByGear.set(key,pair.module);moduleByGear.set(otherKey,pair.module)
+        edges.push({a:key,b:otherKey,teethA:pair.teethA,teethB:pair.teethB})
+      }
+    }
+    const adjacency=new Map<string,{key:string;teethFrom:number;teethTo:number}[]>()
+    for(const edge of edges){
+      const a=adjacency.get(edge.a)??[];a.push({key:edge.b,teethFrom:edge.teethA,teethTo:edge.teethB});adjacency.set(edge.a,a)
+      const b=adjacency.get(edge.b)??[];b.push({key:edge.a,teethFrom:edge.teethB,teethTo:edge.teethA});adjacency.set(edge.b,b)
+    }
+    const angles=new Map<string,number>(),conflicts=new Set<string>()
+    for(const gearKey of gearKeys){
+      const [gx,gy,gz]=parseKey(gearKey),state=this.world.getState(gx,gy,gz)??{}
+      const gearAxis=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(state.gearFacing??2)))])
+      for(let face=0;face<DIRS.length;face++){
+        const d=DIRS[face],mx=gx+d[0],my=gy+d[1],mz=gz+d[2],motorKey=posKey(mx,my,mz)
+        const motor=this.models.get(motorKey)
+        if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
+        const motorFacing=this.world.getState(mx,my,mz)?.facing??2
+        if(motorFacing!==OPPOSITE[face])continue
+        const alignment=gearAxis.dot(new THREE.Vector3(...DIRS[motorFacing]))
+        if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
+        const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1),prior=angles.get(gearKey)
+        if(prior!==undefined&&Math.abs(prior-sourceAngle)>.05)conflicts.add(gearKey)
+        else angles.set(gearKey,sourceAngle)
+      }
+    }
+    const queue=[...angles.keys()]
+    for(let cursor=0;cursor<queue.length;cursor++){
+      const key=queue[cursor],angle=angles.get(key)
+      if(angle===undefined||conflicts.has(key))continue
+      for(const next of adjacency.get(key)??[]){
+        const nextAngle=drivenGearAngle(angle,next.teethFrom,next.teethTo),previous=angles.get(next.key)
+        if(previous===undefined){angles.set(next.key,nextAngle);queue.push(next.key)}
+        else if(Math.abs(previous-nextAngle)>.05){conflicts.add(key);conflicts.add(next.key)}
+      }
+    }
+    for(const [key,angle] of angles){
+      if(conflicts.has(key)||!Number.isFinite(angle))continue
+      const model=this.gearModels.get(key)
+      if(model){model.rotor.rotation.z=angle;this.gearAngles.set(key,angle)}
+    }
+  }
+
   /* ---------------- Frame update ---------------- */
 
   update(dt: number) {
@@ -3763,6 +3911,8 @@ export class Mechanics {
         mounted.model.rim.rotation.z = 0
       }
     }
+
+    this.updateGearAnimations()
 
     if (this.networkAuthority) {
     for (const c of [...this.contraptions.values()]) {
