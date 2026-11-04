@@ -101,7 +101,7 @@ function solveLinearSystem(matrix: number[][], rhs: number[]) {
     for (let row = col + 1; row < n; row++) {
       if (Math.abs(matrix[row][col]) > Math.abs(matrix[pivot][col])) pivot = row
     }
-    if (Math.abs(matrix[pivot][col]) < 1e-16) return null
+    if (!Number.isFinite(matrix[pivot][col]) || Math.abs(matrix[pivot][col]) < 1e-16) return null
     if (pivot !== col) {
       ;[matrix[pivot], matrix[col]] = [matrix[col], matrix[pivot]]
       ;[rhs[pivot], rhs[col]] = [rhs[col], rhs[pivot]]
@@ -117,7 +117,7 @@ function solveLinearSystem(matrix: number[][], rhs: number[]) {
       rhs[row] -= factor * rhs[col]
     }
   }
-  return rhs
+  return rhs.every(Number.isFinite) ? rhs : null
 }
 
 export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
@@ -285,7 +285,7 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
 
       const solved = solveLinearSystem(matrix, rhs)
       voltages.set(reference, 0)
-      if (!solved) {
+      if (!solved || !solved.every(Number.isFinite)) {
         allComponentsSolved = false
         for (const n of unknownNodes) voltages.set(n, 0)
         continue
@@ -319,7 +319,8 @@ export function solveDcCircuit(input: DcCircuitInput): DcCircuitSolution {
   const voltage = (node: string) => finalVoltages.get(node) ?? 0
   const resistorCurrents = new Map<string, number>()
   for (const r of resistorList) {
-    resistorCurrents.set(r.id, (voltage(r.a) - voltage(r.b) - (r.offsetVoltageVolts ?? 0)) / clampResistance(r.resistanceOhms))
+    const offset = Number.isFinite(r.offsetVoltageVolts) ? r.offsetVoltageVolts ?? 0 : 0
+    resistorCurrents.set(r.id, (voltage(r.a) - voltage(r.b) - offset) / clampResistance(r.resistanceOhms))
   }
   const diodeCurrents = new Map<string, number>()
   for (const d of diodeList) {
@@ -438,8 +439,11 @@ export const RESISTOR_TOLERANCE_COLORS: Readonly<Record<number, string>> = {
 }
 
 export function resistorValueOhms(digit1 = 1, digit2 = 0, multiplier = 1) {
-  const a = Math.max(0, Math.min(9, Math.floor(digit1)))
-  const b = Math.max(0, Math.min(9, Math.floor(digit2)))
-  const exponent = Math.max(-2, Math.min(9, Math.floor(multiplier)))
+  const safeDigit1 = Number.isFinite(digit1) ? digit1 : 1
+  const safeDigit2 = Number.isFinite(digit2) ? digit2 : 0
+  const safeMultiplier = Number.isFinite(multiplier) ? multiplier : 1
+  const a = Math.max(0, Math.min(9, Math.floor(safeDigit1)))
+  const b = Math.max(0, Math.min(9, Math.floor(safeDigit2)))
+  const exponent = Math.max(-2, Math.min(9, Math.floor(safeMultiplier)))
   return Math.max(0.01, (a * 10 + b) * Math.pow(10, exponent))
 }
