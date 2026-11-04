@@ -11,6 +11,7 @@ import { ProximitySensorConfig } from '@/components/game/proximity-sensor-config
 import { BrushColorPicker } from '@/components/game/brush-color-picker'
 import { ServoConfig } from '@/components/game/servo-config'
 import { ResistorConfig } from '@/components/game/resistor-config'
+import { GearConfig } from '@/components/game/gear-config'
 import { ArduinoProgramming } from '@/components/game/arduino-programming-loader'
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 import { WorldManager } from '@/components/game/world-manager'
@@ -134,6 +135,7 @@ export default function Page() {
       {!bootError && screen === 'brush_color' && <BrushColorPicker />}
       {!bootError && screen === 'servo_config' && <ServoConfig />}
       {!bootError && screen === 'resistor_config' && <ResistorConfig />}
+      {!bootError && screen === 'gear_config' && <GearConfig />}
       {!bootError && <ArduinoProgramming />}
 
       {!bootError && screen === 'paused' && (
