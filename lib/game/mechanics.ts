@@ -3869,6 +3869,8 @@ export class Mechanics {
     this.clearGearMountedVisuals(key)
     this.rigidPhysics.removeRigidBody(rotor.body)
     if (restoreBlocks) {
+      const [gx, gy, gz] = parseKey(key)
+      this.rigidPhysics.syncStaticBlock(gx, gy, gz)
       for (const block of rotor.attachedBlocks) {
         const [x, y, z] = parseKey(block.origKey)
         const state = this.world.getState(x, y, z)
@@ -3952,12 +3954,16 @@ export class Mechanics {
           return { x: bx, y: by, z: bz, id: block.id, state: block.state }
         }),
       ]
+      // Remove the original static gear collider before creating its dynamic
+      // rotor body; otherwise the two coincident colliders lock the gear.
+      this.rigidPhysics.removeStaticBlock(key)
       const created = this.rigidPhysics.createAnchoredRevoluteBody(
         voxels,
         new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
         axis,
       )
       if (!created) {
+        this.rigidPhysics.syncStaticBlock(x, y, z)
         for (const mesh of mountedMeshes) {
           mesh.removeFromParent()
           disposeObject(mesh)
