@@ -4086,8 +4086,8 @@ export class Mechanics {
         if (solved.conflicts.has(edge.a) || solved.conflicts.has(edge.b)) {
           const inertiaA = Math.max(0.01, bindingA.body.mass() / 6)
           const inertiaB = Math.max(0.01, bindingB.body.mass() / 6)
-          bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA, y: -axisA.y * speedA * inertiaA / 6, z: -axisA.z * speedA * inertiaA / 6 }, true)
-          bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB, y: -axisB.y * speedB * inertiaB / 6, z: -axisB.z * speedB * inertiaB / 6 }, true)
+          bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA, y: -axisA.y * speedA * inertiaA, z: -axisA.z * speedA * inertiaA }, true)
+          bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB, y: -axisB.y * speedB * inertiaB, z: -axisB.z * speedB * inertiaB }, true)
           continue
         }
         const impulse = solveGearMeshImpulse({
@@ -4102,13 +4102,13 @@ export class Mechanics {
         if (!impulse) continue
         bindingA.body.applyTorqueImpulse({
           x: axisA.x * impulse.impulseA,
-          y: axisA.y * impulse.impulseA / 6,
-          z: axisA.z * impulse.impulseA / 6,
+          y: axisA.y * impulse.impulseA,
+          z: axisA.z * impulse.impulseA,
         }, true)
         bindingB.body.applyTorqueImpulse({
           x: axisB.x * impulse.impulseB,
-          y: axisB.y * impulse.impulseB / 6,
-          z: axisB.z * impulse.impulseB / 6,
+          y: axisB.y * impulse.impulseB,
+          z: axisB.z * impulse.impulseB,
         }, true)
       }
     }
