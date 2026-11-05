@@ -297,9 +297,11 @@ export class World {
             const ny = y + dy
             if (ny < 0) return true
             if (ny >= WORLD_HEIGHT) return false
-            if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) const neighborId = c.data[idx(nx, ny, nz)]
-            const neighborState = this.getState(wx + dx, ny, wz + dz)
-            return isOpaque(neighborId) && !neighborState?.gearMountedOn
+            if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) {
+              const neighborId = c.data[idx(nx, ny, nz)]
+              const neighborState = this.getState(wx + dx, ny, wz + dz)
+              return isOpaque(neighborId) && !neighborState?.gearMountedOn
+            }
             const neighborState = this.getState(wx + dx, ny, wz + dz)
             return isOpaque(this.getBlock(wx + dx, ny, wz + dz)) && !neighborState?.gearMountedOn
           }, tint)
