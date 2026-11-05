@@ -306,7 +306,11 @@ export class RigidPhysics {
         colliderDesc
           .setMass(blockMass(voxel.id, voxel.state))
           .setFriction(blockFriction(voxel.id))
-          .setRestitution(0.005),
+          .setRestitution(0.005)
+          // Gear teeth are coupled by the angular-impulse constraint. A full
+          // voxel-sized collision box would physically jam neighbouring gears
+          // before their visual teeth can mesh.
+          .setSensor(voxel.id === B.GEAR),
         body,
       )
     }
