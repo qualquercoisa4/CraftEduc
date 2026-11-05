@@ -62,3 +62,60 @@ export function outputGearSpeed(inputSpeedA:number,pair:GearPairResult):number {
 export function outputGearTorque(inputTorqueNm:number,pair:GearPairResult):number {
   return Number.isFinite(inputTorqueNm) ? inputTorqueNm*pair.torqueRatioAtoB : 0
 }
+
+
+export interface GearTrainEdge {
+  a: string
+  b: string
+  teethA: number
+  teethB: number
+}
+
+/**
+ * Propagate angular positions through a connected gear graph. Each mesh uses
+ * its own tooth ratio; a train is not rejected merely because its pairs imply
+ * different modules. This is the grid-based kinematic model used by the game.
+ */
+export function propagateGearTrainAngles(
+  sources: ReadonlyMap<string, number>,
+  edges: readonly GearTrainEdge[],
+  tolerance = 0.05,
+): { angles: Map<string, number>; conflicts: Set<string> } {
+  const adjacency = new Map<string, { key: string; from: number; to: number }[]>()
+  for (const edge of edges) {
+    if (!edge.a || !edge.b || edge.a === edge.b) continue
+    const teethA = normalizeGearTeeth(edge.teethA)
+    const teethB = normalizeGearTeeth(edge.teethB)
+    const a = adjacency.get(edge.a) ?? []
+    a.push({ key: edge.b, from: teethA, to: teethB })
+    adjacency.set(edge.a, a)
+    const b = adjacency.get(edge.b) ?? []
+    b.push({ key: edge.a, from: teethB, to: teethA })
+    adjacency.set(edge.b, b)
+  }
+  const angles = new Map<string, number>()
+  const conflicts = new Set<string>()
+  const queue: string[] = []
+  for (const [key, angle] of sources) {
+    if (!Number.isFinite(angle)) continue
+    const previous = angles.get(key)
+    if (previous === undefined) { angles.set(key, angle); queue.push(key) }
+    else if (Math.abs(previous - angle) > tolerance) conflicts.add(key)
+  }
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const key = queue[cursor]
+    if (conflicts.has(key)) continue
+    const angle = angles.get(key)
+    if (angle === undefined) continue
+    for (const next of adjacency.get(key) ?? []) {
+      const nextAngle = drivenGearAngle(angle, next.from, next.to)
+      const previous = angles.get(next.key)
+      if (previous === undefined) { angles.set(next.key, nextAngle); queue.push(next.key) }
+      else if (Math.abs(previous - nextAngle) > tolerance) {
+        conflicts.add(key)
+        conflicts.add(next.key)
+      }
+    }
+  }
+  return { angles, conflicts }
+}
