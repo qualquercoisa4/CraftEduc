@@ -388,6 +388,26 @@ function drawItemPixels(item: ItemId, px: Px) {
     return
   }
   switch (item) {
+    case 'gear': {
+      // Distinct front-facing steel gear icon with a clear centre bore.
+      const cx = 7.5, cy = 7.5
+      for (let y = 1; y < 15; y++) for (let x = 1; x < 15; x++) {
+        const dx = x - cx, dy = y - cy
+        const radius = Math.hypot(dx, dy)
+        const angle = Math.atan2(dy, dx)
+        const tooth = Math.cos(angle * 8) > 0.35
+        if (radius <= 4.5 || (radius <= 6.8 && tooth)) {
+          let color: RGBA = [177, 187, 199]
+          if (dx + dy < -2) color = [224, 230, 237]
+          if (dx + dy > 3) color = [105, 117, 132]
+          px(x, y, color)
+        }
+        if (radius <= 1.7) px(x, y, [34, 39, 47])
+        else if (radius > 1.7 && radius <= 2.5) px(x, y, [225, 177, 70])
+      }
+      rect(7, 6, 2, 3, [34, 39, 47])
+      break
+    }
     case 'switch': {
       // Pixel-art rocker, four contacts and a blue circuit board.
       rect(1, 4, 14, 10, [15, 113, 163])
@@ -709,7 +729,6 @@ export function getItemIcon(item: ItemId): string {
     component: T.COMPONENT,
     led: T.LED_OFF,
     aluminum: T.ALUMINUM,
-    gear: T.GEAR,
     window: T.WINDOW,
   }
   let url: string
