@@ -61,7 +61,7 @@ const evenLoop = propagateGearTrainAngles(new Map([['a', 1]]), [
   { a: 'b', b: 'c', teethA: 24, teethB: 24 },
   { a: 'c', b: 'd', teethA: 24, teethB: 24 },
   { a: 'd', b: 'a', teethA: 24, teethB: 24 },
-]))
+])
 assert.equal(evenLoop.conflicts.size, 0, 'four-gear closed loop should remain kinematically compatible')
 const oddLoop = propagateGearTrainAngles(new Map([['a', 1]]), [
   { a: 'a', b: 'b', teethA: 24, teethB: 24 },
