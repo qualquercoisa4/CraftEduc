@@ -464,8 +464,11 @@ export function createGearModel(teeth:number,facing:number,shaftMounted:boolean,
   }
   shape.closePath()
   const bore=new THREE.Path();bore.absarc(0,0,.105,0,Math.PI*2,true);shape.holes.push(bore)
-  const geometry=new THREE.ExtrudeGeometry(shape,{depth:.12,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.008,bevelThickness:.008,curveSegments:2})
-  geometry.translate(0,0,-.06);rotor.add(new THREE.Mesh(geometry,m.steel))
+  // The gear occupies the full one-block axial thickness, matching the voxel envelope.
+  // Keeping the rotor centred preserves the same shaft axis and face alignment.
+  const gearThickness=.96
+  const geometry=new THREE.ExtrudeGeometry(shape,{depth:gearThickness,bevelEnabled:true,bevelSegments:1,steps:1,bevelSize:.008,bevelThickness:.008,curveSegments:2})
+  geometry.translate(0,0,-gearThickness/2);rotor.add(new THREE.Mesh(geometry,m.steel))
   rotor.add(cylZ(.145,.17,m.brass,0,20));rotor.add(cylZ(.092,.19,m.solder,0,16))
   const shaft=new THREE.Group();rotor.add(shaft);let wheel:WheelModel|null=null
   if(shaftMounted){
