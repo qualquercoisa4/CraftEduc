@@ -3733,6 +3733,330 @@ export class Mechanics {
     })
   }
 
+  private getGearState(key: string): BlockState {
+    const [x, y, z] = parseKey(key)
+    const worldState = this.world.getState(x, y, z)
+    if (worldState) return worldState
+    for (const c of this.contraptions.values()) {
+      const block = c.blocks.find((candidate) => candidate.origKey === key && candidate.id === B.GEAR)
+      if (block?.state) return block.state
+      for (const extra of c.extraRotors ?? []) {
+        const extraBlock = extra.blocks.find((candidate) => candidate.origKey === key && candidate.id === B.GEAR)
+        if (extraBlock?.state) return extraBlock.state
+      }
+    }
+    return {}
+  }
+
+  private getGearAxis(key: string) {
+    const state = this.getGearState(key)
+    const facing = Math.max(0, Math.min(5, Math.floor(state.gearFacing ?? 2)))
+    return new THREE.Vector3(...DIRS[facing])
+  }
+
+  private findMovingGearOwner(key: string): {
+    body: RAPIER.RigidBody
+    parentBody: RAPIER.RigidBody | null
+    axisLocal: THREE.Vector3
+  } | null {
+    const axisLocal = this.getGearAxis(key)
+    for (const c of this.contraptions.values()) {
+      if (c.blocks.some((block) => block.id === B.GEAR && block.origKey === key)) {
+        return { body: c.rotorBody, parentBody: c.chassisBody, axisLocal }
+      }
+      for (const extra of c.extraRotors ?? []) {
+        if (extra.blocks.some((block) => block.id === B.GEAR && block.origKey === key)) {
+          return {
+            body: extra.rotorBody,
+            parentBody: extra.parent === 'rotor' ? c.rotorBody : c.chassisBody,
+            axisLocal,
+          }
+        }
+      }
+    }
+    const rotor = this.gearRotors.get(key)
+    if (rotor) return { body: rotor.body, parentBody: null, axisLocal: rotor.axis.clone() }
+    return null
+  }
+
+  private gearWorldAxis(binding: { parentBody: RAPIER.RigidBody | null; axisLocal: THREE.Vector3 }) {
+    if (!binding.parentBody) return binding.axisLocal.clone().normalize()
+    const rotation = binding.parentBody.rotation()
+    const quaternion = new THREE.Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+    return binding.axisLocal.clone().applyQuaternion(quaternion).normalize()
+  }
+
+  private gearAngularSpeed(binding: {
+    body: RAPIER.RigidBody
+    parentBody: RAPIER.RigidBody | null
+    axisLocal: THREE.Vector3
+  }) {
+    const axis = this.gearWorldAxis(binding)
+    const angular = binding.body.angvel()
+    const parent = binding.parentBody?.angvel() ?? { x: 0, y: 0, z: 0 }
+    return (angular.x - parent.x) * axis.x
+      + (angular.y - parent.y) * axis.y
+      + (angular.z - parent.z) * axis.z
+  }
+
+  private gearTrainEdges(): GearTrainEdge[] {
+    const keys = [...this.gearModels.keys()].filter((key) => !this.fallingKeys.has(key)).sort()
+    const edges: GearTrainEdge[] = []
+    for (const key of keys) {
+      const [x, y, z] = parseKey(key)
+      const axisA = this.getGearAxis(key)
+      const stateA = this.getGearState(key)
+      for (const direction of DIRS) {
+        const otherKey = posKey(x + direction[0], y + direction[1], z + direction[2])
+        if (otherKey <= key || !this.gearModels.has(otherKey)) continue
+        const axisB = this.getGearAxis(otherKey)
+        const alignment = axisA.dot(axisB)
+        const centerLine = new THREE.Vector3(...direction)
+        if (Math.abs(Math.abs(alignment) - 1) > 1e-3 || Math.abs(centerLine.dot(axisA)) > 1e-3) continue
+        const stateB = this.getGearState(otherKey)
+        edges.push({
+          a: key,
+          b: otherKey,
+          teethA: normalizeGearTeeth(stateA.gearTeeth),
+          teethB: normalizeGearTeeth(stateB.gearTeeth),
+          axisAlignment: alignment,
+        })
+      }
+    }
+    return edges
+  }
+
+  private getGearMotorSources() {
+    const sources = new Map<string, number>()
+    for (const c of this.contraptions.values()) {
+      for (const block of c.blocks) {
+        if (block.id !== B.GEAR) continue
+        const axis = new THREE.Vector3(...DIRS[Math.max(0, Math.min(5, Math.floor(block.state?.gearFacing ?? 2)))])
+        const alignment = axis.dot(c.axis)
+        if (Math.abs(Math.abs(alignment) - 1) > 1e-3) continue
+        sources.set(block.origKey, c.angle * Math.sign(alignment || 1))
+      }
+      for (const extra of c.extraRotors ?? []) {
+        for (const block of extra.blocks) {
+          if (block.id !== B.GEAR) continue
+          const axis = new THREE.Vector3(...DIRS[Math.max(0, Math.min(5, Math.floor(block.state?.gearFacing ?? 2)))])
+          const alignment = axis.dot(extra.axis)
+          if (Math.abs(Math.abs(alignment) - 1) > 1e-3) continue
+          sources.set(block.origKey, extra.angle * Math.sign(alignment || 1))
+        }
+      }
+    }
+    return sources
+  }
+
+  private clearGearMountedVisuals(key: string) {
+    const gear = this.gearModels.get(key)
+    const rotor = this.gearRotors.get(key)
+    if (!gear || !rotor) return
+    for (const mesh of rotor.mountedMeshes) {
+      mesh.removeFromParent()
+      disposeObject(mesh)
+    }
+    rotor.mountedMeshes.length = 0
+  }
+
+  private removeGearRotor(key: string, restoreBlocks: boolean) {
+    const rotor = this.gearRotors.get(key)
+    if (!rotor) return
+    this.clearGearMountedVisuals(key)
+    this.rigidPhysics.removeRigidBody(rotor.body)
+    if (restoreBlocks) {
+      for (const block of rotor.attachedBlocks) {
+        const [x, y, z] = parseKey(block.origKey)
+        const state = this.world.getState(x, y, z)
+        if (state?.gearMountedOn !== key) continue
+        delete state.gearMountedOn
+        this.world.ensureChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE)).modified = true
+        this.world.markBlockDirty(x, y, z)
+        this.rigidPhysics.syncStaticBlock(x, y, z)
+      }
+    }
+    this.gearRotors.delete(key)
+  }
+
+  private syncGearRotorBodies() {
+    if (!this.rigidPhysics.ready || !this.gearPhysicsDirty) return
+    this.gearPhysicsDirty = false
+    for (const key of [...this.gearRotors.keys()]) this.removeGearRotor(key, true)
+
+    for (const key of [...this.gearModels.keys()].sort()) {
+      if (this.fallingKeys.has(key) || this.findMovingGearOwner(key)) continue
+      const [x, y, z] = parseKey(key)
+      if (this.world.getBlock(x, y, z) !== B.GEAR) continue
+      const axis = this.getGearAxis(key)
+      const mounted: CBlock[] = []
+      const occupied = new Set<string>()
+      for (const sign of [-1, 1]) {
+        for (let distance = 1; distance <= 8; distance++) {
+          const px = x + axis.x * sign * distance
+          const py = y + axis.y * sign * distance
+          const pz = z + axis.z * sign * distance
+          const blockKey = posKey(px, py, pz)
+          const id = this.world.getBlock(px, py, pz)
+          if (id === B.AIR || id === B.GEAR || id === B.MOTOR || id === B.SERVO || !isOpaque(id)) break
+          if (occupied.has(blockKey)) break
+          const state = this.world.getState(px, py, pz)
+          if (state?.gearMountedOn && state.gearMountedOn !== key) break
+          const block: CBlock = {
+            rel: [px - x, py - y, pz - z],
+            id,
+            state: state ? { ...state } : undefined,
+            origKey: blockKey,
+          }
+          mounted.push(block)
+          occupied.add(blockKey)
+        }
+      }
+
+      const gear = this.gearModels.get(key)
+      if (!gear) continue
+      const visualBuffers = newBuffers()
+      const offsets = new Set(mounted.map((block) => block.rel[0] * axis.x + block.rel[1] * axis.y + block.rel[2] * axis.z))
+      const mountedMeshes: THREE.Object3D[] = []
+      for (const block of mounted) {
+        const offset = block.rel[0] * axis.x + block.rel[1] * axis.y + block.rel[2] * axis.z
+        const meshBuffers = newBuffers()
+        emitCube(
+          meshBuffers,
+          -0.5, -0.5, offset - 0.5,
+          block.id,
+          false,
+          (dx, dy, dz) => dx === 0 && dy === 0 && offsets.has(offset + dz),
+          block.state?.color,
+        )
+        if (meshBuffers.indices.length) {
+          const mesh = new THREE.Mesh(buffersToGeometry(meshBuffers), this.blockMaterial)
+          gear.rotor.add(mesh)
+          mountedMeshes.push(mesh)
+        }
+        const [bx, by, bz] = parseKey(block.origKey)
+        const state = this.world.ensureState(bx, by, bz)
+        state.gearMountedOn = key
+        this.world.ensureChunk(Math.floor(bx / CHUNK_SIZE), Math.floor(bz / CHUNK_SIZE)).modified = true
+        this.world.markBlockDirty(bx, by, bz)
+        this.rigidPhysics.removeStaticBlock(block.origKey)
+      }
+
+      const voxels = [
+        { x, y, z, id: B.GEAR },
+        ...mounted.map((block) => {
+          const [bx, by, bz] = parseKey(block.origKey)
+          return { x: bx, y: by, z: bz, id: block.id, state: block.state }
+        }),
+      ]
+      const created = this.rigidPhysics.createAnchoredRevoluteBody(
+        voxels,
+        new THREE.Vector3(x + 0.5, y + 0.5, z + 0.5),
+        axis,
+      )
+      if (!created) {
+        for (const mesh of mountedMeshes) {
+          mesh.removeFromParent()
+          disposeObject(mesh)
+        }
+        for (const block of mounted) {
+          const [bx, by, bz] = parseKey(block.origKey)
+          const state = this.world.getState(bx, by, bz)
+          if (state?.gearMountedOn === key) delete state.gearMountedOn
+          this.world.markBlockDirty(bx, by, bz)
+          this.rigidPhysics.syncStaticBlock(bx, by, bz)
+        }
+        continue
+      }
+      this.gearRotors.set(key, {
+        body: created.body,
+        joint: created.joint,
+        axis,
+        attachedBlocks: mounted,
+        mountedMeshes,
+      })
+    }
+  }
+
+  private updateGearRotorTransforms() {
+    for (const [key, rotor] of this.gearRotors) {
+      const gear = this.gearModels.get(key)
+      if (!gear || gear.group.parent !== this.scene) continue
+      const position = rotor.body.translation()
+      const rotation = rotor.body.rotation()
+      const facing = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), rotor.axis)
+      gear.group.position.set(position.x, position.y, position.z)
+      gear.group.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w).multiply(facing)
+      gear.rotor.rotation.z = 0
+      gear.group.updateMatrixWorld(true)
+    }
+  }
+
+  private applyGearTrainCoupling(fixedDt: number) {
+    const edges = this.gearTrainEdges()
+    if (!edges.length) return
+    const sources = this.getGearMotorSources()
+    const solved = sources.size ? propagateGearTrainAngles(sources, edges) : { angles: new Map<string, number>(), conflicts: new Set<string>() }
+    for (const edge of edges) {
+      const bindingA = this.findMovingGearOwner(edge.a)
+      const bindingB = this.findMovingGearOwner(edge.b)
+      if (!bindingA || !bindingB || bindingA.body === bindingB.body) continue
+      const axisA = this.gearWorldAxis(bindingA)
+      const axisB = this.gearWorldAxis(bindingB)
+      const speedA = this.gearAngularSpeed(bindingA)
+      const speedB = this.gearAngularSpeed(bindingB)
+      if (solved.conflicts.has(edge.a) || solved.conflicts.has(edge.b)) {
+        const inertiaA = Math.max(0.01, bindingA.body.mass() / 6)
+        const inertiaB = Math.max(0.01, bindingB.body.mass() / 6)
+        bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA, y: -axisA.y * speedA * inertiaA, z: -axisA.z * speedA * inertiaA }, true)
+        bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB, y: -axisB.y * speedB * inertiaB, z: -axisB.z * speedB * inertiaB }, true)
+        continue
+      }
+      const impulse = solveGearMeshImpulse({
+        speedA,
+        speedB,
+        inertiaA: Math.max(0.01, bindingA.body.mass() / 6),
+        inertiaB: Math.max(0.01, bindingB.body.mass() / 6),
+        teethA: edge.teethA,
+        teethB: edge.teethB,
+        axisAlignment: edge.axisAlignment ?? axisA.dot(axisB),
+      })
+      if (!impulse) continue
+      bindingA.body.applyTorqueImpulse({
+        x: axisA.x * impulse.impulseA,
+        y: axisA.y * impulse.impulseA,
+        z: axisA.z * impulse.impulseA,
+      }, true)
+      bindingB.body.applyTorqueImpulse({
+        x: axisB.x * impulse.impulseB,
+        y: axisB.y * impulse.impulseB,
+        z: axisB.z * impulse.impulseB,
+      }, true)
+      // Small dissipative bearing/mesh loss; it removes energy and never adds
+      // speed. The motor controller must supply this loss every solver step.
+      const dragA = speedA * 0.0015 * fixedDt
+      const dragB = speedB * 0.0015 * fixedDt
+      bindingA.body.applyTorqueImpulse({ x: -axisA.x * dragA, y: -axisA.y * dragA, z: -axisA.z * dragA }, true)
+      bindingB.body.applyTorqueImpulse({ x: -axisB.x * dragB, y: -axisB.y * dragB, z: -axisB.z * dragB }, true)
+    }
+  }
+
+  private reflectedGearInertiaForMotor(c: Contraption) {
+    const root = c.blocks.find((block) => block.id === B.GEAR)
+    if (!root) return 0
+    const edges = this.gearTrainEdges()
+    const inertias = new Map<string, number>()
+    for (const key of this.gearModels.keys()) {
+      const binding = this.findMovingGearOwner(key)
+      if (!binding || key === root.origKey) continue
+      inertias.set(key, Math.max(0.005, estimateGearAssemblyInertia(
+        B.GEAR === this.world.getBlock(...parseKey(key)) ? blockMass(B.GEAR) : 0.42,
+        (this.gearRotors.get(key)?.attachedBlocks ?? []).map((block) => blockMass(block.id, block.state)),
+      )))
+    }
+    return calculateReflectedGearInertia(root.origKey, inertias, edges).equivalentInertia
+  }
+
   /** First-pass kinematic propagation; reaction-load coupling is a separate Rapier milestone. */
   private updateGearAnimations() {
     if(this.gearModels.size===0)return
