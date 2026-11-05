@@ -51,12 +51,8 @@ const MOTOR_COAST_TORQUE_NM = 0.001
 // Convert small real-world motor torques to metre-scale voxel mechanics. The
 // output torque is capped separately, while the target follows measured speed.
 const MOTOR_SIMULATION_TORQUE_SCALE = 120
-// Kept only as a compatibility ceiling for old saves with no explicit motor type.
-// Typed motors use a torque ceiling derived from their own stall-torque rating.
-const MAX_MOTOR_SIMULATION_TORQUE_NM = 4
 const MAX_MOTOR_TARGET_LEAD = 0.4
 const SERVO_SIMULATION_TORQUE_SCALE = 120
-const LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM = 4.0
 const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
 // SG90 rated torque is about 0.176 N·m. Voxel blocks are metre-scale game units,
@@ -70,14 +66,8 @@ function motorDriveCommand(
 ): { targetOmega: number; maxTorqueNm: number } {
   if (voltageRatio <= 0) return { targetOmega: 0, maxTorqueNm: 0 }
 
-  // Old saved worlds have no motorType; preserve their established movement.
-  if (!variant) {
-    return {
-      targetOmega: voltageRatio * 1.05,
-      maxTorqueNm: LEGACY_MOTOR_TORQUE_PER_POWER_UNIT_NM * voltageRatio,
-    }
-  }
-
+  // Missing motorType in old saves means the catalog default (FA-130), not a
+  // separate legacy motor with unrelated speed and torque characteristics.
   const drive = motorDriveCommandForVoltageRatio(getMotorSpec(variant), voltageRatio, windingCurrentA)
   // The block world is metre-scale while real toy motor dimensions are cm-scale.
   // Keep that explicit gameplay conversion separate from electrical values.
@@ -90,9 +80,10 @@ function motorDriveCommand(
 /** Per-motor torque ceiling: typed motors retain their own torque class instead of
  * all saturating at one global gameplay limit. The legacy fallback preserves old saves. */
 function motorTorqueWorldLimit(variant: string | undefined, multiplier = 1) {
-  const physicalLimit = variant
-    ? getMotorSpec(variant).stallTorqueNm * MOTOR_SIMULATION_TORQUE_SCALE * MAX_MOTOR_MODEL_RATIO
-    : MAX_MOTOR_SIMULATION_TORQUE_NM
+  // Legacy saves without motorType use the same catalog default as newly
+  // placed FA-130 motors, including the same physical torque ceiling.
+  const physicalLimit = getMotorSpec(variant).stallTorqueNm
+    * MOTOR_SIMULATION_TORQUE_SCALE * MAX_MOTOR_MODEL_RATIO
   return Math.max(0.00001, physicalLimit * multiplier)
 }
 
@@ -411,6 +402,7 @@ export class Mechanics {
       this.gearModels.set(key, gear)
     } else if (newId === B.MOTOR) {
       const st = this.world.ensureState(x, y, z)
+      st.motorType ??= 'fa130'
       st.facing ??= 2
       st.motorRoll ??= 0
       const model = createMotorModel(st.facing, st.motorType, st.motorRoll)
