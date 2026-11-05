@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import RAPIER from '@dimforge/rapier3d-compat'
 import { blockFriction, blockMass, RigidPhysics } from './rigid-physics'
 import { getMotorSpec } from './motor-specs'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorTorqueFromCurrent, stepFreeMotorAngularSpeed } from './motor-model'
+import { advanceMotorVisualAngle, classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorTorqueFromCurrent, stepFreeMotorAngularSpeed } from './motor-model'
 import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, resistorActualResistanceOhms, resistorToleranceOffsetPercent, resistorValueOhms, solveDcCircuit, type ElectricalDiode, type ElectricalResistor, type ElectricalVoltageSource } from './electrical'
 import { B, BLOCK_CONDUCTIVITY, CHUNK_SIZE, DIRS, GROUND_LEVEL, WORLD_HEIGHT, OPPOSITE, blockBounds, isOpaque, parseKey, posKey } from './constants'
 import { buffersToGeometry, buildGlueGeometry, emitCube, newBuffers } from './mesher'
@@ -3408,6 +3408,14 @@ export class Mechanics {
           model.model.group.position.sub(pivot)
           group.add(model.model.group)
         }
+        // Gear meshes are stored separately from electronic ModelEntry values.
+        // Parent them to the same Rapier visual group so their geometry follows
+        // the voxel's translation and rotation while falling.
+        const gear = this.gearModels.get(b.key)
+        if (gear) {
+          gear.group.position.sub(pivot)
+          group.add(gear.group)
+        }
         const glow = this.glows.get(b.key)
         if (glow) {
           glow.position.sub(pivot)
@@ -3447,6 +3455,7 @@ export class Mechanics {
       const center = b.localOrigin.clone().applyQuaternion(q).add(pivot)
       const state: BlockState | undefined = b.state ? { ...b.state } : undefined
       if (state?.facing !== undefined) state.facing = rotateDirection(state.facing)
+      if (state?.gearFacing !== undefined) state.gearFacing = rotateDirection(state.gearFacing)
       if (state?.glue) {
         let mask = 0
         for (let face = 0; face < 6; face++) if (state.glue & (1 << face)) {
@@ -3495,6 +3504,15 @@ export class Mechanics {
         model.model.group.position.copy(pos)
         model.model.group.quaternion.copy(rot)
       }
+      const gear = this.gearModels.get(b.originKey)
+      if (gear && gear.group.parent === body.group) {
+        const pos = gear.group.getWorldPosition(new THREE.Vector3())
+        const rot = gear.group.getWorldQuaternion(new THREE.Quaternion())
+        body.group.remove(gear.group)
+        this.scene.add(gear.group)
+        gear.group.position.copy(pos)
+        gear.group.quaternion.copy(rot)
+      }
       const glow = this.glows.get(b.originKey)
       if (glow && glow.parent === body.group) {
         const pos = glow.getWorldPosition(new THREE.Vector3())
@@ -3523,6 +3541,19 @@ export class Mechanics {
         this.models.delete(oldKey)
         this.models.set(newKey, entry)
         this.snapModelToGrid(entry, newKey, false)
+      }
+      const gear = this.gearModels.get(oldKey)
+      if (gear) {
+        this.gearModels.delete(oldKey)
+        this.gearModels.set(newKey, gear)
+        const angle = this.gearAngles.get(oldKey) ?? gear.rotor.rotation.z
+        this.gearAngles.delete(oldKey)
+        this.gearAngles.set(newKey, angle)
+        const placement = placements.find((candidate) => candidate.orig === oldKey)
+        const [gearX, gearY, gearZ] = parseKey(newKey)
+        gear.group.position.set(gearX + 0.5, gearY + 0.5, gearZ + 0.5)
+        gear.group.quaternion.copy(facingQuaternion(placement?.state?.gearFacing ?? 2))
+        gear.rotor.rotation.z = angle
       }
       const mounted = this.mountedWheels.get(oldKey)
       if (mounted) { this.mountedWheels.delete(oldKey); this.mountedWheels.set(newKey, mounted) }
@@ -3701,7 +3732,10 @@ export class Mechanics {
   /** First-pass kinematic propagation; reaction-load coupling is a separate Rapier milestone. */
   private updateGearAnimations() {
     if(this.gearModels.size===0)return
-    const gearKeys=[...this.gearModels.keys()].sort()
+    // Falling gears are already driven by their Rapier parent transform. Do not
+    // also apply grid-based motor/gear coupling using their obsolete origin key.
+    const gearKeys=[...this.gearModels.keys()].filter((key)=>!this.fallingKeys.has(key)).sort()
+    if(gearKeys.length===0)return
     const moduleByGear=new Map<string,number>()
     const edges:{a:string;b:string;teethA:number;teethB:number}[]=[]
     for(const key of gearKeys){
@@ -3737,11 +3771,14 @@ export class Mechanics {
         const motor=this.models.get(motorKey)
         if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
         const motorFacing=this.world.getState(mx,my,mz)?.facing??2
-        // A spur gear meshes with a motor when their shafts are parallel and
-        // their centres are separated in the gear plane. The motor must NOT
-        // point toward the gear: that would make its shaft radial/perpendicular
-        // to the gear axle and contradict calculateGearPair's axial-offset test.
-        const alignment=gearAxis.dot(new THREE.Vector3(...DIRS[motorFacing]))
+        const motorAxis=new THREE.Vector3(...DIRS[motorFacing])
+        // The first gear is mounted coaxially on the motor output shaft: the
+        // motor must point into the gear hub, and both shaft axes must agree.
+        // The motor-to-gear connection is distinct from external gear-to-gear
+        // meshing, where the centre line lies in the gear plane.
+        const motorToGear=new THREE.Vector3(-d[0],-d[1],-d[2])
+        if(motorAxis.dot(motorToGear)<1-1e-3)continue
+        const alignment=gearAxis.dot(motorAxis)
         if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
         const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1),prior=angles.get(gearKey)
         if(prior!==undefined&&Math.abs(prior-sourceAngle)>.05)conflicts.add(gearKey)
@@ -3902,7 +3939,7 @@ export class Mechanics {
             : 0
           const nextSpeed = stepFreeMotorAngularSpeed(spec, currentSpeed, targetSpeed, windingCurrent, dt)
           this.freeMotorAngularSpeeds.set(key, nextSpeed)
-          e.spin += nextSpeed * dt
+          e.spin = advanceMotorVisualAngle(e.spin, nextSpeed, dt)
         }
         e.model.shaft.rotation.z = e.spin
       }
