@@ -69,6 +69,7 @@ export interface GearTrainEdge {
   b: string
   teethA: number
   teethB: number
+  axisAlignment?: number
 }
 
 /**
@@ -81,16 +82,19 @@ export function propagateGearTrainAngles(
   edges: readonly GearTrainEdge[],
   tolerance = 0.05,
 ): { angles: Map<string, number>; conflicts: Set<string> } {
-  const adjacency = new Map<string, { key: string; from: number; to: number }[]>()
+  const adjacency = new Map<string, { key: string; from: number; to: number; axisSign: number }[]>()
   for (const edge of edges) {
     if (!edge.a || !edge.b || edge.a === edge.b) continue
     const teethA = normalizeGearTeeth(edge.teethA)
     const teethB = normalizeGearTeeth(edge.teethB)
+    const alignment = edge.axisAlignment ?? 1
+    if (!Number.isFinite(alignment) || Math.abs(Math.abs(alignment) - 1) > 1e-3) continue
+    const axisSign = Math.sign(alignment)
     const a = adjacency.get(edge.a) ?? []
-    a.push({ key: edge.b, from: teethA, to: teethB })
+    a.push({ key: edge.b, from: teethA, to: teethB, axisSign })
     adjacency.set(edge.a, a)
     const b = adjacency.get(edge.b) ?? []
-    b.push({ key: edge.a, from: teethB, to: teethA })
+    b.push({ key: edge.a, from: teethB, to: teethA, axisSign })
     adjacency.set(edge.b, b)
   }
   const angles = new Map<string, number>()
@@ -108,7 +112,7 @@ export function propagateGearTrainAngles(
     const angle = angles.get(key)
     if (angle === undefined) continue
     for (const next of adjacency.get(key) ?? []) {
-      const nextAngle = drivenGearAngle(angle, next.from, next.to)
+      const nextAngle = drivenGearAngle(angle, next.from, next.to) * next.axisSign
       const previous = angles.get(next.key)
       if (previous === undefined) { angles.set(next.key, nextAngle); queue.push(next.key) }
       else if (Math.abs(previous - nextAngle) > tolerance) {
@@ -118,4 +122,56 @@ export function propagateGearTrainAngles(
     }
   }
   return { angles, conflicts }
+}
+
+
+export function calculateReflectedGearInertia(
+  sourceKey: string,
+  inertias: ReadonlyMap<string, number>,
+  edges: readonly GearTrainEdge[],
+): { equivalentInertia: number; speedRatios: Map<string, number>; conflicts: Set<string> } {
+  const adjacency = new Map<string, { key: string; from: number; to: number; axisSign: number }[]>()
+  for (const edge of edges) {
+    if (!edge.a || !edge.b || edge.a === edge.b) continue
+    const alignment = edge.axisAlignment ?? 1
+    if (!Number.isFinite(alignment) || Math.abs(Math.abs(alignment) - 1) > 1e-3) continue
+    const axisSign = Math.sign(alignment)
+    const teethA = normalizeGearTeeth(edge.teethA)
+    const teethB = normalizeGearTeeth(edge.teethB)
+    const a = adjacency.get(edge.a) ?? []
+    a.push({ key: edge.b, from: teethA, to: teethB, axisSign })
+    adjacency.set(edge.a, a)
+    const b = adjacency.get(edge.b) ?? []
+    b.push({ key: edge.a, from: teethB, to: teethA, axisSign })
+    adjacency.set(edge.b, b)
+  }
+
+  const speedRatios = new Map<string, number>([[sourceKey, 1]])
+  const conflicts = new Set<string>()
+  const queue = [sourceKey]
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const key = queue[cursor]
+    if (conflicts.has(key)) continue
+    const ratio = speedRatios.get(key)
+    if (ratio === undefined) continue
+    for (const next of adjacency.get(key) ?? []) {
+      const nextRatio = -next.axisSign * ratio * next.from / next.to
+      const previous = speedRatios.get(next.key)
+      if (previous === undefined) {
+        speedRatios.set(next.key, nextRatio)
+        queue.push(next.key)
+      } else if (Math.abs(previous - nextRatio) > 1e-5) {
+        conflicts.add(key)
+        conflicts.add(next.key)
+      }
+    }
+  }
+
+  let equivalentInertia = 0
+  for (const [key, ratio] of speedRatios) {
+    if (key === sourceKey || conflicts.has(key)) continue
+    const inertia = inertias.get(key) ?? 0
+    if (Number.isFinite(inertia) && inertia > 0) equivalentInertia += inertia * ratio * ratio
+  }
+  return { equivalentInertia, speedRatios, conflicts }
 }
