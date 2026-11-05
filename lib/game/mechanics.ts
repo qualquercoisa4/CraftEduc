@@ -255,6 +255,7 @@ interface GearRotor {
   joint: RAPIER.RevoluteImpulseJoint
   axis: THREE.Vector3
   attachedBlocks: CBlock[]
+  mountedMeshes: THREE.Object3D[]
 }
 
 interface Contraption {
