@@ -1332,6 +1332,20 @@ export class Engine {
     const targetBlockId = hit
       ? (this.world.getBlock(hit.x, hit.y, hit.z) || hit.id)
       : B.AIR
+    // On touch devices there is no secondary-click gesture. Tapping a
+    // selected gear opens the same tooth-count editor used by desktop.
+    if (hit && targetBlockId === B.GEAR && item === 'gear' && gameStore.get().isTouch) {
+      if (this.multiplayerBridge) {
+        showToast('A configuração mecânica está disponível primeiro no Single Player')
+        return
+      }
+      gameStore.set({
+        gearConfigKey: posKey(hit.x, hit.y, hit.z),
+        returnScreen: 'playing',
+        screen: 'gear_config',
+      })
+      return
+    }
     if (item === 'scanner_dws') {
       if (!hit || targetBlockId === B.AIR) {
         showToast('Aponte o Scanner DWS para um bloco da montagem')
