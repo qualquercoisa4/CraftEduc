@@ -37,7 +37,9 @@ export const MAX_MOTOR_VISUAL_ANGULAR_SPEED = Math.PI * 8
 export function advanceMotorVisualAngle(currentAngle: number, angularSpeed: number, deltaSeconds: number) {
   const angle = Number.isFinite(currentAngle) ? currentAngle : 0
   const dt = clamp(deltaSeconds, 0, 0.1)
-  const speed = clamp(angularSpeed, -MAX_MOTOR_VISUAL_ANGULAR_SPEED, MAX_MOTOR_VISUAL_ANGULAR_SPEED)
+  const speed = Number.isFinite(angularSpeed)
+    ? clamp(angularSpeed, -MAX_MOTOR_VISUAL_ANGULAR_SPEED, MAX_MOTOR_VISUAL_ANGULAR_SPEED)
+    : 0
   return angle + speed * dt
 }
 
