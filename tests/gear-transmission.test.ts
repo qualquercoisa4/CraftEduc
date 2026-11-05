@@ -67,7 +67,7 @@ const oddLoop = propagateGearTrainAngles(new Map([['a', 1]]), [
   { a: 'a', b: 'b', teethA: 24, teethB: 24 },
   { a: 'b', b: 'c', teethA: 24, teethB: 24 },
   { a: 'c', b: 'a', teethA: 24, teethB: 24 },
-]))
+])
 assert.ok(oddLoop.conflicts.size >= 2, 'three external gears in a closed loop must be reported as locked/conflicting')
 
 // Two motors on one train are valid only when their commanded phases agree.
