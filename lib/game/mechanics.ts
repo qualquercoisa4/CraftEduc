@@ -3879,7 +3879,8 @@ export class Mechanics {
       const mx = gx + direction[0], my = gy + direction[1], mz = gz + direction[2]
       const motorKey = posKey(mx, my, mz)
       if (this.world.getBlock(mx, my, mz) !== B.MOTOR || this.models.get(motorKey)?.type !== 'motor') continue
-      const motorAxis = new THREE.Vector3(...DIRS[this.world.getState(mx, my, mz)?.facing ?? 2])
+      const motorFacing = Math.max(0, Math.min(5, Math.floor(this.world.getState(mx, my, mz)?.facing ?? 2)))
+      const motorAxis = new THREE.Vector3(...DIRS[motorFacing])
       const motorToGear = new THREE.Vector3(-direction[0], -direction[1], -direction[2])
       if (motorAxis.dot(motorToGear) < 1 - 1e-3) continue
       if (Math.abs(Math.abs(gearAxis.dot(motorAxis)) - 1) > 1e-3) continue
