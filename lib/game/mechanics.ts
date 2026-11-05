@@ -109,7 +109,7 @@ const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
 import { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 import { calculateWheelNormalForce } from './wheel-traction'
-import { calculateGearPair, drivenGearAngle, normalizeGearTeeth } from './gear-train'
+import { normalizeGearTeeth, propagateGearTrainAngles } from './gear-train'
 export { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 
 /**
@@ -3736,7 +3736,6 @@ export class Mechanics {
     // also apply grid-based motor/gear coupling using their obsolete origin key.
     const gearKeys=[...this.gearModels.keys()].filter((key)=>!this.fallingKeys.has(key)).sort()
     if(gearKeys.length===0)return
-    const moduleByGear=new Map<string,number>()
     const edges:{a:string;b:string;teethA:number;teethB:number}[]=[]
     for(const key of gearKeys){
       const [x,y,z]=parseKey(key),stateA=this.world.getState(x,y,z)??{}
@@ -3747,54 +3746,15 @@ export class Mechanics {
         const stateB=this.world.getState(nx,ny,nz)??{}
         const axisB=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(stateB.gearFacing??2)))])
         const delta=new THREE.Vector3(d[0],d[1],d[2])
-        const pair=calculateGearPair({
-          teethA:normalizeGearTeeth(stateA.gearTeeth),teethB:normalizeGearTeeth(stateB.gearTeeth),
-          centerDistance:delta.length(),axisAlignment:axisA.dot(axisB),axialOffset:delta.dot(axisA),
-          moduleA:moduleByGear.get(key),moduleB:moduleByGear.get(otherKey),
-        })
-        if(!pair)continue
-        moduleByGear.set(key,pair.module);moduleByGear.set(otherKey,pair.module)
-        edges.push({a:key,b:otherKey,teethA:pair.teethA,teethB:pair.teethB})
+        // Grid gears use a fixed visual envelope. Validate shaft geometry here,
+        // but calculate each mesh ratio independently in the train solver.
+        if(Math.abs(Math.abs(axisA.dot(axisB))-1)>1e-3||Math.abs(delta.dot(axisA))>1e-3)continue
+        edges.push({a:key,b:otherKey,teethA:normalizeGearTeeth(stateA.gearTeeth),teethB:normalizeGearTeeth(stateB.gearTeeth)})
       }
     }
-    const adjacency=new Map<string,{key:string;teethFrom:number;teethTo:number}[]>()
-    for(const edge of edges){
-      const a=adjacency.get(edge.a)??[];a.push({key:edge.b,teethFrom:edge.teethA,teethTo:edge.teethB});adjacency.set(edge.a,a)
-      const b=adjacency.get(edge.b)??[];b.push({key:edge.a,teethFrom:edge.teethB,teethTo:edge.teethA});adjacency.set(edge.b,b)
-    }
-    const angles=new Map<string,number>(),conflicts=new Set<string>()
-    for(const gearKey of gearKeys){
-      const [gx,gy,gz]=parseKey(gearKey),state=this.world.getState(gx,gy,gz)??{}
-      const gearAxis=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(state.gearFacing??2)))])
-      for(let face=0;face<DIRS.length;face++){
-        const d=DIRS[face],mx=gx+d[0],my=gy+d[1],mz=gz+d[2],motorKey=posKey(mx,my,mz)
-        const motor=this.models.get(motorKey)
-        if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
-        const motorFacing=this.world.getState(mx,my,mz)?.facing??2
-        const motorAxis=new THREE.Vector3(...DIRS[motorFacing])
-        // The first gear is mounted coaxially on the motor output shaft: the
-        // motor must point into the gear hub, and both shaft axes must agree.
-        // The motor-to-gear connection is distinct from external gear-to-gear
-        // meshing, where the centre line lies in the gear plane.
-        const motorToGear=new THREE.Vector3(-d[0],-d[1],-d[2])
-        if(motorAxis.dot(motorToGear)<1-1e-3)continue
-        const alignment=gearAxis.dot(motorAxis)
-        if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
-        const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1),prior=angles.get(gearKey)
-        if(prior!==undefined&&Math.abs(prior-sourceAngle)>.05)conflicts.add(gearKey)
-        else angles.set(gearKey,sourceAngle)
-      }
-    }
+    const sourceAngles=new Map<string,number>()
     const queue=[...angles.keys()]
-    for(let cursor=0;cursor<queue.length;cursor++){
-      const key=queue[cursor],angle=angles.get(key)
-      if(angle===undefined||conflicts.has(key))continue
-      for(const next of adjacency.get(key)??[]){
-        const nextAngle=drivenGearAngle(angle,next.teethFrom,next.teethTo),previous=angles.get(next.key)
-        if(previous===undefined){angles.set(next.key,nextAngle);queue.push(next.key)}
-        else if(Math.abs(previous-nextAngle)>.05){conflicts.add(key);conflicts.add(next.key)}
-      }
-    }
+    const {angles,conflicts}=propagateGearTrainAngles(sourceAngles,edges)
     for(const [key,angle] of angles){
       if(conflicts.has(key)||!Number.isFinite(angle))continue
       const model=this.gearModels.get(key)
