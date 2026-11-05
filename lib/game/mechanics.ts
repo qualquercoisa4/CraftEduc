@@ -4055,7 +4055,12 @@ export class Mechanics {
       const torqueNm = this.motorTorqueNm.get(motorKey) ?? 0
       if (!Number.isFinite(torqueNm) || Math.abs(torqueNm) < 1e-7) continue
       const torque = motorTorqueWorld(this.world.getState(...parseKey(motorKey))?.motorType, torqueNm)
-      const direction = Math.sign(torqueNm)
+      const [gx, gy, gz] = parseKey(gearKey)
+      const [mx, my, mz] = parseKey(motorKey)
+      const motorFacing = Math.max(0, Math.min(5, Math.floor(this.world.getState(mx, my, mz)?.facing ?? 2)))
+      const motorAxis = new THREE.Vector3(...DIRS[motorFacing])
+      const axisAlignment = Math.sign(rotor.axis.dot(motorAxis)) || 1
+      const direction = Math.sign(torqueNm) * axisAlignment
       const axis = rotor.axis.clone().normalize().multiplyScalar(direction)
       rotor.body.applyTorqueImpulse({
         x: axis.x * torque * fixedDt,
@@ -4082,8 +4087,8 @@ export class Mechanics {
         if (solved.conflicts.has(edge.a) || solved.conflicts.has(edge.b)) {
           const inertiaA = Math.max(0.01, bindingA.body.mass() / 6)
           const inertiaB = Math.max(0.01, bindingB.body.mass() / 6)
-          bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA / 6, y: -axisA.y * speedA * inertiaA / 6, z: -axisA.z * speedA * inertiaA / 6 }, true)
-          bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB / 6, y: -axisB.y * speedB * inertiaB / 6, z: -axisB.z * speedB * inertiaB / 6 }, true)
+          bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA, y: -axisA.y * speedA * inertiaA / 6, z: -axisA.z * speedA * inertiaA / 6 }, true)
+          bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB, y: -axisB.y * speedB * inertiaB / 6, z: -axisB.z * speedB * inertiaB / 6 }, true)
           continue
         }
         const impulse = solveGearMeshImpulse({
@@ -4097,12 +4102,12 @@ export class Mechanics {
         })
         if (!impulse) continue
         bindingA.body.applyTorqueImpulse({
-          x: axisA.x * impulse.impulseA / 6,
+          x: axisA.x * impulse.impulseA,
           y: axisA.y * impulse.impulseA / 6,
           z: axisA.z * impulse.impulseA / 6,
         }, true)
         bindingB.body.applyTorqueImpulse({
-          x: axisB.x * impulse.impulseB / 6,
+          x: axisB.x * impulse.impulseB,
           y: axisB.y * impulse.impulseB / 6,
           z: axisB.z * impulse.impulseB / 6,
         }, true)
