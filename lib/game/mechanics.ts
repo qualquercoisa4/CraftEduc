@@ -100,7 +100,8 @@ const SERVO_MAX_TRACK_ERROR_RAD = Math.PI / 12
 const MAX_CONTRAPTION = 400
 import { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 import { calculateWheelNormalForce } from './wheel-traction'
-import { normalizeGearTeeth, propagateGearTrainAngles } from './gear-train'
+import { calculateReflectedGearInertia, normalizeGearTeeth, propagateGearTrainAngles, type GearTrainEdge } from './gear-train'
+import { estimateGearAssemblyInertia, solveGearMeshImpulse } from './gear-physics'
 export { PROXIMITY_SENSOR_RANGE, measureProximityDistance, measureProximityRayDistance, proximityConditionMatches, type ProximityComparison } from './proximity'
 
 /**
@@ -249,6 +250,13 @@ interface ExtraRotor {
   wireEnds: { wire: Wire; end: 'a' | 'b'; local: THREE.Vector3; orig: THREE.Vector3 }[]
 }
 
+interface GearRotor {
+  body: RAPIER.RigidBody
+  joint: RAPIER.RevoluteImpulseJoint
+  axis: THREE.Vector3
+  attachedBlocks: CBlock[]
+}
+
 interface Contraption {
   motorKey: string
   actuatorId: number
@@ -314,6 +322,8 @@ export class Mechanics {
   private mountedWheels = new Map<string, { model: WheelModel; spin: number }>()
   private gearModels = new Map<string, GearModel>()
   private gearAngles = new Map<string, number>()
+  private gearRotors = new Map<string, GearRotor>()
+  private gearPhysicsDirty = true
   private fallingBodies: FallingBody[] = []
   private fallingKeys = new Set<string>()
   private readonly gravity = 18
@@ -362,10 +372,12 @@ export class Mechanics {
     this.rigidPhysics.syncStaticBlock(x, y, z)
     const key = posKey(x, y, z)
     if (!this.suppress) this.physicsDirtyKeys.add(key)
+    if (!this.suppress) this.gearPhysicsDirty = true
     this.removeResinVisual(key)
     if (this.suppress) return
     if (oldId === B.MOTOR && newId !== B.MOTOR) this.freeMotorAngularSpeeds.delete(key)
     if (oldId === B.GEAR && newId !== B.GEAR) {
+      this.removeGearRotor(key, true)
       const gear = this.gearModels.get(key)
       if (gear) {
         this.scene.remove(gear.group)
