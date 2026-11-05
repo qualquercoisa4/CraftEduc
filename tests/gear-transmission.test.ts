@@ -27,3 +27,18 @@ assert.equal(calculateGearPair({teethA:24,teethB:24,centerDistance:1,axisAlignme
 assert.equal(calculateGearPair({teethA:12,teethB:36,centerDistance:1,axisAlignment:1,axialOffset:0,moduleA:2/48,moduleB:2/50}),null)
 assert.equal(calculateGearPair({teethA:24,teethB:24,centerDistance:Number.POSITIVE_INFINITY,axisAlignment:1,axialOffset:0}),null)
 console.log('PASS: gear tooth validation, module compatibility, speed/torque ratios, direction reversal, and invalid-mesh rejection')
+
+import { propagateGearTrainAngles } from '../lib/game/gear-train'
+
+// A three-gear train must propagate through each pair independently. The
+// middle gear can drive a third gear even when the pair modules differ.
+const threeGearTrain = propagateGearTrainAngles(
+  new Map([['motor', Math.PI * 2]]),
+  [
+    { a: 'motor', b: 'middle', teethA: 24, teethB: 36 },
+    { a: 'middle', b: 'left', teethA: 36, teethB: 12 },
+  ],
+)
+assert.equal(threeGearTrain.conflicts.size, 0)
+near(threeGearTrain.angles.get('middle')!, -Math.PI * 2 * 24 / 36)
+near(threeGearTrain.angles.get('left')!, Math.PI * 2 * 2)
