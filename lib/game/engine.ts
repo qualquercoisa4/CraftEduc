@@ -515,7 +515,7 @@ export class Engine {
     const y = GROUND_LEVEL
     const z = -4
     this.world.setBlock(3, y, z, B.BATTERY_BOX, { batteries: 3 })
-    this.world.setBlock(6, y, z, B.MOTOR, { facing: 2, glue: 1 << 2 })
+    this.world.setBlock(6, y, z, B.MOTOR, { facing: 2, motorType: 'fa130', glue: 1 << 2 })
     this.world.setBlock(6, y + 1, z, B.IRON, { glue: (1 << 0) | (1 << 1) })
     this.world.setBlock(7, y + 1, z, B.WOOD, { glue: 1 << 0 })
     this.world.setBlock(8, y + 1, z, B.ALUMINUM)
