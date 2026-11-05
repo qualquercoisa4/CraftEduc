@@ -3849,7 +3849,44 @@ export class Mechanics {
         }
       }
     }
+
+    // A motor can drive a gear without being glued into the same voxel
+    // contraption. Treat a shaft-to-gear contact as a real drive source.
+    for (const key of this.gearModels.keys()) {
+      const [gx, gy, gz] = parseKey(key)
+      const gearAxis = this.getGearAxis(key)
+      for (const direction of DIRS) {
+        const motorKey = posKey(gx + direction[0], gy + direction[1], gz + direction[2])
+        const motor = this.models.get(motorKey)
+        if (this.world.getBlock(gx + direction[0], gy + direction[1], gz + direction[2]) !== B.MOTOR || motor?.type !== 'motor') continue
+        const motorFacing = this.world.getState(gx + direction[0], gy + direction[1], gz + direction[2])?.facing ?? 2
+        const motorAxis = new THREE.Vector3(...DIRS[motorFacing])
+        const motorToGear = new THREE.Vector3(-direction[0], -direction[1], -direction[2])
+        if (motorAxis.dot(motorToGear) < 1 - 1e-3) continue
+        const alignment = gearAxis.dot(motorAxis)
+        if (Math.abs(Math.abs(alignment) - 1) > 1e-3) continue
+        if (this.contraptions.has(motorKey) || this.findExtraRotor(motorKey)) continue
+        sources.set(key, (this.freeMotorAngularSpeeds.get(motorKey) ?? 0) * Math.sign(alignment || 1))
+      }
+    }
     return sources
+  }
+
+  private directMotorForGear(key: string): string | null {
+    const [gx, gy, gz] = parseKey(key)
+    const gearAxis = this.getGearAxis(key)
+    for (const direction of DIRS) {
+      const mx = gx + direction[0], my = gy + direction[1], mz = gz + direction[2]
+      const motorKey = posKey(mx, my, mz)
+      if (this.world.getBlock(mx, my, mz) !== B.MOTOR || this.models.get(motorKey)?.type !== 'motor') continue
+      const motorAxis = new THREE.Vector3(...DIRS[this.world.getState(mx, my, mz)?.facing ?? 2])
+      const motorToGear = new THREE.Vector3(-direction[0], -direction[1], -direction[2])
+      if (motorAxis.dot(motorToGear) < 1 - 1e-3) continue
+      if (Math.abs(Math.abs(gearAxis.dot(motorAxis)) - 1) > 1e-3) continue
+      if (this.contraptions.has(motorKey) || this.findExtraRotor(motorKey)) continue
+      return motorKey
+    }
+    return null
   }
 
   private clearGearMountedVisuals(key: string) {
