@@ -408,6 +408,7 @@ export class Mechanics {
       const state = this.world.ensureState(x, y, z)
       state.gearTeeth = normalizeGearTeeth(state.gearTeeth)
       state.gearFacing = Math.max(0, Math.min(5, Math.floor(state.gearFacing ?? 2)))
+      this.gearPhysicsDirty = true
       const gear = createGearModel(state.gearTeeth, state.gearFacing, Boolean(state.gearShaftMounted), Boolean(state.gearWheelMounted))
       gear.group.position.set(x + .5, y + .5, z + .5)
       this.scene.add(gear.group)
@@ -489,7 +490,7 @@ export class Mechanics {
     if (oldHadGlue || newHasGlue) this.rebuildGlue()
     const electrical = (id: number) => id === B.MOTOR || id === B.SERVO || id === B.BATTERY_BOX || id === B.LED || id === B.RESISTOR || id === B.SWITCH || id === B.IRON || id === B.ALUMINUM || id === B.GEAR || id === B.ROBOTICS || id === B.COMPONENT
     if (electrical(oldId) || electrical(newId)) this.powerDirty = true
-    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL) this.mechDirty = true
+    if (oldHadGlue || newHasGlue || oldId === B.MOTOR || newId === B.MOTOR || oldId === B.SERVO || newId === B.SERVO || oldId === B.WHEEL || newId === B.WHEEL || oldId === B.GEAR || newId === B.GEAR) this.mechDirty = true
     if (newId !== B.AIR && this.world.getState(x, y, z)?.resinCoated) this.syncResinVisual(x, y, z)
     this.physicsDirty = true
   }
@@ -740,6 +741,7 @@ export class Mechanics {
     this.world.ensureChunk(Math.floor(x/CHUNK_SIZE),Math.floor(z/CHUNK_SIZE)).modified=true
     this.world.markBlockDirty(x,y,z)
     this.rebuildGearModel(key)
+    this.gearPhysicsDirty = true
     this.mechDirty=true
     return true
   }
@@ -4059,52 +4061,20 @@ export class Mechanics {
 
   /** First-pass kinematic propagation; reaction-load coupling is a separate Rapier milestone. */
   private updateGearAnimations() {
-    if(this.gearModels.size===0)return
-    // Falling gears are already driven by their Rapier parent transform. Do not
-    // also apply grid-based motor/gear coupling using their obsolete origin key.
-    const gearKeys=[...this.gearModels.keys()].filter((key)=>!this.fallingKeys.has(key)).sort()
-    if(gearKeys.length===0)return
-    const edges:{a:string;b:string;teethA:number;teethB:number}[]=[]
-    for(const key of gearKeys){
-      const [x,y,z]=parseKey(key),stateA=this.world.getState(x,y,z)??{}
-      const axisA=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(stateA.gearFacing??2)))])
-      for(let face=0;face<DIRS.length;face++){
-        const d=DIRS[face],nx=x+d[0],ny=y+d[1],nz=z+d[2],otherKey=posKey(nx,ny,nz)
-        if(otherKey<=key||this.world.getBlock(nx,ny,nz)!==B.GEAR)continue
-        const stateB=this.world.getState(nx,ny,nz)??{}
-        const axisB=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(stateB.gearFacing??2)))])
-        const delta=new THREE.Vector3(d[0],d[1],d[2])
-        // Grid gears use a fixed visual envelope. Validate shaft geometry here,
-        // but calculate each mesh ratio independently in the train solver.
-        if(Math.abs(Math.abs(axisA.dot(axisB))-1)>1e-3||Math.abs(delta.dot(axisA))>1e-3)continue
-        edges.push({a:key,b:otherKey,teethA:normalizeGearTeeth(stateA.gearTeeth),teethB:normalizeGearTeeth(stateB.gearTeeth)})
+    const edges = this.gearTrainEdges()
+    if (!edges.length) return
+    const { angles, conflicts } = propagateGearTrainAngles(this.getGearMotorSources(), edges)
+    for (const [key, angle] of angles) {
+      if (conflicts.has(key) || !Number.isFinite(angle)) continue
+      // Rapier-owned rotors are updated from their rigid-body pose. This
+      // kinematic path is only a visual fallback when the physics body cannot
+      // be created or is not yet available.
+      if (this.gearRotors.has(key) || this.findMovingGearOwner(key)) continue
+      const model = this.gearModels.get(key)
+      if (model && model.group.parent === this.scene) {
+        model.rotor.rotation.z = angle
+        this.gearAngles.set(key, angle)
       }
-    }
-    const sourceAngles=new Map<string,number>()
-    for(const gearKey of gearKeys){
-      const [gx,gy,gz]=parseKey(gearKey),state=this.world.getState(gx,gy,gz)??{}
-      const gearAxis=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(state.gearFacing??2)))])
-      for(let face=0;face<DIRS.length;face++){
-        const d=DIRS[face],mx=gx+d[0],my=gy+d[1],mz=gz+d[2],motorKey=posKey(mx,my,mz)
-        const motor=this.models.get(motorKey)
-        if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
-        const motorFacing=this.world.getState(mx,my,mz)?.facing??2
-        const motorAxis=new THREE.Vector3(...DIRS[motorFacing])
-        const motorToGear=new THREE.Vector3(-d[0],-d[1],-d[2])
-        if(motorAxis.dot(motorToGear)<1-1e-3)continue
-        const alignment=gearAxis.dot(motorAxis)
-        if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
-        const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1)
-        const previous=sourceAngles.get(gearKey)
-        if(previous===undefined)sourceAngles.set(gearKey,sourceAngle)
-        else if(Math.abs(previous-sourceAngle)>.05)sourceAngles.delete(gearKey)
-      }
-    }
-    const {angles,conflicts}=propagateGearTrainAngles(sourceAngles,edges)
-    for(const [key,angle] of angles){
-      if(conflicts.has(key)||!Number.isFinite(angle))continue
-      const model=this.gearModels.get(key)
-      if(model){model.rotor.rotation.z=angle;this.gearAngles.set(key,angle)}
     }
   }
 
@@ -4258,6 +4228,7 @@ export class Mechanics {
       }
     }
 
+    this.syncGearRotorBodies()
     this.updateGearAnimations()
 
     if (this.networkAuthority) {
@@ -4316,7 +4287,7 @@ export class Mechanics {
         const torqueWorld = motorTorqueWorld(c.motorState?.motorType, torqueNm)
         const signedTorque = Math.sign(torqueNm) || direction
         const actualSpeed = relativeAngularSpeed(c.chassisBody, c.rotorBody, c.axis)
-        const approximateInertia = Math.max(0.025, c.rotorBody.mass() / 3)
+        const approximateInertia = Math.max(0.025, c.rotorBody.mass() / 3 + this.reflectedGearInertiaForMotor(c))
         // Advance the setpoint from measured speed only as fast as the
         // available electromagnetic torque can accelerate the payload.
         const targetLead = THREE.MathUtils.clamp(
@@ -4443,10 +4414,12 @@ export class Mechanics {
         this.wakeBlocksBeingPushed()
         this.rigidPhysics.step(dt, (fixedDt) => {
           this.applyBeachWaterPhysics(fixedDt)
+          this.applyGearTrainCoupling(fixedDt)
           for (const contraption of this.contraptions.values()) this.applyMountedWheelTraction(contraption, fixedDt)
         })
       } else this.updateNetworkPoseInterpolation(dt)
       this.syncRigidTransforms()
+      this.updateGearRotorTransforms()
     }
     // Sample after physics synchronization so moving sensors see the latest pose.
     if (shouldRefreshProximitySensors) this.refreshProximitySensors()
