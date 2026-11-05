@@ -82,3 +82,24 @@ const opposedMotors = propagateGearTrainAngles(new Map([['a', 1], ['c', -1]]), [
 ])
 assert.ok(opposedMotors.conflicts.size > 0, 'motors fighting through a gear train must be detected')
 console.log('PASS: branched gears, compatible/incompatible closed loops, and multiple motor source checks')
+
+import { estimateGearAssemblyInertia, solveGearMeshImpulse } from '../lib/game/gear-physics'
+
+const coupled = solveGearMeshImpulse({
+  speedA: 10, speedB: 0, inertiaA: 1, inertiaB: 2,
+  teethA: 24, teethB: 48, axisAlignment: 1,
+})
+assert.ok(coupled, 'valid gear bodies must resolve a finite mesh impulse')
+near(coupled.nextSpeedB, -coupled.nextSpeedA * 24 / 48)
+const energyBefore = 0.5 * 1 * 10 ** 2
+const energyAfter = 0.5 * 1 * coupled.nextSpeedA ** 2 + 0.5 * 2 * coupled.nextSpeedB ** 2
+assert.ok(energyAfter <= energyBefore + 1e-8, 'gear mesh impulse must not create kinetic energy')
+assert.ok(Math.abs(coupled.constraintErrorAfter) < 1e-8, 'mesh impulse must satisfy the speed ratio')
+assert.equal(solveGearMeshImpulse({
+  speedA: 1, speedB: 1, inertiaA: 0, inertiaB: 1,
+  teethA: 24, teethB: 24, axisAlignment: 1,
+}), null, 'zero-inertia rotors must be rejected')
+const bareGearInertia = estimateGearAssemblyInertia(0.42, [])
+const loadedGearInertia = estimateGearAssemblyInertia(0.42, [1.2, 2.6])
+assert.ok(loadedGearInertia > bareGearInertia, 'axially mounted blocks must increase rotor inertia')
+console.log('PASS: gear mesh impulse conserves/bounds energy, obeys ratio, rejects invalid inertia, and accounts for attached mass')
