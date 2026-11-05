@@ -4055,7 +4055,6 @@ export class Mechanics {
       const torqueNm = this.motorTorqueNm.get(motorKey) ?? 0
       if (!Number.isFinite(torqueNm) || Math.abs(torqueNm) < 1e-7) continue
       const torque = motorTorqueWorld(this.world.getState(...parseKey(motorKey))?.motorType, torqueNm)
-      const [gx, gy, gz] = parseKey(gearKey)
       const [mx, my, mz] = parseKey(motorKey)
       const motorFacing = Math.max(0, Math.min(5, Math.floor(this.world.getState(mx, my, mz)?.facing ?? 2)))
       const motorAxis = new THREE.Vector3(...DIRS[motorFacing])
