@@ -103,3 +103,25 @@ const bareGearInertia = estimateGearAssemblyInertia(0.42, [])
 const loadedGearInertia = estimateGearAssemblyInertia(0.42, [1.2, 2.6])
 assert.ok(loadedGearInertia > bareGearInertia, 'axially mounted blocks must increase rotor inertia')
 console.log('PASS: gear mesh impulse conserves/bounds energy, obeys ratio, rejects invalid inertia, and accounts for attached mass')
+
+import { calculateReflectedGearInertia } from '../lib/game/gear-train'
+
+// A 12-tooth output gear driven by a 24-tooth input turns twice as fast.
+// Its inertia reflected to the input shaft is multiplied by the square of
+// the speed ratio (energy-consistent load reflection).
+const reflected = calculateReflectedGearInertia(
+  'input',
+  new Map([['output', 3.5]]),
+  [{ a: 'input', b: 'output', teethA: 24, teethB: 12 }],
+)
+near(reflected.speedRatios.get('output')!, -2)
+near(reflected.equivalentInertia, 14)
+
+// Reversing the physical direction of one shaft axis reverses the local
+// coordinate sign without changing the world-space mesh constraint.
+const reversedAxis = propagateGearTrainAngles(new Map([['input', 1]]), [
+  { a: 'input', b: 'output', teethA: 24, teethB: 12, axisAlignment: -1 },
+])
+near(reversedAxis.angles.get('output')!, 2)
+assert.equal(reversedAxis.conflicts.size, 0)
+console.log('PASS: reflected load inertia, tooth-count speed-up, and reversed shaft-axis coordinates')
