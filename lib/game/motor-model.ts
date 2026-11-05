@@ -29,6 +29,18 @@ export interface MotorDriveCommand {
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, Number.isFinite(value) ? value : min))
 
+// Reference motors may run at thousands of RPM. Preserve their real speed in
+// the electrical/back-EMF model, but limit the visible shaft phase so a
+// metre-scale voxel animation remains readable and does not alias at 60 FPS.
+export const MAX_MOTOR_VISUAL_ANGULAR_SPEED = Math.PI * 8
+
+export function advanceMotorVisualAngle(currentAngle: number, angularSpeed: number, deltaSeconds: number) {
+  const angle = Number.isFinite(currentAngle) ? currentAngle : 0
+  const dt = clamp(deltaSeconds, 0, 0.1)
+  const speed = clamp(angularSpeed, -MAX_MOTOR_VISUAL_ANGULAR_SPEED, MAX_MOTOR_VISUAL_ANGULAR_SPEED)
+  return angle + speed * dt
+}
+
 export function motorNoLoadAngularSpeed(spec: MotorSpec) {
   return Math.max(0, spec.noLoadRpm) * Math.PI * 2 / 60
 }
