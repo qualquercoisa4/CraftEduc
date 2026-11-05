@@ -4034,56 +4034,88 @@ export class Mechanics {
       gear.group.position.set(position.x, position.y, position.z)
       gear.group.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w).multiply(facing)
       gear.rotor.rotation.z = 0
+      const motorKey = this.directMotorForGear(key)
+      if (motorKey) {
+        const angular = rotor.body.angvel()
+        const speed = angular.x * rotor.axis.x + angular.y * rotor.axis.y + angular.z * rotor.axis.z
+        this.freeMotorAngularSpeeds.set(motorKey, speed)
+      }
       gear.group.updateMatrixWorld(true)
     }
   }
 
   private applyGearTrainCoupling(fixedDt: number) {
+    // Feed the electrical motor's current-derived torque into a standalone
+    // gear rotor. Its measured angular speed is copied back after Rapier steps,
+    // so back-EMF and load current react to the actual driven mechanism.
+    for (const [gearKey, rotor] of this.gearRotors) {
+      const motorKey = this.directMotorForGear(gearKey)
+      if (!motorKey) continue
+      const torqueNm = this.motorTorqueNm.get(motorKey) ?? 0
+      if (!Number.isFinite(torqueNm) || Math.abs(torqueNm) < 1e-7) continue
+      const torque = motorTorqueWorld(this.world.getState(...parseKey(motorKey))?.motorType, torqueNm)
+      const direction = this.motorDirection.get(motorKey) ?? 1
+      const axis = rotor.axis.clone().normalize().multiplyScalar(direction)
+      rotor.body.applyTorqueImpulse({
+        x: axis.x * torque * fixedDt,
+        y: axis.y * torque * fixedDt,
+        z: axis.z * torque * fixedDt,
+      }, true)
+    }
+
     const edges = this.gearTrainEdges()
     if (!edges.length) return
     const sources = this.getGearMotorSources()
     const solved = sources.size ? propagateGearTrainAngles(sources, edges) : { angles: new Map<string, number>(), conflicts: new Set<string>() }
-    for (const edge of edges) {
-      const bindingA = this.findMovingGearOwner(edge.a)
-      const bindingB = this.findMovingGearOwner(edge.b)
-      if (!bindingA || !bindingB || bindingA.body === bindingB.body) continue
-      const axisA = this.gearWorldAxis(bindingA)
-      const axisB = this.gearWorldAxis(bindingB)
-      const speedA = this.gearAngularSpeed(bindingA)
-      const speedB = this.gearAngularSpeed(bindingB)
-      if (solved.conflicts.has(edge.a) || solved.conflicts.has(edge.b)) {
-        const inertiaA = Math.max(0.01, bindingA.body.mass() / 6)
-        const inertiaB = Math.max(0.01, bindingB.body.mass() / 6)
-        bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA, y: -axisA.y * speedA * inertiaA, z: -axisA.z * speedA * inertiaA }, true)
-        bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB, y: -axisB.y * speedB * inertiaB, z: -axisB.z * speedB * inertiaB }, true)
-        continue
+    // Iterate the velocity constraints to reduce order-dependent drift in
+    // trains with three or more meshes and in branched gear networks.
+    for (let iteration = 0; iteration < 6; iteration++) {
+      for (const edge of edges) {
+        const bindingA = this.findMovingGearOwner(edge.a)
+        const bindingB = this.findMovingGearOwner(edge.b)
+        if (!bindingA || !bindingB || bindingA.body === bindingB.body) continue
+        const axisA = this.gearWorldAxis(bindingA)
+        const axisB = this.gearWorldAxis(bindingB)
+        const speedA = this.gearAngularSpeed(bindingA)
+        const speedB = this.gearAngularSpeed(bindingB)
+        if (solved.conflicts.has(edge.a) || solved.conflicts.has(edge.b)) {
+          const inertiaA = Math.max(0.01, bindingA.body.mass() / 6)
+          const inertiaB = Math.max(0.01, bindingB.body.mass() / 6)
+          bindingA.body.applyTorqueImpulse({ x: -axisA.x * speedA * inertiaA / 6, y: -axisA.y * speedA * inertiaA / 6, z: -axisA.z * speedA * inertiaA / 6 }, true)
+          bindingB.body.applyTorqueImpulse({ x: -axisB.x * speedB * inertiaB / 6, y: -axisB.y * speedB * inertiaB / 6, z: -axisB.z * speedB * inertiaB / 6 }, true)
+          continue
+        }
+        const impulse = solveGearMeshImpulse({
+          speedA,
+          speedB,
+          inertiaA: Math.max(0.01, bindingA.body.mass() / 6),
+          inertiaB: Math.max(0.01, bindingB.body.mass() / 6),
+          teethA: edge.teethA,
+          teethB: edge.teethB,
+          axisAlignment: edge.axisAlignment ?? axisA.dot(axisB),
+        })
+        if (!impulse) continue
+        bindingA.body.applyTorqueImpulse({
+          x: axisA.x * impulse.impulseA / 6,
+          y: axisA.y * impulse.impulseA / 6,
+          z: axisA.z * impulse.impulseA / 6,
+        }, true)
+        bindingB.body.applyTorqueImpulse({
+          x: axisB.x * impulse.impulseB / 6,
+          y: axisB.y * impulse.impulseB / 6,
+          z: axisB.z * impulse.impulseB / 6,
+        }, true)
       }
-      const impulse = solveGearMeshImpulse({
-        speedA,
-        speedB,
-        inertiaA: Math.max(0.01, bindingA.body.mass() / 6),
-        inertiaB: Math.max(0.01, bindingB.body.mass() / 6),
-        teethA: edge.teethA,
-        teethB: edge.teethB,
-        axisAlignment: edge.axisAlignment ?? axisA.dot(axisB),
-      })
-      if (!impulse) continue
-      bindingA.body.applyTorqueImpulse({
-        x: axisA.x * impulse.impulseA,
-        y: axisA.y * impulse.impulseA,
-        z: axisA.z * impulse.impulseA,
-      }, true)
-      bindingB.body.applyTorqueImpulse({
-        x: axisB.x * impulse.impulseB,
-        y: axisB.y * impulse.impulseB,
-        z: axisB.z * impulse.impulseB,
-      }, true)
-      // Small dissipative bearing/mesh loss; it removes energy and never adds
-      // speed. The motor controller must supply this loss every solver step.
-      const dragA = speedA * 0.0015 * fixedDt
-      const dragB = speedB * 0.0015 * fixedDt
-      bindingA.body.applyTorqueImpulse({ x: -axisA.x * dragA, y: -axisA.y * dragA, z: -axisA.z * dragA }, true)
-      bindingB.body.applyTorqueImpulse({ x: -axisB.x * dragB, y: -axisB.y * dragB, z: -axisB.z * dragB }, true)
+    }
+    // Bearing and tooth losses are dissipative; they cannot accelerate a train.
+    for (const edge of edges) {
+      for (const key of [edge.a, edge.b]) {
+        const binding = this.findMovingGearOwner(key)
+        if (!binding) continue
+        const axis = this.gearWorldAxis(binding)
+        const drag = this.gearAngularSpeed(binding) * 0.0015 * fixedDt
+        binding.body.applyTorqueImpulse({ x: -axis.x * drag, y: -axis.y * drag, z: -axis.z * drag }, true)
+      }
     }
   }
 
