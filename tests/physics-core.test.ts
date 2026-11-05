@@ -65,6 +65,39 @@ async function main() {
   )
   assert.equal(invalidJoint, null, 'zero-length joint axes must be rejected safely')
 
+  const bareGear = physics.createAnchoredRevoluteBody(
+    [{ x: 10, y: 8, z: 0, id: B.GEAR }],
+    new THREE.Vector3(10.5, 8.5, 0.5),
+    new THREE.Vector3(0, 1, 0),
+  )
+  const loadedGear = physics.createAnchoredRevoluteBody(
+    [
+      { x: 14, y: 8, z: 0, id: B.GEAR },
+      { x: 14, y: 9, z: 0, id: B.IRON },
+      { x: 14, y: 10, z: 0, id: B.IRON },
+    ],
+    new THREE.Vector3(14.5, 8.5, 0.5),
+    new THREE.Vector3(0, 1, 0),
+  )
+  assert.ok(bareGear && loadedGear, 'gear assemblies must create revolute rigid bodies')
+  near(loadedGear.body.mass(), blockMass(B.GEAR) + 2 * blockMass(B.IRON), 1e-5,
+    'axially mounted blocks must contribute their real voxel mass')
+  bareGear.body.applyTorqueImpulse({ x: 0, y: 0.5, z: 0 }, true)
+  loadedGear.body.applyTorqueImpulse({ x: 0, y: 0.5, z: 0 }, true)
+  physics.step(1 / 60)
+  const bareSpeed = Math.abs(bareGear.body.angvel().y)
+  const loadedSpeed = Math.abs(loadedGear.body.angvel().y)
+  assert.ok(bareSpeed > 0.01, 'a powered gear rotor must rotate around its shaft axis')
+  assert.ok(loadedSpeed > 0.001, 'a loaded gear rotor must still rotate under the same drive impulse')
+  assert.ok(loadedSpeed < bareSpeed,
+    'the same motor impulse must accelerate a heavier gear assembly less')
+  near(bareGear.body.translation().x, 10.5, 1e-3,
+    'revolute gear support must prevent lateral translation')
+  near(loadedGear.body.translation().x, 14.5, 1e-3,
+    'loaded revolute gear support must prevent lateral translation')
+  physics.removeRigidBody(bareGear.body)
+  physics.removeRigidBody(loadedGear.body)
+
   physics.removeRigidBody(motorBody)
   physics.removeRigidBody(ordinaryBody)
   physics.dispose()
