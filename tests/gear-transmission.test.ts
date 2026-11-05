@@ -42,3 +42,43 @@ const threeGearTrain = propagateGearTrainAngles(
 assert.equal(threeGearTrain.conflicts.size, 0)
 near(threeGearTrain.angles.get('middle')!, -Math.PI * 2 * 24 / 36)
 near(threeGearTrain.angles.get('left')!, Math.PI * 2 * 2)
+
+const branched = propagateGearTrainAngles(
+  new Map([['center', 0.75]]),
+  [
+    { a: 'center', b: 'left', teethA: 24, teethB: 12 },
+    { a: 'center', b: 'right', teethA: 24, teethB: 48 },
+  ],
+)
+assert.equal(branched.conflicts.size, 0, 'a gear may drive two opposite-side gears simultaneously')
+near(branched.angles.get('left')!, -1.5)
+near(branched.angles.get('right')!, -0.375)
+
+// Four external meshes form a compatible even loop; an odd three-mesh loop
+// cannot satisfy all external-gear direction constraints simultaneously.
+const evenLoop = propagateGearTrainAngles(new Map([['a', 1]], [
+  { a: 'a', b: 'b', teethA: 24, teethB: 24 },
+  { a: 'b', b: 'c', teethA: 24, teethB: 24 },
+  { a: 'c', b: 'd', teethA: 24, teethB: 24 },
+  { a: 'd', b: 'a', teethA: 24, teethB: 24 },
+]))
+assert.equal(evenLoop.conflicts.size, 0, 'four-gear closed loop should remain kinematically compatible')
+const oddLoop = propagateGearTrainAngles(new Map([['a', 1]], [
+  { a: 'a', b: 'b', teethA: 24, teethB: 24 },
+  { a: 'b', b: 'c', teethA: 24, teethB: 24 },
+  { a: 'c', b: 'a', teethA: 24, teethB: 24 },
+]))
+assert.ok(oddLoop.conflicts.size >= 2, 'three external gears in a closed loop must be reported as locked/conflicting')
+
+// Two motors on one train are valid only when their commanded phases agree.
+const sameMotors = propagateGearTrainAngles(new Map([['a', 1], ['c', 1]]), [
+  { a: 'a', b: 'b', teethA: 24, teethB: 24 },
+  { a: 'b', b: 'c', teethA: 24, teethB: 24 },
+])
+assert.equal(sameMotors.conflicts.size, 0)
+const opposedMotors = propagateGearTrainAngles(new Map([['a', 1], ['c', -1]]), [
+  { a: 'a', b: 'b', teethA: 24, teethB: 24 },
+  { a: 'b', b: 'c', teethA: 24, teethB: 24 },
+])
+assert.ok(opposedMotors.conflicts.size > 0, 'motors fighting through a gear train must be detected')
+console.log('PASS: branched gears, compatible/incompatible closed loops, and multiple motor source checks')
