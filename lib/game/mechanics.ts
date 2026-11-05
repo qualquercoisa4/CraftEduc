@@ -3753,7 +3753,25 @@ export class Mechanics {
       }
     }
     const sourceAngles=new Map<string,number>()
-    const queue=[...angles.keys()]
+    for(const gearKey of gearKeys){
+      const [gx,gy,gz]=parseKey(gearKey),state=this.world.getState(gx,gy,gz)??{}
+      const gearAxis=new THREE.Vector3(...DIRS[Math.max(0,Math.min(5,Math.floor(state.gearFacing??2)))])
+      for(let face=0;face<DIRS.length;face++){
+        const d=DIRS[face],mx=gx+d[0],my=gy+d[1],mz=gz+d[2],motorKey=posKey(mx,my,mz)
+        const motor=this.models.get(motorKey)
+        if(this.world.getBlock(mx,my,mz)!==B.MOTOR||motor?.type!=='motor')continue
+        const motorFacing=this.world.getState(mx,my,mz)?.facing??2
+        const motorAxis=new THREE.Vector3(...DIRS[motorFacing])
+        const motorToGear=new THREE.Vector3(-d[0],-d[1],-d[2])
+        if(motorAxis.dot(motorToGear)<1-1e-3)continue
+        const alignment=gearAxis.dot(motorAxis)
+        if(Math.abs(Math.abs(alignment)-1)>1e-3)continue
+        const sourceAngle=motor.model.shaft.rotation.z*Math.sign(alignment||1)
+        const previous=sourceAngles.get(gearKey)
+        if(previous===undefined)sourceAngles.set(gearKey,sourceAngle)
+        else if(Math.abs(previous-sourceAngle)>.05)sourceAngles.delete(gearKey)
+      }
+    }
     const {angles,conflicts}=propagateGearTrainAngles(sourceAngles,edges)
     for(const [key,angle] of angles){
       if(conflicts.has(key)||!Number.isFinite(angle))continue
