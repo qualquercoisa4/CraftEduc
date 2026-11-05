@@ -364,6 +364,35 @@ export class RigidPhysics {
     return connectedJoint
   }
 
+  /** Create a physically anchored gear rotor with one free shaft axis. */
+  createAnchoredRevoluteBody(
+    voxels: PhysicsVoxel[],
+    pivot: THREE.Vector3,
+    axis: THREE.Vector3,
+  ): { body: RAPIER.RigidBody; joint: RAPIER.RevoluteImpulseJoint } | null {
+    if (!this.ready || !this.rapierWorld || !this.fixedBody || voxels.length === 0) return null
+    const normalizedAxis = axis.clone().normalize()
+    if (!Number.isFinite(normalizedAxis.lengthSq()) || normalizedAxis.lengthSq() < 1e-10) return null
+    const body = this.createRigidBody(voxels, pivot, {
+      canSleep: false,
+      linearDamping: 0.005,
+      angularDamping: 0.012,
+    })
+    if (!body) return null
+    const joint = this.createRevoluteJoint(
+      this.fixedBody,
+      body,
+      normalizedAxis,
+      pivot,
+      new THREE.Vector3(),
+    )
+    if (!joint) {
+      this.removeRigidBody(body)
+      return null
+    }
+    return { body, joint }
+  }
+
   getBodyCollider(body: RAPIER.RigidBody, index: number) {
     if (index < 0 || index >= body.numColliders()) return null
     return body.collider(index)
