@@ -35,6 +35,8 @@ export interface BlockState {
   gearFacing?: number
   gearShaftMounted?: boolean
   gearWheelMounted?: boolean
+  /** Key of a gear whose shaft carries this voxel; hidden from the static chunk mesh. */
+  gearMountedOn?: string
 }
 
 const CS = CHUNK_SIZE
@@ -283,11 +285,11 @@ export class World {
       for (let z = 0; z < CS; z++)
         for (let x = 0; x < CS; x++) {
           const id = c.data[idx(x, y, z)]
-          if (!isOpaque(id)) continue
           const wx = bx + x
           const wz = bz + z
-          const powered = id === B.LED && this.poweredLeds.has(posKey(wx, y, wz))
           const state = this.getState(wx, y, wz)
+          if (!isOpaque(id) || state?.gearMountedOn) continue
+          const powered = id === B.LED && this.poweredLeds.has(posKey(wx, y, wz))
           const tint = state?.resinCoated ? '#e5c46a' : state?.ledBurnedOut ? '#212121' : state?.color ?? this.terrainColorAt(y, wx, wz)
           emitCube(id === B.WINDOW ? windowOut : out, wx, y, wz, id, powered, (dx, dy, dz) => {
             const nx = x + dx
@@ -295,8 +297,11 @@ export class World {
             const ny = y + dy
             if (ny < 0) return true
             if (ny >= WORLD_HEIGHT) return false
-            if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) return isOpaque(c.data[idx(nx, ny, nz)])
-            return isOpaque(this.getBlock(wx + dx, ny, wz + dz))
+            if (nx >= 0 && nx < CS && nz >= 0 && nz < CS) const neighborId = c.data[idx(nx, ny, nz)]
+            const neighborState = this.getState(wx + dx, ny, wz + dz)
+            return isOpaque(neighborId) && !neighborState?.gearMountedOn
+            const neighborState = this.getState(wx + dx, ny, wz + dz)
+            return isOpaque(this.getBlock(wx + dx, ny, wz + dz)) && !neighborState?.gearMountedOn
           }, tint)
         }
     if (c.mesh) {
