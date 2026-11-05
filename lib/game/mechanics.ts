@@ -4054,7 +4054,7 @@ export class Mechanics {
       const torqueNm = this.motorTorqueNm.get(motorKey) ?? 0
       if (!Number.isFinite(torqueNm) || Math.abs(torqueNm) < 1e-7) continue
       const torque = motorTorqueWorld(this.world.getState(...parseKey(motorKey))?.motorType, torqueNm)
-      const direction = this.motorDirection.get(motorKey) ?? 1
+      const direction = Math.sign(torqueNm)
       const axis = rotor.axis.clone().normalize().multiplyScalar(direction)
       rotor.body.applyTorqueImpulse({
         x: axis.x * torque * fixedDt,
