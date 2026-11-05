@@ -4,6 +4,7 @@ import { B } from '../lib/game/constants'
 import { blockMass, RigidPhysics } from '../lib/game/rigid-physics'
 import { getMotorSpec } from '../lib/game/motor-specs'
 import { calculateWheelNormalForce } from '../lib/game/wheel-traction'
+import { solveGearMeshImpulse } from '../lib/game/gear-physics'
 import type { World } from '../lib/game/world'
 
 const near = (actual: number, expected: number, tolerance: number, label: string) => {
@@ -97,6 +98,47 @@ async function main() {
     'loaded revolute gear support must prevent lateral translation')
   physics.removeRigidBody(bareGear.body)
   physics.removeRigidBody(loadedGear.body)
+
+  // Integration regression: two adjacent Rapier gear rotors must exchange
+  // angular impulse and maintain the external-mesh speed ratio.
+  const inputGear = physics.createAnchoredRevoluteBody(
+    [{ x: 20, y: 8, z: 0, id: B.GEAR }],
+    new THREE.Vector3(20.5, 8.5, 0.5),
+    new THREE.Vector3(0, 1, 0),
+  )
+  const outputGear = physics.createAnchoredRevoluteBody(
+    [{ x: 21, y: 8, z: 0, id: B.GEAR }],
+    new THREE.Vector3(21.5, 8.5, 0.5),
+    new THREE.Vector3(0, 1, 0),
+  )
+  assert.ok(inputGear && outputGear, 'meshed gear rotors must both be created')
+  const inertiaInput = inputGear.body.mass() / 6
+  const inertiaOutput = outputGear.body.mass() / 6
+  for (let frame = 0; frame < 90; frame++) {
+    physics.step(1 / 60, () => {
+      inputGear.body.applyTorqueImpulse({ x: 0, y: 0.08, z: 0 }, true)
+      const meshImpulse = solveGearMeshImpulse({
+        speedA: inputGear.body.angvel().y,
+        speedB: outputGear.body.angvel().y,
+        inertiaA: inertiaInput,
+        inertiaB: inertiaOutput,
+        teethA: 24,
+        teethB: 12,
+        axisAlignment: 1,
+      })
+      assert.ok(meshImpulse, 'valid gear pair must produce a mesh impulse')
+      inputGear.body.applyTorqueImpulse({ x: 0, y: meshImpulse.impulseA, z: 0 }, true)
+      outputGear.body.applyTorqueImpulse({ x: 0, y: meshImpulse.impulseB, z: 0 }, true)
+    })
+  }
+  const inputSpeed = inputGear.body.angvel().y
+  const outputSpeed = outputGear.body.angvel().y
+  assert.ok(inputSpeed > 0.01, 'powered input gear must rotate')
+  assert.ok(outputSpeed < -0.01, 'the meshed output gear must rotate in the opposite direction')
+  near(outputSpeed / inputSpeed, -2, 0.08,
+    '24-tooth input must drive the 12-tooth output at twice the speed')
+  physics.removeRigidBody(inputGear.body)
+  physics.removeRigidBody(outputGear.body)
 
   physics.removeRigidBody(motorBody)
   physics.removeRigidBody(ordinaryBody)
