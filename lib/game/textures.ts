@@ -433,6 +433,24 @@ function drawItemPixels(item: ItemId, px: Px) {
       px(13, 4, [224, 54, 48])
       break
     }
+    case 'servo_mg995': {
+      // Dark high-torque MG995 case, metal cross horn and three leads.
+      rect(1, 4, 14, 9, [35, 37, 42])
+      rect(2, 5, 12, 7, [54, 57, 63])
+      rect(3, 3, 10, 2, [28, 30, 34])
+      rect(6, 1, 4, 3, [180, 188, 198])
+      rect(0, 7, 3, 3, [35, 37, 42])
+      rect(13, 7, 3, 3, [35, 37, 42])
+      rect(4, 2, 8, 1, [205, 211, 218])
+      rect(7, 1, 2, 4, [205, 211, 218])
+      const leads: { x: number; color: RGBA }[] = [
+        { x: 4, color: [86, 56, 45] },
+        { x: 7, color: [201, 54, 53] },
+        { x: 10, color: [244, 206, 49] },
+      ]
+      for (const lead of leads) rect(lead.x, 12, 1, 3, lead.color)
+      break
+    }
     case 'servo': {
       // Blue SG90-style case, white horn, and the three recognizable lead colors.
       rect(2, 4, 12, 8, [18, 93, 184])
