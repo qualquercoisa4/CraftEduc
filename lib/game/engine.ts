@@ -270,6 +270,11 @@ export class Engine {
 
     if (startup.save) {
       this.restoreSavedWorld(startup.save)
+      // Migrate only the untouched, known-broken starter circuit. Other saved
+      // player construction and wiring remain intact.
+      if (this.worldConfig.id === 'default-flat-world' && this.replaceLegacyStarterDemo(startup.save)) {
+        this.buildDemo()
+      }
     } else if (this.worldConfig.type === 'flat') {
       this.buildDemo()
     } else if (this.worldConfig.type === 'mars_colony') {
@@ -511,82 +516,150 @@ export class Engine {
     showToast('Hover de Marte construído: abra o Arduino para carregar o programa de desvio de obstáculos.')
   }
 
+  private replaceLegacyStarterDemo(save: SavedWorldRecord) {
+    const y = GROUND_LEVEL
+    const batteryKey = posKey(-3, y, -4)
+    const boardKey = posKey(0, y, -4)
+    const servoKey = posKey(5, y, -4)
+    const sensorKey = posKey(3, y, -8)
+    const markerKey = posKey(3, y, -6)
+    const savedBlock = (key: string) => save.data.blocks.find((block) => posKey(block.x, block.y, block.z) === key)
+    const battery = savedBlock(batteryKey)
+    const board = savedBlock(boardKey)
+    const servo = savedBlock(servoKey)
+    const sensor = savedBlock(sensorKey)
+    const marker = savedBlock(markerKey)
+    if (battery?.id !== B.BATTERY_BOX || battery.state?.batteries !== 3
+      || board?.id !== B.ARDUINO_UNO || servo?.id !== B.SERVO
+      || sensor?.id !== B.PROXIMITY_SENSOR || marker?.id !== B.COLOR_BLOCK) return false
+
+    const hasWire = (a: string, ta: string, b: string, tb: string) => save.data.wires.some((wire) =>
+      (wire.a === a && wire.ta === ta && wire.b === b && wire.tb === tb)
+      || (wire.a === b && wire.ta === tb && wire.b === a && wire.tb === ta),
+    )
+    const oldConnections: Array<[string, string, string, string]> = [
+      [batteryKey, '+', boardKey, 'VIN'],
+      [batteryKey, '-', boardKey, 'GND'],
+      [boardKey, 'D2', sensorKey, 'TRIG'],
+      [boardKey, 'D3', sensorKey, 'ECHO'],
+      [boardKey, '5V', sensorKey, 'VCC'],
+      [boardKey, 'GND', sensorKey, 'GND'],
+      [boardKey, 'D4', servoKey, 'signal'],
+      [boardKey, '5V', servoKey, 'vcc'],
+      [boardKey, 'GND', servoKey, 'gnd'],
+    ]
+    if (!oldConnections.every(([a, ta, b, tb]) => hasWire(a, ta, b, tb))) return false
+
+    for (const key of [batteryKey, boardKey, servoKey, sensorKey]) this.mech.removeWiresAt(key)
+    for (const key of [batteryKey, boardKey, servoKey, sensorKey, markerKey]) {
+      const [x, blockY, z] = parseKey(key)
+      this.world.setBlock(x, blockY, z, B.AIR)
+    }
+    return true
+  }
+
   private buildDemo() {
     const y = GROUND_LEVEL
-    const battery = { x: -3, z: -4 }
-    const board = { x: 0, z: -4 }
-    const servo = { x: 5, z: -4 }
-    const sensor = { x: 3, z: -8 }
+    const batteryA = { x: -5, z: -8 }
+    const batteryB = { x: -3, z: -8 }
+    const board = { x: 0, z: -8 }
+    const robot = { x: 4, z: -8 }
+    const servo = { x: 5, z: -8 }
 
-    // Starter showcase: a proximity sensor controls an SG90-style servo.
-    // All components are placed on the starting platform and wired to the UNO.
-    this.world.setBlock(battery.x, y, battery.z, B.BATTERY_BOX, { batteries: 3 })
+    // A simple block-built mascot: the servo is the robot's waving shoulder.
+    this.world.setBlock(robot.x, y, robot.z, B.COLOR_BLOCK, { color: '#607d8b' })
+    this.world.setBlock(robot.x + 1, y, robot.z, B.COLOR_BLOCK, { color: '#607d8b' })
+    this.world.setBlock(robot.x, y + 1, robot.z, B.ROBOTICS)
+    this.world.setBlock(robot.x, y + 2, robot.z, B.COLOR_BLOCK, { color: '#4396D2' })
+    this.world.setBlock(servo.x, y + 1, servo.z, B.SERVO, {
+      facing: 5, servoOffAngle: 35, servoOnAngle: 125,
+    })
+
+    // Face details are decorative; the moving arm is attached to the real servo shaft.
+    const face = new THREE.Group()
+    const eyeWhite = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5 })
+    const eyeDark = new THREE.MeshStandardMaterial({ color: '#172033', roughness: 0.45 })
+    const smileMat = new THREE.MeshStandardMaterial({ color: '#E62B60', roughness: 0.5 })
+    for (const eyeX of [robot.x + 0.29, robot.x + 0.71]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), eyeWhite)
+      eye.position.set(eyeX, y + 2.62, robot.z - 0.025)
+      face.add(eye)
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), eyeDark)
+      pupil.position.set(eyeX, y + 2.62, robot.z - 0.095)
+      face.add(pupil)
+    }
+    const smile = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.055, 0.035), smileMat)
+    smile.position.set(robot.x + 0.5, y + 2.28, robot.z - 0.025)
+    face.add(smile)
+    this.scene.add(face)
+
+    const arm = new THREE.Group()
+    const armMat = new THREE.MeshStandardMaterial({ color: '#E62B60', roughness: 0.58 })
+    const handMat = new THREE.MeshStandardMaterial({ color: '#FFC400', roughness: 0.5 })
+    const armSegment = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.15, 0.15), armMat)
+    armSegment.position.set(-0.34, 0, 0)
+    arm.add(armSegment)
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat)
+    hand.position.set(-0.72, 0, 0)
+    arm.add(hand)
+    for (let finger = 0; finger < 3; finger++) {
+      const digit = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.07), handMat)
+      digit.position.set(-0.82, 0.12 + finger * 0.075, 0)
+      arm.add(digit)
+    }
+
+    this.world.setBlock(batteryA.x, y, batteryA.z, B.BATTERY_BOX, { batteries: 3 })
+    this.world.setBlock(batteryB.x, y, batteryB.z, B.BATTERY_BOX, { batteries: 3 })
     this.world.setBlock(board.x, y, board.z, B.ARDUINO_UNO)
-    this.world.setBlock(servo.x, y, servo.z, B.SERVO, {
-      facing: 2, servoOffAngle: 0, servoOnAngle: 90,
-    })
-    this.world.setBlock(sensor.x, y, sensor.z, B.PROXIMITY_SENSOR, {
-      facing: 4, proximityOperator: 'less', proximityDistance: 5, proximityActive: false,
-    })
-    // A removable marker sits in the sensor beam. Breaking it changes the
-    // measured distance and makes the servo return to its closed position.
-    this.world.setBlock(sensor.x, y, sensor.z + 2, B.COLOR_BLOCK, { color: '#fdd835' })
-
-    const batteryKey = posKey(battery.x, y, battery.z)
+    const batteryAKey = posKey(batteryA.x, y, batteryA.z)
+    const batteryBKey = posKey(batteryB.x, y, batteryB.z)
     const boardKey = posKey(board.x, y, board.z)
-    const servoKey = posKey(servo.x, y, servo.z)
-    const sensorKey = posKey(sensor.x, y, sensor.z)
+    const servoKey = posKey(servo.x, y + 1, servo.z)
 
+    // Arduino UNO headers are scaled 2x in X/Z and the pin locations are scaled
+    // 2x in all axes. Use the model's actual exposed terminal coordinates.
     const boardDigital = (pin: number) => new THREE.Vector3(
       board.x + 1 + 2 * (-0.35 + pin * (0.70 / 13)),
-      y + 0.14 + 0.134,
+      y + 0.14 + 2 * 0.134,
       board.z + 1 + 2 * -0.27,
     )
     const boardPower = (localX: number) => new THREE.Vector3(
       board.x + 1 + 2 * localX,
-      y + 0.14 + 0.134,
+      y + 0.14 + 2 * 0.134,
       board.z + 1 + 2 * 0.28,
     )
-    const sensorTerminal = (localX: number) => new THREE.Vector3(
-      sensor.x + 0.5 + localX,
-      y + 0.5 - 0.32,
-      sensor.z + 0.5 - 0.005,
+    const boardVin = new THREE.Vector3(
+      board.x + 1 + 2 * -0.47,
+      y + 0.14 + 2 * 0.028,
+      board.z + 1 + 2 * 0.245,
     )
-    // With the servo facing +Y, its three leads are exposed on the upper side.
+    const batteryTerminal = (battery: { x: number; z: number }, positive: boolean) =>
+      new THREE.Vector3(battery.x + (positive ? 0.82 : 0.70), y + 0.12, battery.z + 0.97)
+    // The servo faces -Z, so its local X axis is mirrored in world space.
     const servoTerminal = (localX: number) => new THREE.Vector3(
-      servo.x + 0.5 + localX,
-      y + 0.5 - 0.19,
-      servo.z + 0.5 + 0.365,
+      servo.x + 0.5 - localX,
+      y + 1 + 0.5 - 0.365,
+      servo.z + 0.5 + 0.19,
     )
 
-    // Battery powers the Arduino through VIN and common ground.
-    this.mech.addWire(
-      batteryKey, new THREE.Vector3(battery.x + 0.82, y + 0.12, battery.z + 0.97), '+',
-      boardKey, new THREE.Vector3(board.x + 1 + 2 * -0.47, y + 0.14 + 0.028, board.z + 1 + 2 * 0.245), 'VIN',
-      '#e53935',
-    )
-    this.mech.addWire(
-      batteryKey, new THREE.Vector3(battery.x + 0.70, y + 0.12, battery.z + 0.97), '-',
-      boardKey, boardPower(-0.11), 'GND', '#212121',
-    )
+    // Two 3-cell AAA holders in series provide 9 V to VIN. One holder alone
+    // provides only 4.5 V and cannot pass the UNO's 6.5 V regulator threshold.
+    this.mech.addWire(batteryAKey, batteryTerminal(batteryA, true), '+', boardKey, boardVin, 'VIN', '#e53935')
+    this.mech.addWire(batteryAKey, batteryTerminal(batteryA, false), '-', batteryBKey, batteryTerminal(batteryB, true), '+', '#212121')
+    this.mech.addWire(batteryBKey, batteryTerminal(batteryB, false), '-', boardKey, boardPower(-0.11), 'GND', '#212121')
 
-    // HC-SR04-style sensor: TRIG D2, ECHO D3, VCC 5V and GND.
-    this.mech.addWire(boardKey, boardDigital(2), 'D2', sensorKey, sensorTerminal(-0.08), 'TRIG', '#fdd835')
-    this.mech.addWire(boardKey, boardDigital(3), 'D3', sensorKey, sensorTerminal(0.08), 'ECHO', '#43a047')
-    this.mech.addWire(boardKey, boardPower(-0.23), '5V', sensorKey, sensorTerminal(-0.24), 'VCC', '#e53935')
-    this.mech.addWire(boardKey, boardPower(-0.11), 'GND', sensorKey, sensorTerminal(0.24), 'GND', '#212121')
-
-    // Servo signal on D4, with its supply connected to the board's 5V/GND.
-    this.mech.addWire(boardKey, boardDigital(4), 'D4', servoKey, servoTerminal(0.2), 'signal', '#fdd835')
+    // Servo: D9 carries the control signal; 5V and GND supply the servo itself.
+    this.mech.addWire(boardKey, boardDigital(9), 'D9', servoKey, servoTerminal(0.2), 'signal', '#fdd835')
     this.mech.addWire(boardKey, boardPower(-0.23), '5V', servoKey, servoTerminal(0), 'vcc', '#e53935')
     this.mech.addWire(boardKey, boardPower(-0.11), 'GND', servoKey, servoTerminal(-0.2), 'gnd', '#212121')
+    this.mech.attachServoAccessory(servoKey, arm)
 
     try {
-      window.localStorage.setItem('crafteduc:auto-door-preset:' + boardKey, '1')
+      window.localStorage.setItem('crafteduc:robot-wave-preset:' + boardKey, '1')
     } catch {
       // The physical circuit remains usable even if browser storage is unavailable.
     }
-    showToast('Circuito inicial: quebre ou recoloque o bloco amarelo diante do sensor para movimentar o servo. Abra o Arduino para ver o programa.')
+    showToast('Robô pronto: o braço acena sozinho. Abra o Arduino para ver e editar o programa.')
   }
 
   private bindEvents() {
