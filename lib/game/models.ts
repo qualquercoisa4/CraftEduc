@@ -354,9 +354,62 @@ export interface ServoModel {
 }
 
 /** Compact SG90-style servo with ground, voltage and signal pins. */
-export function createServoModel(facing = 2): ServoModel {
+export function createServoModel(facing = 2, variant: 'sg90' | 'mg995' = 'sg90'): ServoModel {
   const m = getMaterials()
   const group = new THREE.Group()
+  if (variant === 'mg995') {
+    // TowerPro MG995: larger dark housing, mounting ears, reinforced bearing
+    // and a metal cross horn. Its pins retain the same electrical interface.
+    const caseMat = new THREE.MeshLambertMaterial({ color: 0x24262b })
+    const lidMat = new THREE.MeshLambertMaterial({ color: 0x34373d })
+    const metalMat = new THREE.MeshLambertMaterial({ color: 0xb8bec7 })
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.94, 0.68, 0.78), caseMat)
+    body.position.z = -0.06
+    group.add(body)
+    const lid = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.10, 0.68), lidMat)
+    lid.position.set(0, 0.34, -0.06)
+    group.add(lid)
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.13, 0.48), caseMat)
+      ear.position.set(side * 0.58, -0.04, -0.08)
+      group.add(ear)
+      const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.14, 12), m.batteryBlack)
+      hole.rotation.z = Math.PI / 2
+      hole.position.set(side * 0.58, -0.04, -0.08)
+      group.add(hole)
+    }
+    group.add(cylZ(0.22, 0.12, metalMat, 0.32, 20))
+    group.add(cylZ(0.12, 0.18, metalMat, 0.43, 16))
+    const shaft = new THREE.Group()
+    shaft.position.set(0, 0, 0.50)
+    const longHorn = new THREE.Mesh(new THREE.BoxGeometry(0.88, 0.075, 0.10), metalMat)
+    longHorn.position.z = 0.04
+    shaft.add(longHorn)
+    const crossHorn = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.70, 0.10), metalMat)
+    crossHorn.position.z = 0.04
+    shaft.add(crossHorn)
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 20), metalMat)
+    hub.rotation.x = Math.PI / 2
+    hub.position.z = 0.025
+    shaft.add(hub)
+    group.add(shaft)
+    const pins = [
+      { x: -0.22, material: m.servoGround },
+      { x: 0, material: m.servoVoltage },
+      { x: 0.22, material: m.servoSignal },
+    ]
+    for (const pin of pins) {
+      const connector = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.09, 0.12), m.plastic)
+      connector.position.set(pin.x, -0.40, -0.25)
+      group.add(connector)
+      const terminal = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.18, 0.045), pin.material)
+      terminal.position.set(pin.x, -0.50, -0.25)
+      group.add(terminal)
+    }
+    group.quaternion.copy(facingQuaternion(facing))
+    return { group, shaft }
+  }
+
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.48, 0.56), m.servoBlue)
   body.position.z = -0.06
   group.add(body)
