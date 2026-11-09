@@ -2457,7 +2457,7 @@ export class Mechanics {
     )
     if (joint) {
       joint.configureMotorModel(RAPIER.MotorModel.ForceBased)
-      joint.setMotorMaxForce(isServo ? servoMaxTorqueWorld(c.motorState) : MOTOR_COAST_TORQUE_NM)
+      joint.setMotorMaxForce(isServo ? servoMaxTorqueWorld(motorState) : MOTOR_COAST_TORQUE_NM)
       if (isServo) joint.setLimits(0, SERVO_MAX_ANGLE_RAD)
     }
     if (!joint) {
