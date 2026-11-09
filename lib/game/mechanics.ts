@@ -59,7 +59,8 @@ const MOTOR_COAST_DAMPING = 0.25
 // TowerPro SG90: approximately 1.8 kg·cm at 4.8 V = 0.176 N·m stall torque.
 // SG90 rated torque is about 0.176 N·m. Voxel blocks are metre-scale game units,
 // so scale the actuator torque to the same virtual-world units as the DC motors.
-const SERVO_MAX_TORQUE_NM = 0.176 * SERVO_SIMULATION_TORQUE_SCALE
+const SERVO_TORQUE_NM: Record<'sg90' | 'mg995', number> = { sg90: 0.176, mg995: 1.08 }
+const servoMaxTorqueWorld = (state?: BlockState) => (SERVO_TORQUE_NM[state?.servoType ?? 'sg90'] ?? SERVO_TORQUE_NM.sg90) * SERVO_SIMULATION_TORQUE_SCALE
 
 function motorDriveCommand(
   variant: string | undefined,
@@ -486,7 +487,7 @@ export class Mechanics {
       state.facing ??= 2
       state.servoOffAngle ??= 0
       state.servoOnAngle ??= 90
-      const model = createServoModel(state.facing)
+      const model = createServoModel(state.facing, state.servoType ?? 'sg90')
       model.group.position.set(x + 0.5, y + 0.5, z + 0.5)
       model.shaft.rotation.z = state.servoOffAngle * Math.PI / 180
       this.scene.add(model.group)
@@ -1228,10 +1229,11 @@ export class Mechanics {
     const servoEntry = this.models.get(key)
     if (servoEntry?.type === 'servo') {
       servoEntry.model.group.updateWorldMatrix(true, false)
+      const isMg995 = this.lookup(key).state?.servoType === 'mg995'
       const terminals = [
-        { terminal: 'gnd', local: new THREE.Vector3(-0.2, -0.365, -0.19) },
-        { terminal: 'vcc', local: new THREE.Vector3(0, -0.365, -0.19) },
-        { terminal: 'signal', local: new THREE.Vector3(0.2, -0.365, -0.19) },
+        { terminal: 'gnd', local: new THREE.Vector3(isMg995 ? -0.22 : -0.2, isMg995 ? -0.50 : -0.365, isMg995 ? -0.25 : -0.19) },
+        { terminal: 'vcc', local: new THREE.Vector3(0, isMg995 ? -0.50 : -0.365, isMg995 ? -0.25 : -0.19) },
+        { terminal: 'signal', local: new THREE.Vector3(isMg995 ? 0.22 : 0.2, isMg995 ? -0.50 : -0.365, isMg995 ? -0.25 : -0.19) },
       ].map((terminal) => ({
         terminal: terminal.terminal,
         point: servoEntry.model.group.localToWorld(terminal.local),
@@ -1710,7 +1712,7 @@ export class Mechanics {
         servoKeys.push(key)
         // Representative load while the servo is powered, not a zero-current
         // control pin. Its stall transient is simplified in this first model.
-        addResistor(`servo-load:${key}`, node(key, 'vcc'), node(key, 'gnd'), 24)
+        addResistor(`servo-load:${key}`, node(key, 'vcc'), node(key, 'gnd'), state.servoType === 'mg995' ? 12 : 24)
       } else if (block.id === B.SWITCH) {
         addTerminals(key, ['in1', 'out1', 'in2', 'out2'])
         if (state.switchOn) {
@@ -2455,7 +2457,7 @@ export class Mechanics {
     )
     if (joint) {
       joint.configureMotorModel(RAPIER.MotorModel.ForceBased)
-      joint.setMotorMaxForce(isServo ? SERVO_MAX_TORQUE_NM : MOTOR_COAST_TORQUE_NM)
+      joint.setMotorMaxForce(isServo ? servoMaxTorqueWorld(c.motorState) : MOTOR_COAST_TORQUE_NM)
       if (isServo) joint.setLimits(0, SERVO_MAX_ANGLE_RAD)
     }
     if (!joint) {
@@ -2504,7 +2506,7 @@ export class Mechanics {
       )
       if (extraJoint) {
         extraJoint.configureMotorModel(RAPIER.MotorModel.ForceBased)
-        extraJoint.setMotorMaxForce(visual.actuatorId === B.SERVO ? SERVO_MAX_TORQUE_NM : MOTOR_COAST_TORQUE_NM)
+        extraJoint.setMotorMaxForce(visual.actuatorId === B.SERVO ? servoMaxTorqueWorld(this.lookup(visual.motorKey).state) : MOTOR_COAST_TORQUE_NM)
         if (visual.actuatorId === B.SERVO) extraJoint.setLimits(0, SERVO_MAX_ANGLE_RAD)
       }
       if (!extraJoint) {
@@ -3874,7 +3876,7 @@ export class Mechanics {
         const error = target - currentAngle
         c.speed = Math.max(-3.2, Math.min(3.2, error * 4.2))
         c.unpoweredTime = 0
-        c.joint.setMotorMaxForce(SERVO_MAX_TORQUE_NM)
+        c.joint.setMotorMaxForce(servoMaxTorqueWorld(c.motorState))
         c.joint.configureMotorPosition(commandedTarget, 18, 3)
         if (actuator?.type === 'servo') actuator.status = Math.abs(error) > 0.025 ? 'driving' : 'idle'
       } else if (power > 0) {
@@ -3955,7 +3957,7 @@ export class Mechanics {
           extra.servoCommandAngle = commandedTarget
           extra.speed = Math.max(-3.2, Math.min(3.2, (target - currentAngle) * 4.2))
           extra.unpoweredTime = 0
-          extra.joint.setMotorMaxForce(SERVO_MAX_TORQUE_NM)
+          extra.joint.setMotorMaxForce(servoMaxTorqueWorld(extra.motorState))
           extra.joint.configureMotorPosition(commandedTarget, 18, 3)
           if (extraMotor?.type === 'servo') extraMotor.status = Math.abs(target - currentAngle) > 0.025 ? 'driving' : 'idle'
           continue
