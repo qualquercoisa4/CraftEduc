@@ -534,7 +534,6 @@ export class Engine {
 
     const batteryKey = posKey(battery.x, y, battery.z)
     const boardKey = posKey(board.x, y, board.z)
-    const servoKey = posKey(servo.x, y, servo.z)
     const sensorKey = posKey(sensor.x, y, sensor.z)
 
     const boardDigital = (pin: number) => new THREE.Vector3(
