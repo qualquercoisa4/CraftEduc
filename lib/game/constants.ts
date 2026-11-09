@@ -138,6 +138,7 @@ export type ItemId =
   | 'switch'
   | 'proximity_sensor'
   | 'servo'
+  | 'servo_mg995'
   | 'arduino_uno'
   | 'resistor'
   | 'window'
@@ -218,6 +219,13 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   servo: {
     name: 'Servo motor TowerPro SG90',
     description: 'Microservo posicional com engrenagens plásticas. Conecte GND, alimentação e sinal PWM; não é um motor de rotação contínua.', physicalInfo: 'TowerPro SG90 • 4,8 V • 9 g • Curso aproximado: 0°–180° • Torque de bloqueio: 0,176 N·m (1,8 kg·cm)',
+    category: 'motors',
+    block: B.SERVO,
+  },
+  servo_mg995: {
+    name: 'Servo motor TowerPro MG995',
+    description: 'Servo posicional de alto torque, com engrenagens metálicas e eixo de saída reforçado. Usa os mesmos três fios e os mesmos blocos de programação do SG90.',
+    physicalInfo: 'TowerPro MG995 • 4,8–6 V • aproximadamente 55 g • Curso: até 180° • Torque de bloqueio típico: 9,4 kgf·cm a 4,8 V e 11 kgf·cm a 6 V (≈0,92–1,08 N·m) • Corrente de bloqueio elevada; requer fonte externa adequada',
     category: 'motors',
     block: B.SERVO,
   },
@@ -346,6 +354,7 @@ export const ITEM_ORDER: ItemId[] = [
   'switch',
   'proximity_sensor',
   'servo',
+  'servo_mg995',
   'arduino_uno',
   'resistor',
   'multimeter',
