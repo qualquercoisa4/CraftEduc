@@ -32,6 +32,36 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(terminalVoltage < 4.5, 'internal resistance must produce battery sag under load')
 }
 
+// The starter robot uses two 3-cell AAA holders in series: 9 V at VIN.
+// The UNO regulator then supplies the servo load from the 5 V rail.
+{
+  const input = {
+    resistors: [
+      { id: 'battery-a-to-vin', a: 'pack-a+', b: 'vin', resistanceOhms: 0.01 },
+      { id: 'series-link', a: 'pack-a-', b: 'pack-b+', resistanceOhms: 0.01 },
+      { id: 'battery-b-return', a: 'pack-b-', b: 'gnd', resistanceOhms: 0.01 },
+      { id: 'regulator-board-load', a: '5v', b: 'gnd', resistanceOhms: 1000 },
+      { id: 'servo-vcc-wire', a: '5v', b: 'servo-vcc', resistanceOhms: 0.01 },
+      { id: 'servo-gnd-wire', a: 'servo-gnd', b: 'gnd', resistanceOhms: 0.01 },
+      { id: 'servo-load', a: 'servo-vcc', b: 'servo-gnd', resistanceOhms: 24 },
+    ],
+    voltageSources: [
+      { id: 'battery-a', positive: 'pack-a+', negative: 'pack-a-', voltageVolts: 4.5, internalResistanceOhms: 0.45 },
+      { id: 'battery-b', positive: 'pack-b+', negative: 'pack-b-', voltageVolts: 4.5, internalResistanceOhms: 0.45 },
+      { id: 'uno-regulator', positive: '5v', negative: 'gnd', voltageVolts: 5, internalResistanceOhms: 1.2 },
+    ],
+    diodes: [],
+  }
+  const solution = solveDcCircuit(input)
+  assert.equal(solution.converged, true, 'two-holder Arduino supply should converge')
+  const voltage = (node) => (solution.nodeVoltages.get(node) ?? NaN)
+    - (solution.nodeVoltages.get('gnd') ?? NaN)
+  near(voltage('vin'), 9, 1e-6, 'two three-cell holders in series provide 9 V at VIN')
+  assert.ok(voltage('vin') >= 6.5 && voltage('vin') <= 12, '9 V must be inside the UNO VIN regulator range')
+  assert.ok(voltage('5v') >= 4.5 && voltage('5v') <= 5.5, 'loaded regulated rail must remain in the UNO operating range')
+  assert.ok(voltage('servo-vcc') >= 4, 'servo must receive at least 4 V under its modeled load')
+}
+
 // At 5 V with 100 Ω load plus 0.5 Ω source resistance, current must obey
 // I=V/(Rload+Rsource). This catches unit and sign regressions.
 {
@@ -350,4 +380,4 @@ const near = (actual, expected, tolerance, label) => {
   assert.equal(solution.nodeVoltages.get(nodes[0]), 0, 'oversized component should not return invented voltages')
 }
 
-console.log('Electrical and motor-model regression checks passed (11 circuits plus motor checks).')
+console.log('Electrical and motor-model regression checks passed (12 circuits plus motor checks).')
