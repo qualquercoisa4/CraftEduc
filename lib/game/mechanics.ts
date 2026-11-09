@@ -1377,14 +1377,22 @@ export class Mechanics {
 
   setArduinoServoAngle(boardKey: string, pin: string, degrees: number) {
     if (!Number.isFinite(degrees) || this.lookup(boardKey).id !== B.ARDUINO_UNO || !/^D(?:[0-9]|1[0-3])$/.test(pin)) return 0
-    const angle = Math.max(1, Math.min(180, Math.round(degrees)))
+    const angle = Math.max(0, Math.min(180, Math.round(degrees)))
     const servos = this.getTerminalConnections(boardKey, pin).filter((connection) =>
-      this.isArduinoServoConnection(connection),
+      this.isArduinoServoConnection(connection) && connection.componentTerminal === 'signal',
     )
     for (const connection of servos) {
       this.programmedServoAngles.set(connection.componentKey, { boardKey, degrees: angle })
     }
     return servos.length
+  }
+
+  /** Attach a visual accessory to the actual servo horn so it follows shaft motion. */
+  attachServoAccessory(servoKey: string, accessory: THREE.Object3D) {
+    const entry = this.models.get(servoKey)
+    if (entry?.type !== 'servo') return false
+    entry.model.shaft.add(accessory)
+    return true
   }
 
   isArduinoPowered(boardKey: string) {
