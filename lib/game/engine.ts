@@ -526,7 +526,7 @@ export class Engine {
       facing: 2, servoOffAngle: 0, servoOnAngle: 90,
     })
     this.world.setBlock(sensor.x, y, sensor.z, B.PROXIMITY_SENSOR, {
-      facing: 4, proximityOperator: 'less', proximityDistance: 12, proximityActive: false,
+      facing: 4, proximityOperator: 'less', proximityDistance: 5, proximityActive: false,
     })
 
     const batteryKey = posKey(battery.x, y, battery.z)
