@@ -538,12 +538,12 @@ export class Engine {
 
     const boardDigital = (pin: number) => new THREE.Vector3(
       board.x + 1 + 2 * (-0.35 + pin * (0.70 / 13)),
-      y + 0.14 + 2 * 0.134,
+      y + 0.14 + 0.134,
       board.z + 1 + 2 * -0.27,
     )
     const boardPower = (localX: number) => new THREE.Vector3(
       board.x + 1 + 2 * localX,
-      y + 0.14 + 2 * 0.134,
+      y + 0.14 + 0.134,
       board.z + 1 + 2 * 0.28,
     )
     const sensorTerminal = (localX: number) => new THREE.Vector3(
