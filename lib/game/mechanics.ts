@@ -1384,6 +1384,13 @@ export class Mechanics {
     for (const connection of servos) {
       this.programmedServoAngles.set(connection.componentKey, { boardKey, degrees: angle })
     }
+    if (servos.length > 0) {
+      // A servo command represents an active PWM signal on the selected pin.
+      // Keep that signal visible to the electrical solver and servo power state.
+      this.arduinoPinLevels.set(`${boardKey}|${pin}`, true)
+      this.powerDirty = true
+      this.powerCooldown = 0
+    }
     return servos.length
   }
 
