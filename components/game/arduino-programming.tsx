@@ -298,9 +298,9 @@ export function ArduinoProgramming() {
           const hasMarsHoverPreset = window.localStorage.getItem(presetKey) === '1'
           const facePresetKey = 'crafteduc:robot-city-face-preset:' + key
           const hasRobotCityFacePreset = window.localStorage.getItem(facePresetKey) === '1'
-          const autoDoorPresetKey = 'crafteduc:auto-door-preset:' + key
-          const hasAutoDoorPreset = window.localStorage.getItem(autoDoorPresetKey) === '1'
-          if (hasAutoDoorPreset) {
+          const robotWavePresetKey = 'crafteduc:robot-wave-preset:' + key
+          const hasRobotWavePreset = window.localStorage.getItem(robotWavePresetKey) === '1'
+          if (hasRobotWavePreset) {
             const created: Array<any> = []
             const makeBlock = (type: string, fields: Record<string, string> = {}) => {
               const block = workspace.newBlock(type)
@@ -311,30 +311,24 @@ export function ArduinoProgramming() {
             const connect = (a: any, b: any) => { if (a && b) a.connect(b) }
             const connectNext = (a: any, b: any) => connect(a?.nextConnection, b?.previousConnection)
             const start = makeBlock('arduino_when_start')
-            const mode = makeBlock('arduino_set_pin_mode', { PIN: 'D4', MODE: 'SERVO' })
+            const mode = makeBlock('arduino_set_pin_mode', { PIN: 'D9', MODE: 'SERVO' })
             const forever = makeBlock('arduino_forever')
-            const branch = makeBlock('arduino_if_else')
-            const compare = makeBlock('logic_compare', { OP: 'LT' })
-            const distance = makeBlock('arduino_distance', { TRIG_PIN: 'D2', ECHO_PIN: 'D3' })
-            const threshold = makeBlock('math_number', { NUM: '5' })
-            const open = makeBlock('arduino_servo_write', { PIN: 'D4', ANGLE: '90' })
-            const close = makeBlock('arduino_servo_write', { PIN: 'D4', ANGLE: '0' })
-            const delay = makeBlock('arduino_delay', { TIME: '100', UNIT: 'MS' })
+            const waveLeft = makeBlock('arduino_servo_write', { PIN: 'D9', ANGLE: '35' })
+            const pauseLeft = makeBlock('arduino_delay', { TIME: '450', UNIT: 'MS' })
+            const waveRight = makeBlock('arduino_servo_write', { PIN: 'D9', ANGLE: '125' })
+            const pauseRight = makeBlock('arduino_delay', { TIME: '450', UNIT: 'MS' })
             connectNext(start, mode)
             connectNext(mode, forever)
-            connect(forever.getInput('DO')?.connection, branch.previousConnection)
-            connect(branch.getInput('CONDITION')?.connection, compare.outputConnection)
-            connect(compare.getInput('A')?.connection, distance.outputConnection)
-            connect(compare.getInput('B')?.connection, threshold.outputConnection)
-            connect(branch.getInput('DO')?.connection, open.previousConnection)
-            connect(branch.getInput('ELSE')?.connection, close.previousConnection)
-            connectNext(branch, delay)
+            connect(forever.getInput('DO')?.connection, waveLeft.previousConnection)
+            connectNext(waveLeft, pauseLeft)
+            connectNext(pauseLeft, waveRight)
+            connectNext(waveRight, pauseRight)
             created.forEach((block, index) => {
               block.initSvg()
               block.render()
               if (index === 0) block.moveBy(24, 24)
             })
-            window.localStorage.removeItem(autoDoorPresetKey)
+            window.localStorage.removeItem(robotWavePresetKey)
           } else if (hasRobotCityFacePreset) {
             const created: Array<any> = []
             const makeBlock = (type: string, fields: Record<string, string> = {}) => {
