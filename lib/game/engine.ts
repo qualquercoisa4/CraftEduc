@@ -572,7 +572,7 @@ export class Engine {
     this.world.setBlock(robot.x, y + 1, robot.z, B.ROBOTICS)
     this.world.setBlock(robot.x, y + 2, robot.z, B.COLOR_BLOCK, { color: '#4396D2' })
     this.world.setBlock(servo.x, y + 1, servo.z, B.SERVO, {
-      facing: 5, servoOffAngle: 35, servoOnAngle: 125,
+      facing: 0, servoOffAngle: 25, servoOnAngle: 95,
     })
 
     // Face details are decorative; the moving arm is attached to the real servo shaft.
@@ -597,14 +597,14 @@ export class Engine {
     const armMat = new THREE.MeshStandardMaterial({ color: '#E62B60', roughness: 0.58 })
     const handMat = new THREE.MeshStandardMaterial({ color: '#FFC400', roughness: 0.5 })
     const armSegment = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.15, 0.15), armMat)
-    armSegment.position.set(-0.34, 0, 0)
+    armSegment.position.set(0.34, 0, 0)
     arm.add(armSegment)
     const hand = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat)
-    hand.position.set(-0.72, 0, 0)
+    hand.position.set(0.72, 0, 0)
     arm.add(hand)
     for (let finger = 0; finger < 3; finger++) {
       const digit = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.07), handMat)
-      digit.position.set(-0.82, 0.12 + finger * 0.075, 0)
+      digit.position.set(0.82, 0.12 + finger * 0.075, 0)
       arm.add(digit)
     }
 
@@ -635,11 +635,12 @@ export class Engine {
     )
     const batteryTerminal = (battery: { x: number; z: number }, positive: boolean) =>
       new THREE.Vector3(battery.x + (positive ? 0.82 : 0.70), y + 0.12, battery.z + 0.97)
-    // The servo faces -Z, so its local X axis is mirrored in world space.
+    // Facing +X rotates the servo's local Z axis onto world +X. Its three
+    // leads therefore emerge from the side of the housing at these positions.
     const servoTerminal = (localX: number) => new THREE.Vector3(
-      servo.x + 0.5 - localX,
+      servo.x + 0.5 - 0.19,
       y + 1 + 0.5 - 0.365,
-      servo.z + 0.5 + 0.19,
+      servo.z + 0.5 - localX,
     )
 
     // Two 3-cell AAA holders in series provide 9 V to VIN. One holder alone
