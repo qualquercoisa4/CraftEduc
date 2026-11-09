@@ -513,9 +513,9 @@ export class Engine {
 
   private buildDemo() {
     const y = GROUND_LEVEL
-    const battery = { x: 0, z: -4 }
-    const board = { x: 3, z: -4 }
-    const servo = { x: 8, z: -4 }
+    const battery = { x: -3, z: -4 }
+    const board = { x: 0, z: -4 }
+    const servo = { x: 5, z: -4 }
     const sensor = { x: 3, z: -8 }
 
     // Starter showcase: a proximity sensor controls an SG90-style servo.
@@ -528,6 +528,9 @@ export class Engine {
     this.world.setBlock(sensor.x, y, sensor.z, B.PROXIMITY_SENSOR, {
       facing: 4, proximityOperator: 'less', proximityDistance: 5, proximityActive: false,
     })
+    // A removable marker sits in the sensor beam. Breaking it changes the
+    // measured distance and makes the servo return to its closed position.
+    this.world.setBlock(sensor.x, y, sensor.z + 2, B.COLOR_BLOCK, { color: '#fdd835' })
 
     const batteryKey = posKey(battery.x, y, battery.z)
     const boardKey = posKey(board.x, y, board.z)
@@ -583,7 +586,7 @@ export class Engine {
     } catch {
       // The physical circuit remains usable even if browser storage is unavailable.
     }
-    showToast('Circuito inicial: aproxime-se do sensor para movimentar o servo. Abra o Arduino para ver o programa.')
+    showToast('Circuito inicial: quebre ou recoloque o bloco amarelo diante do sensor para movimentar o servo. Abra o Arduino para ver o programa.')
   }
 
   private bindEvents() {
