@@ -18,6 +18,7 @@ export interface BlockState {
   proximityActive?: boolean
   servoOffAngle?: number
   servoOnAngle?: number
+  servoType?: 'sg90' | 'mg995'
   color?: string
   resinCoated?: boolean
   resistorDigit1?: number
