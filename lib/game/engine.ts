@@ -272,7 +272,7 @@ export class Engine {
       this.restoreSavedWorld(startup.save)
       // Migrate only the untouched, known-broken starter circuit. Other saved
       // player construction and wiring remain intact.
-      if (this.worldConfig.id === 'default-flat-world' && this.replaceLegacyStarterDemo(startup.save)) {
+      if (this.worldConfig.id === 'default-flat-world' && (this.replaceLegacyStarterDemo(startup.save) || this.replacePreviousRobotWaveDemo(startup.save))) {
         this.buildDemo()
       }
     } else if (this.worldConfig.type === 'flat') {
@@ -558,55 +558,84 @@ export class Engine {
     return true
   }
 
+  private replacePreviousRobotWaveDemo(save: SavedWorldRecord) {
+    const y = GROUND_LEVEL
+    const batteryA = posKey(-5, y, -8)
+    const batteryB = posKey(-3, y, -8)
+    const board = posKey(0, y, -8)
+    const servo = posKey(5, y + 1, -8)
+    const savedBlock = (key: string) => save.data.blocks.find((block) => posKey(block.x, block.y, block.z) === key)
+    const a = savedBlock(batteryA)
+    const b = savedBlock(batteryB)
+    const uno = savedBlock(board)
+    const actuator = savedBlock(servo)
+    if (a?.id !== B.BATTERY_BOX || a.state?.batteries !== 3
+      || b?.id !== B.BATTERY_BOX || b.state?.batteries !== 3
+      || uno?.id !== B.ARDUINO_UNO || actuator?.id !== B.SERVO) return false
+    const hasWire = (ka: string, ta: string, kb: string, tb: string) => save.data.wires.some((wire) =>
+      (wire.a === ka && wire.ta === ta && wire.b === kb && wire.tb === tb)
+      || (wire.a === kb && wire.ta === tb && wire.b === ka && wire.tb === ta),
+    )
+    const expected: Array<[string, string, string, string]> = [
+      [batteryA, '+', board, 'VIN'], [batteryA, '-', batteryB, '+'],
+      [batteryB, '-', board, 'GND'], [board, 'D9', servo, 'signal'],
+      [board, '5V', servo, 'vcc'], [board, 'GND', servo, 'gnd'],
+    ]
+    if (!expected.every(([ka, ta, kb, tb]) => hasWire(ka, ta, kb, tb))) return false
+    const oldBlocks: Array<[number, number, number, number]> = [
+      [-5, y, -8, B.BATTERY_BOX], [-3, y, -8, B.BATTERY_BOX],
+      [0, y, -8, B.ARDUINO_UNO], [4, y, -8, B.COLOR_BLOCK],
+      [5, y, -8, B.COLOR_BLOCK], [4, y + 1, -8, B.ROBOTICS],
+      [4, y + 2, -8, B.COLOR_BLOCK], [5, y + 1, -8, B.SERVO],
+    ]
+    if (!oldBlocks.every(([x, by, z, id]) => save.data.blocks.some((block) =>
+      block.x === x && block.y === by && block.z === z && block.id === id,
+    ))) return false
+    for (const key of [batteryA, batteryB, board, servo]) this.mech.removeWiresAt(key)
+    for (const [x, by, z] of oldBlocks) this.world.setBlock(x, by, z, B.AIR)
+    return true
+  }
+
   private buildDemo() {
     const y = GROUND_LEVEL
     const batteryA = { x: -5, z: -8 }
     const batteryB = { x: -3, z: -8 }
     const board = { x: 0, z: -8 }
     const robot = { x: 4, z: -8 }
-    const servo = { x: 5, z: -8 }
+    const servo = { x: robot.x + 2, z: robot.z, y: y + 2 }
 
-    // A simple block-built mascot: the servo is the robot's waving shoulder.
-    this.world.setBlock(robot.x, y, robot.z, B.COLOR_BLOCK, { color: '#607d8b' })
-    this.world.setBlock(robot.x + 1, y, robot.z, B.COLOR_BLOCK, { color: '#607d8b' })
-    this.world.setBlock(robot.x, y + 1, robot.z, B.ROBOTICS)
-    this.world.setBlock(robot.x, y + 2, robot.z, B.COLOR_BLOCK, { color: '#4396D2' })
-    this.world.setBlock(servo.x, y + 1, servo.z, B.SERVO, {
-      facing: 0, servoOffAngle: 25, servoOnAngle: 95,
+    // Block-built humanoid mascot matching the reference: green head, blue
+    // torso, yellow legs, red feet and a cross-shaped right arm on an MG995.
+    const put = (x: number, blockY: number, z: number, color: string) =>
+      this.world.setBlock(x, blockY, z, B.COLOR_BLOCK, { color })
+    const blue = '#1976b9', green = '#278c43', yellow = '#f0c928', red = '#d83232'
+    put(robot.x, y, robot.z, red)
+    put(robot.x + 1, y, robot.z, red)
+    put(robot.x, y + 1, robot.z, yellow)
+    put(robot.x + 1, y + 1, robot.z, yellow)
+    put(robot.x, y + 2, robot.z, blue)
+    put(robot.x + 1, y + 2, robot.z, blue)
+    put(robot.x, y + 3, robot.z, blue)
+    put(robot.x + 1, y + 3, robot.z, blue)
+    put(robot.x, y + 4, robot.z, green)
+    put(robot.x + 1, y + 4, robot.z, green)
+    put(robot.x, y + 5, robot.z, green)
+    put(robot.x + 1, y + 5, robot.z, green)
+    put(robot.x, y + 4, robot.z - 1, '#1686d2')
+    put(robot.x + 1, y + 4, robot.z - 1, '#1686d2')
+    put(robot.x - 1, y + 2, robot.z, red)
+    put(robot.x - 1, y + 3, robot.z, red)
+    this.world.setBlock(servo.x, servo.y, servo.z, B.SERVO, {
+      facing: 0, servoOffAngle: 25, servoOnAngle: 95, servoType: 'mg995',
     })
 
-    // Face details are decorative; the moving arm is attached to the real servo shaft.
-    const face = new THREE.Group()
-    const eyeWhite = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5 })
-    const eyeDark = new THREE.MeshStandardMaterial({ color: '#172033', roughness: 0.45 })
-    const smileMat = new THREE.MeshStandardMaterial({ color: '#E62B60', roughness: 0.5 })
-    for (const eyeX of [robot.x + 0.29, robot.x + 0.71]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.085, 12, 10), eyeWhite)
-      eye.position.set(eyeX, y + 2.62, robot.z - 0.025)
-      face.add(eye)
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10, 8), eyeDark)
-      pupil.position.set(eyeX, y + 2.62, robot.z - 0.095)
-      face.add(pupil)
-    }
-    const smile = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.055, 0.035), smileMat)
-    smile.position.set(robot.x + 0.5, y + 2.28, robot.z - 0.025)
-    face.add(smile)
-    this.scene.add(face)
-
     const arm = new THREE.Group()
-    const armMat = new THREE.MeshStandardMaterial({ color: '#E62B60', roughness: 0.58 })
-    const handMat = new THREE.MeshStandardMaterial({ color: '#FFC400', roughness: 0.5 })
-    const armSegment = new THREE.Mesh(new THREE.BoxGeometry(0.68, 0.15, 0.15), armMat)
-    armSegment.position.set(0.34, 0, 0)
-    arm.add(armSegment)
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), handMat)
-    hand.position.set(0.72, 0, 0)
-    arm.add(hand)
-    for (let finger = 0; finger < 3; finger++) {
-      const digit = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.16, 0.07), handMat)
-      digit.position.set(0.82, 0.12 + finger * 0.075, 0)
-      arm.add(digit)
-    }
+    const armMat = new THREE.MeshStandardMaterial({ color: red, roughness: 0.62 })
+    const verticalArm = new THREE.Mesh(new THREE.BoxGeometry(0.20, 0.92, 0.20), armMat)
+    arm.add(verticalArm)
+    const horizontalArm = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.20, 0.20), armMat)
+    horizontalArm.position.y = 0.16
+    arm.add(horizontalArm)
 
     this.world.setBlock(batteryA.x, y, batteryA.z, B.BATTERY_BOX, { batteries: 3 })
     this.world.setBlock(batteryB.x, y, batteryB.z, B.BATTERY_BOX, { batteries: 3 })
@@ -614,10 +643,7 @@ export class Engine {
     const batteryAKey = posKey(batteryA.x, y, batteryA.z)
     const batteryBKey = posKey(batteryB.x, y, batteryB.z)
     const boardKey = posKey(board.x, y, board.z)
-    const servoKey = posKey(servo.x, y + 1, servo.z)
-
-    // Arduino UNO headers are scaled 2x in X/Z and the pin locations are scaled
-    // 2x in all axes. Use the model's actual exposed terminal coordinates.
+    const servoKey = posKey(servo.x, servo.y, servo.z)
     const boardDigital = (pin: number) => new THREE.Vector3(
       board.x + 1 + 2 * (-0.35 + pin * (0.70 / 13)),
       y + 0.14 + 2 * 0.134,
@@ -635,32 +661,27 @@ export class Engine {
     )
     const batteryTerminal = (battery: { x: number; z: number }, positive: boolean) =>
       new THREE.Vector3(battery.x + (positive ? 0.82 : 0.70), y + 0.12, battery.z + 0.97)
-    // Facing +X rotates the servo's local Z axis onto world +X. Its three
-    // leads therefore emerge from the side of the housing at these positions.
     const servoTerminal = (localX: number) => new THREE.Vector3(
-      servo.x + 0.5 - 0.19,
-      y + 1 + 0.5 - 0.365,
+      servo.x + 0.5 - 0.25,
+      servo.y + 0.5 - 0.50,
       servo.z + 0.5 - localX,
     )
 
-    // Two 3-cell AAA holders in series provide 9 V to VIN. One holder alone
-    // provides only 4.5 V and cannot pass the UNO's 6.5 V regulator threshold.
+    // Two 3-cell AAA holders in series provide 9 V at the Arduino VIN.
     this.mech.addWire(batteryAKey, batteryTerminal(batteryA, true), '+', boardKey, boardVin, 'VIN', '#e53935')
     this.mech.addWire(batteryAKey, batteryTerminal(batteryA, false), '-', batteryBKey, batteryTerminal(batteryB, true), '+', '#212121')
     this.mech.addWire(batteryBKey, batteryTerminal(batteryB, false), '-', boardKey, boardPower(-0.11), 'GND', '#212121')
-
-    // Servo: D9 carries the control signal; 5V and GND supply the servo itself.
-    this.mech.addWire(boardKey, boardDigital(9), 'D9', servoKey, servoTerminal(0.2), 'signal', '#fdd835')
+    // MG995 keeps the same three-wire pinout and D9 PWM programming interface.
+    this.mech.addWire(boardKey, boardDigital(9), 'D9', servoKey, servoTerminal(0.22), 'signal', '#fdd835')
     this.mech.addWire(boardKey, boardPower(-0.23), '5V', servoKey, servoTerminal(0), 'vcc', '#e53935')
-    this.mech.addWire(boardKey, boardPower(-0.11), 'GND', servoKey, servoTerminal(-0.2), 'gnd', '#212121')
+    this.mech.addWire(boardKey, boardPower(-0.11), 'GND', servoKey, servoTerminal(-0.22), 'gnd', '#212121')
     this.mech.attachServoAccessory(servoKey, arm)
-
     try {
       window.localStorage.setItem('crafteduc:robot-wave-preset:' + boardKey, '1')
     } catch {
-      // The physical circuit remains usable even if browser storage is unavailable.
+      // The physical circuit remains usable if browser storage is unavailable.
     }
-    showToast('Robô pronto: o braço acena sozinho. Abra o Arduino para ver e editar o programa.')
+    showToast('Robô pronto: o braço em cruz acena com o servo MG995. Abra o Arduino para editar o programa.')
   }
 
   private bindEvents() {
@@ -967,7 +988,7 @@ export class Engine {
       showToast('Esse espaço já está ocupado pela carcaça de um motor')
       return
     }
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90, servoType: item === 'servo_mg995' ? 'mg995' : 'sg90' } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
     if (block === B.MOTOR && this.motorModelOverlapsBlocks(x, y, z, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(cell.x, cell.y, cell.z))) {
       showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
       return
