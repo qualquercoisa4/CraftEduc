@@ -513,23 +513,77 @@ export class Engine {
 
   private buildDemo() {
     const y = GROUND_LEVEL
-    const z = -4
-    this.world.setBlock(3, y, z, B.BATTERY_BOX, { batteries: 3 })
-    this.world.setBlock(6, y, z, B.MOTOR, { facing: 2, glue: 1 << 2 })
-    this.world.setBlock(6, y + 1, z, B.IRON, { glue: (1 << 0) | (1 << 1) })
-    this.world.setBlock(7, y + 1, z, B.WOOD, { glue: 1 << 0 })
-    this.world.setBlock(8, y + 1, z, B.ALUMINUM)
-    this.world.setBlock(5, y + 1, z, B.WOOD, { glue: 1 << 1 })
-    this.world.setBlock(4, y + 1, z, B.ALUMINUM)
-    this.world.setBlock(0, y, z, B.LED)
-    this.world.setBlock(0, y, z - 2, B.COMPONENT)
-    this.world.setBlock(1, y, z - 2, B.GEAR)
-    // The demo circuit uses the battery compartment's distinct +/− terminals
-    // and the motor's two isolated terminals, so it is a closed polarized loop.
-    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.82, y + 0.12, z + 0.97), '+',
-      posKey(6, y, z), new THREE.Vector3(6.36, y + 0.04, z + 0.4), 'A')
-    this.mech.addWire(posKey(3, y, z), new THREE.Vector3(3.70, y + 0.12, z + 0.97), '-',
-      posKey(6, y, z), new THREE.Vector3(6.64, y + 0.04, z + 0.4), 'B')
+    const battery = { x: 0, z: -4 }
+    const board = { x: 3, z: -4 }
+    const servo = { x: 8, z: -4 }
+    const sensor = { x: 3, z: -8 }
+
+    // Starter showcase: a proximity sensor controls an SG90-style servo.
+    // All components are placed on the starting platform and wired to the UNO.
+    this.world.setBlock(battery.x, y, battery.z, B.BATTERY_BOX, { batteries: 3 })
+    this.world.setBlock(board.x, y, board.z, B.ARDUINO_UNO)
+    this.world.setBlock(servo.x, y, servo.z, B.SERVO, {
+      facing: 2, servoOffAngle: 0, servoOnAngle: 90,
+    })
+    this.world.setBlock(sensor.x, y, sensor.z, B.PROXIMITY_SENSOR, {
+      facing: 4, proximityOperator: 'less', proximityDistance: 12, proximityActive: false,
+    })
+
+    const batteryKey = posKey(battery.x, y, battery.z)
+    const boardKey = posKey(board.x, y, board.z)
+    const servoKey = posKey(servo.x, y, servo.z)
+    const sensorKey = posKey(sensor.x, y, sensor.z)
+
+    const boardDigital = (pin: number) => new THREE.Vector3(
+      board.x + 1 + 2 * (-0.35 + pin * (0.70 / 13)),
+      y + 0.14 + 2 * 0.134,
+      board.z + 1 + 2 * -0.27,
+    )
+    const boardPower = (localX: number) => new THREE.Vector3(
+      board.x + 1 + 2 * localX,
+      y + 0.14 + 2 * 0.134,
+      board.z + 1 + 2 * 0.28,
+    )
+    const sensorTerminal = (localX: number) => new THREE.Vector3(
+      sensor.x + 0.5 + localX,
+      y + 0.5 - 0.32,
+      sensor.z + 0.5 - 0.005,
+    )
+    // With the servo facing +Y, its three leads are exposed on the upper side.
+    const servoTerminal = (localX: number) => new THREE.Vector3(
+      servo.x + 0.5 + localX,
+      y + 0.5 - 0.19,
+      servo.z + 0.5 + 0.365,
+    )
+
+    // Battery powers the Arduino through VIN and common ground.
+    this.mech.addWire(
+      batteryKey, new THREE.Vector3(battery.x + 0.82, y + 0.12, battery.z + 0.97), '+',
+      boardKey, new THREE.Vector3(board.x + 1 + 2 * -0.47, y + 0.14 + 0.028, board.z + 1 + 2 * 0.245), 'VIN',
+      '#e53935',
+    )
+    this.mech.addWire(
+      batteryKey, new THREE.Vector3(battery.x + 0.70, y + 0.12, battery.z + 0.97), '-',
+      boardKey, boardPower(-0.11), 'GND', '#212121',
+    )
+
+    // HC-SR04-style sensor: TRIG D2, ECHO D3, VCC 5V and GND.
+    this.mech.addWire(boardKey, boardDigital(2), 'D2', sensorKey, sensorTerminal(-0.08), 'TRIG', '#fdd835')
+    this.mech.addWire(boardKey, boardDigital(3), 'D3', sensorKey, sensorTerminal(0.08), 'ECHO', '#43a047')
+    this.mech.addWire(boardKey, boardPower(-0.23), '5V', sensorKey, sensorTerminal(-0.24), 'VCC', '#e53935')
+    this.mech.addWire(boardKey, boardPower(-0.11), 'GND', sensorKey, sensorTerminal(0.24), 'GND', '#212121')
+
+    // Servo signal on D4, with its supply connected to the board's 5V/GND.
+    this.mech.addWire(boardKey, boardDigital(4), 'D4', servoKey, servoTerminal(0.2), 'signal', '#fdd835')
+    this.mech.addWire(boardKey, boardPower(-0.23), '5V', servoKey, servoTerminal(0), 'vcc', '#e53935')
+    this.mech.addWire(boardKey, boardPower(-0.11), 'GND', servoKey, servoTerminal(-0.2), 'gnd', '#212121')
+
+    try {
+      window.localStorage.setItem('crafteduc:auto-door-preset:' + boardKey, '1')
+    } catch {
+      // The physical circuit remains usable even if browser storage is unavailable.
+    }
+    showToast('Circuito inicial: aproxime-se do sensor para movimentar o servo. Abra o Arduino para ver o programa.')
   }
 
   private bindEvents() {
