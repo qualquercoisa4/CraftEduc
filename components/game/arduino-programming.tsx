@@ -316,7 +316,7 @@ export function ArduinoProgramming() {
             const branch = makeBlock('arduino_if_else')
             const compare = makeBlock('logic_compare', { OP: 'LT' })
             const distance = makeBlock('arduino_distance', { TRIG_PIN: 'D2', ECHO_PIN: 'D3' })
-            const threshold = makeBlock('math_number', { NUM: '12' })
+            const threshold = makeBlock('math_number', { NUM: '5' })
             const open = makeBlock('arduino_servo_write', { PIN: 'D4', ANGLE: '90' })
             const close = makeBlock('arduino_servo_write', { PIN: 'D4', ANGLE: '0' })
             const delay = makeBlock('arduino_delay', { TIME: '100', UNIT: 'MS' })
