@@ -1651,6 +1651,7 @@ export class Engine {
     if (!hit) return
     let item: ItemId | undefined = BLOCK_TO_ITEM[hit.id]
     if (hit.id === B.MOTOR) item = motorItemForVariant(this.world.getState(hit.x, hit.y, hit.z)?.motorType)
+    if (hit.id === B.BATTERY_BOX) item = this.world.getState(hit.x, hit.y, hit.z)?.batteryType === 'large16v' ? 'battery_box_16v' : 'battery_box'
     if (hit.id === B.COLOR_BLOCK) {
       const color = this.world.getState(hit.x, hit.y, hit.z)?.color
       const variant = COLOR_VARIANTS.find((candidate) => candidate.color.toLowerCase() === color?.toLowerCase()) ?? COLOR_VARIANTS[0]
