@@ -11,7 +11,7 @@ export interface PhysicsVoxel {
   z: number
   id: number
   key?: string
-  state?: { batteries?: number; mountedWheel?: boolean; motorType?: string; facing?: number; motorRoll?: number }
+  state?: { batteries?: number; batteryType?: 'aaa' | 'large16v'; mountedWheel?: boolean; motorType?: string; facing?: number; motorRoll?: number }
 }
 
 /**
