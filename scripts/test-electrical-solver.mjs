@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { formatCurrentReading, formatVoltageReading, isBatteryShortCircuit, limitResistorBranchCurrent, solveDcCircuit } from '../lib/game/electrical.ts'
-import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, stepFreeMotorAngularSpeed } from '../lib/game/motor-model.ts'
+import { classifyMotorPowerFlow, estimateMotorBackEmfVolts, MAX_MOTOR_MODEL_RATIO, motorDriveCommandForVoltageRatio, motorGeneratingTorqueNm, motorTorqueFromCurrent, stepFreeMotorAngularSpeed } from '../lib/game/motor-model.ts'
 import { getMotorSpec } from '../lib/game/motor-specs.ts'
 
 const near = (actual, expected, tolerance, label) => {
@@ -137,6 +137,19 @@ const near = (actual, expected, tolerance, label) => {
   assert.ok(byId.get('37d_30').torque > byId.get('n20_100').torque, '37D must provide more stall torque than N20')
   assert.ok(byId.get('n20_100').torque > byId.get('tt48').torque, 'N20 must provide more stall torque than TT')
   assert.ok(byId.get('tt48').torque > byId.get('fa130').torque, 'geared TT must provide more stall torque than FA-130')
+}
+
+// An open-circuit motor has back-EMF but no winding current, so it must
+// not retain fictitious electromagnetic torque that keeps a detached machine
+// in the powered/braking control path. Mechanical coast-down is tested below.
+{
+  for (const id of ['fa130', 'tt48', 'n20_100', '37d_30']) {
+    const motor = getMotorSpec(id)
+    near(motorTorqueFromCurrent(motor, 0, 100), 0, 1e-10, id + ' open-circuit torque')
+    near(motorTorqueFromCurrent(motor, 0.01, 100), 0, 1e-10, id + ' sub-threshold open-circuit torque')
+    assert.ok(motorTorqueFromCurrent(motor, motor.noLoadCurrentA ?? 0, 100) >= -1e-10,
+      id + ' powered no-load current must not create reverse electromagnetic torque')
+  }
 }
 
 // A standalone motor must ramp toward its rated no-load speed instead of using
