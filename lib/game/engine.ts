@@ -1516,12 +1516,15 @@ export class Engine {
     if (hit.id === B.BATTERY_BOX && (item === 'battery' || item === 'battery_16v' || item === null)) {
       const batteryType = item ? ITEMS[item].batteryType : undefined
       const r = this.mech.changeBatteries(hit.x, hit.y, hit.z, item ? 1 : -1, batteryType)
-      if (r.after !== r.before) {
+      const capacity = this.world.getState(hit.x, hit.y, hit.z)?.batteryType === 'large16v' ? 2 : 3
+      if (r.incompatible) {
+        showToast('Pilha incompatível: use o tipo indicado no compartimento')
+      } else if (r.after !== r.before) {
         const state = this.world.getState(hit.x, hit.y, hit.z)
         this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
-        sfx.battery(item === 'battery')
-        showToast(`Pilhas: ${r.after}/3`)
-      } else showToast(item === 'battery' ? 'Compartimento cheio (3/3)' : 'Compartimento vazio (0/3)')
+        sfx.battery(item !== null)
+        showToast(`Pilhas: ${r.after}/${capacity}`)
+      } else showToast(item ? `Compartimento cheio (${capacity}/${capacity})` : `Compartimento vazio (0/${capacity})`)
       return
     }
 
@@ -1928,10 +1931,12 @@ export class Engine {
       hint = `${use} numa face para aplicar ou remover cola quente`
     } else if (item === 'resin_applicator') {
       hint = `${use} em um bloco para aplicar ou remover a resina protetora`
-    } else if (hit?.id === B.BATTERY_BOX && item === 'battery') {
-      hint = `${use} para inserir pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
-    } else if (hit?.id === B.BATTERY_BOX && item === null) {
-      hint = `${use} para retirar pilha (${this.world.getState(hit.x, hit.y, hit.z)?.batteries ?? 0}/3)`
+    } else if (hit?.id === B.BATTERY_BOX && (item === 'battery' || item === 'battery_16v' || item === null)) {
+      const state = this.world.getState(hit.x, hit.y, hit.z)
+      const capacity = state?.batteryType === 'large16v' ? 2 : 3
+      const count = state?.batteries ?? 0
+      const compatible = item === null || ITEMS[item].batteryType === (state?.batteryType ?? 'aaa')
+      hint = !compatible ? 'Pilha incompatível com este compartimento' : item ? `${use} para inserir pilha (${count}/${capacity})` : `${use} para retirar pilha (${count}/${capacity})`
     } else if (hit?.id === B.ARDUINO_UNO && item === 'programming_tablet') {
       hint = `${use} para abrir a programação do Arduino UNO`
     } else if (hit?.id === B.RESISTOR && (item === null || item === 'resistor')) {
