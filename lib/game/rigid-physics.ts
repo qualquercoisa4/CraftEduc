@@ -42,7 +42,7 @@ export function blockMass(id: number, state?: PhysicsVoxel['state']) {
   if (id === B.MOTOR) return getMotorSpec(state?.motorType).massKg
   const base = BLOCK_MASS[id] ?? 0.8
   // Battery cells and the mounted wheel affect the centre of mass and inertia.
-  if (id === B.BATTERY_BOX) return base + Math.max(0, Math.min(3, Math.floor(state?.batteries ?? 0))) * 0.12
+  if (id === B.BATTERY_BOX) return base + Math.max(0, Math.min(state?.batteryType === 'large16v' ? 2 : 3, Math.floor(state?.batteries ?? 0))) * (state?.batteryType === 'large16v' ? 0.24 : 0.12)
   if (id === B.MOTOR && state?.mountedWheel) return base + 0.08
   return base
 }
