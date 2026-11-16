@@ -449,7 +449,7 @@ export class Mechanics {
     } else if (newId === B.BATTERY_BOX) {
       const st = this.world.ensureState(x, y, z)
       st.batteries ??= 0
-      const model = createBatteryBoxModel(st.batteries)
+      const model = createBatteryBoxModel(st.batteries, st.batteryType ?? 'aaa')
       model.group.position.set(x + 0.5, y, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'box', model })
@@ -955,10 +955,13 @@ export class Mechanics {
     return true
   }
 
-  changeBatteries(x: number, y: number, z: number, delta: number) {
+  changeBatteries(x: number, y: number, z: number, delta: number, requestedType?: 'aaa' | 'large16v') {
     const st = this.world.ensureState(x, y, z)
+    const type = st.batteryType ?? 'aaa'
     const before = st.batteries ?? 0
-    st.batteries = Math.max(0, Math.min(3, before + delta))
+    if (requestedType && requestedType !== type) return { before, after: before, incompatible: true }
+    const capacity = type === 'large16v' ? 2 : 3
+    st.batteries = Math.max(0, Math.min(capacity, before + delta))
     const e = this.models.get(posKey(x, y, z))
     if (e?.type === 'box') setBatteryCount(e.model, st.batteries)
     this.powerDirty = true
@@ -1625,14 +1628,16 @@ export class Mechanics {
     for (const [key, block] of electricalBlocks) {
       const state = block.state ?? {}
       if (block.id === B.BATTERY_BOX) {
-        const count = Math.max(0, Math.min(3, Math.floor(state.batteries ?? 0)))
+        const type = state.batteryType ?? 'aaa'
+        const count = Math.max(0, Math.min(type === 'large16v' ? 2 : 3, Math.floor(state.batteries ?? 0)))
         if (count > 0) {
           addTerminals(key, ['+', '-'])
           sources.push({
             id: `battery-pack:${key}`,
             positive: node(key, '+'), negative: node(key, '-'),
-            voltageVolts: 1.5 * count,
-            internalResistanceOhms: 0.15 * count,
+            voltageVolts: type === 'large16v' ? 16 : 1.5 * count,
+            // AAA cells are series-connected; 16 V cells are parallel-connected.
+            internalResistanceOhms: type === 'large16v' ? 0.15 / count : 0.15 * count,
           })
         }
       } else if (block.id === B.RESISTOR) {
@@ -4926,7 +4931,7 @@ export class Mechanics {
       }
       if (id === B.SWITCH) return componentState.switchOn ? 0.01 : Infinity
       if (id === B.LED) return Infinity
-      if (id === B.BATTERY_BOX) return 0.15 * Math.max(1, Math.floor(componentState.batteries ?? 0))
+      if (id === B.BATTERY_BOX) return componentState.batteryType === 'large16v' ? 0.15 / Math.max(1, Math.floor(componentState.batteries ?? 0)) : 0.15 * Math.max(1, Math.floor(componentState.batteries ?? 0))
       return Infinity
     }
     if (mode === 'dc_voltage') {
