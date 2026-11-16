@@ -966,7 +966,7 @@ export class Mechanics {
     if (e?.type === 'box') setBatteryCount(e.model, st.batteries)
     this.powerDirty = true
     this.mechDirty = true
-    return { before, after: st.batteries }
+    return { before, after: st.batteries, incompatible: false }
   }
 
   toggleGlue(x: number, y: number, z: number, face: number) {
