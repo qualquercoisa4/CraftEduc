@@ -15,6 +15,7 @@ import { ArduinoProgramming } from '@/components/game/arduino-programming-loader
 import { type MultiplayerClient } from '@/lib/game/multiplayer'
 import { WorldManager } from '@/components/game/world-manager'
 import { ScannerResults } from '@/components/game/scanner-results'
+import { ManualPanel } from '@/components/game/manual-panel'
 
 export default function Page() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -27,6 +28,7 @@ export default function Page() {
   const [multiplayerSession, setMultiplayerSession] = useState<MultiplayerClient | null>(null)
   const [worldManagerMode, setWorldManagerMode] = useState<'create' | 'load' | null>(null)
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
+  const [manualOpen, setManualOpen] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -107,6 +109,14 @@ export default function Page() {
         <>
           <Hud />
           {isTouch && <MobileControls />}
+          <button
+            type="button"
+            aria-label="Abrir manuais"
+            onClick={() => setManualOpen(true)}
+            className="pointer-events-auto absolute left-3 top-3 z-20 border-2 border-black bg-[#263d52]/90 px-3 py-2 text-sm font-bold tracking-wide text-white shadow-[inset_2px_2px_0_#ffffff55,inset_-2px_-2px_0_#0008] hover:bg-[#365b78]"
+          >
+            MANUAIS
+          </button>
           <div className="pointer-events-auto absolute right-3 top-3 z-20 flex gap-2">
             <button
               type="button"
@@ -127,6 +137,8 @@ export default function Page() {
           </div>
         </>
       )}
+
+      {!bootError && manualOpen && <ManualPanel onClose={() => setManualOpen(false)} />}
 
       {!bootError && screen === 'scanner' && <ScannerResults />}
       {!bootError && screen === 'inventory' && <Inventory />}
