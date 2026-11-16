@@ -2698,6 +2698,11 @@ export class Mechanics {
     preserveChildren(c.group, c.blocks.map((b) => b.origKey))
     preserveChildren(c.chassisGroup, [c.motorKey, ...c.chassisBlocks.map((b) => b.origKey)])
     for (const extra of c.extraRotors ?? []) preserveChildren(extra.group, extra.blocks.map((b) => b.origKey))
+    // Tear down every hinge before its bodies. Rapier invalidates attached
+    // joints when a body is removed; explicit ordered removal prevents stale
+    // handles when an assembly is dismantled and rebuilt in the same frame.
+    for (const extra of c.extraRotors ?? []) this.rigidPhysics.removeImpulseJoint(extra.joint)
+    this.rigidPhysics.removeImpulseJoint(c.joint)
     disposeObject(c.group)
     disposeObject(c.chassisGroup)
     for (const extra of c.extraRotors ?? []) {
