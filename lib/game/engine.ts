@@ -791,8 +791,9 @@ export class Engine {
       this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, this.world.getBlock(cell.x, cell.y, cell.z), state ? { ...state } : undefined)
       return
     }
-    if (cell.id === B.BATTERY_BOX && (item === 'battery' || item === null)) {
-      const result = this.mech.changeBatteries(cell.x, cell.y, cell.z, item === 'battery' ? 1 : -1)
+    if (cell.id === B.BATTERY_BOX && (item === 'battery' || item === 'battery_16v' || item === null)) {
+      const batteryType = item ? ITEMS[item].batteryType : undefined
+      const result = this.mech.changeBatteries(cell.x, cell.y, cell.z, item ? 1 : -1, batteryType)
       if (result.after !== result.before) {
         const state = this.world.getState(cell.x, cell.y, cell.z)
         this.multiplayerBridge.blockChanged(cell.x, cell.y, cell.z, cell.id, state ? { ...state } : undefined)
@@ -836,7 +837,7 @@ export class Engine {
       showToast('Esse espaço já está ocupado pela carcaça de um motor')
       return
     }
-    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
+    const state: import('./world').BlockState | undefined = block === B.SERVO ? { facing: intent.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[intent.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: intent.face } : block === B.BATTERY_BOX ? { batteries: 0, batteryType: ITEMS[item].batteryType ?? 'aaa' } : block === B.PROXIMITY_SENSOR ? { facing: intent.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
     if (block === B.MOTOR && this.motorModelOverlapsBlocks(x, y, z, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(cell.x, cell.y, cell.z))) {
       showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
       return
@@ -1512,8 +1513,9 @@ export class Engine {
       return
     }
 
-    if (hit.id === B.BATTERY_BOX && (item === 'battery' || item === null)) {
-      const r = this.mech.changeBatteries(hit.x, hit.y, hit.z, item === 'battery' ? 1 : -1)
+    if (hit.id === B.BATTERY_BOX && (item === 'battery' || item === 'battery_16v' || item === null)) {
+      const batteryType = item ? ITEMS[item].batteryType : undefined
+      const r = this.mech.changeBatteries(hit.x, hit.y, hit.z, item ? 1 : -1, batteryType)
       if (r.after !== r.before) {
         const state = this.world.getState(hit.x, hit.y, hit.z)
         this.multiplayerBridge?.blockChanged(hit.x, hit.y, hit.z, this.world.getBlock(hit.x, hit.y, hit.z), state ? { ...state } : undefined)
@@ -1568,7 +1570,7 @@ export class Engine {
     }
     if (this.player.intersectsBlock(px, py, pz, block)) return
     const variant = COLOR_VARIANTS.find((candidate) => item === `colored_block_${candidate.id}`)
-    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0 } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
+    const state: import('./world').BlockState | undefined = variant ? { color: variant.color } : block === B.SERVO ? { facing: hit.face, servoOffAngle: 0, servoOnAngle: 90 } : block === B.MOTOR ? { facing: OPPOSITE[hit.face], motorType: ITEMS[item].motorType ?? 'fa130', motorRoll: 0 } : block === B.WHEEL ? { facing: hit.face } : block === B.BATTERY_BOX ? { batteries: 0, batteryType: ITEMS[item].batteryType ?? 'aaa' } : block === B.PROXIMITY_SENSOR ? { facing: hit.face, proximityOperator: 'less', proximityDistance: 3, proximityActive: false } : block === B.RESISTOR ? { resistorDigit1: 1, resistorDigit2: 0, resistorMultiplier: 1, resistorTolerance: 5 } : undefined
     if (block === B.MOTOR && this.motorModelOverlapsBlocks(px, py, pz, ITEMS[item].motorType ?? 'fa130', state?.facing ?? 2, state?.motorRoll ?? 0, posKey(hit.x, hit.y, hit.z))) {
       showToast('O motor não cabe nesse espaço: há um bloco na área da carcaça')
       return
