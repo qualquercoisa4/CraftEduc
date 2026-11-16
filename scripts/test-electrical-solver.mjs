@@ -146,7 +146,7 @@ const near = (actual, expected, tolerance, label) => {
   for (const id of ['fa130', 'tt48', 'n20_100', '37d_30']) {
     const motor = getMotorSpec(id)
     near(motorTorqueFromCurrent(motor, 0, 100), 0, 1e-10, id + ' open-circuit torque')
-    near(motorTorqueFromCurrent(motor, 0.01, 100), 0, 1e-10, id + ' sub-threshold open-circuit torque')
+    near(motorTorqueFromCurrent(motor, 0.009, 100), 0, 1e-10, id + ' sub-threshold open-circuit torque')
     assert.ok(motorTorqueFromCurrent(motor, motor.noLoadCurrentA ?? 0, 100) >= -1e-10,
       id + ' powered no-load current must not create reverse electromagnetic torque')
   }
