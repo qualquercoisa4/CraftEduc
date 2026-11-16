@@ -368,6 +368,13 @@ export class RigidPhysics {
     this.rapierWorld.removeCollider(collider, true)
   }
 
+  removeImpulseJoint(joint: RAPIER.ImpulseJoint | null | undefined) {
+    if (!joint || !this.rapierWorld) return
+    // Remove hinges explicitly before either attached body is destroyed. This
+    // avoids stale joint handles during rapid edit/disassembly cycles.
+    this.rapierWorld.removeImpulseJoint(joint, true)
+  }
+
   removeRigidBody(body: RAPIER.RigidBody | null | undefined) {
     if (!body || !this.rapierWorld) return
     this.rapierWorld.removeRigidBody(body)
