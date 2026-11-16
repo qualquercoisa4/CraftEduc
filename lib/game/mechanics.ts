@@ -4988,7 +4988,10 @@ export class Mechanics {
         const current = this.electricalBranchCurrents.get(sourceId)
         const positiveLinks = this.getTerminalConnections(key, '+').length
         const negativeLinks = this.getTerminalConnections(key, '-').length
-        lines.push(`bateria ${key} células=${state?.batteries ?? 0} V=${((state?.batteries ?? 0) * 1.5).toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} +fios=${positiveLinks} -fios=${negativeLinks}`)
+        const batteryType = state?.batteryType ?? 'aaa'
+        const cellCount = state?.batteries ?? 0
+        const sourceVoltage = batteryType === 'large16v' ? (cellCount > 0 ? 16 : 0) : cellCount * 1.5
+        lines.push(`bateria ${key} tipo=${batteryType} células=${cellCount} V=${sourceVoltage.toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} +fios=${positiveLinks} -fios=${negativeLinks}`)
         shown++
       } else if (entry.type === 'resistor') {
         const va = this.electricalNodeVoltages.get(`${key}|A`)
