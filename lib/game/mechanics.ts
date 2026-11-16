@@ -449,7 +449,7 @@ export class Mechanics {
     } else if (newId === B.BATTERY_BOX) {
       const st = this.world.ensureState(x, y, z)
       st.batteries ??= 0
-      const model = createBatteryBoxModel(st.batteries)
+      const model = createBatteryBoxModel(st.batteries, st.batteryType ?? 'aaa')
       model.group.position.set(x + 0.5, y, z + 0.5)
       this.scene.add(model.group)
       this.models.set(key, { type: 'box', model })
@@ -955,15 +955,18 @@ export class Mechanics {
     return true
   }
 
-  changeBatteries(x: number, y: number, z: number, delta: number) {
+  changeBatteries(x: number, y: number, z: number, delta: number, requestedType?: 'aaa' | 'large16v') {
     const st = this.world.ensureState(x, y, z)
+    const type = st.batteryType ?? 'aaa'
     const before = st.batteries ?? 0
-    st.batteries = Math.max(0, Math.min(3, before + delta))
+    if (requestedType && requestedType !== type) return { before, after: before, incompatible: true }
+    const capacity = type === 'large16v' ? 2 : 3
+    st.batteries = Math.max(0, Math.min(capacity, before + delta))
     const e = this.models.get(posKey(x, y, z))
     if (e?.type === 'box') setBatteryCount(e.model, st.batteries)
     this.powerDirty = true
     this.mechDirty = true
-    return { before, after: st.batteries }
+    return { before, after: st.batteries, incompatible: false }
   }
 
   toggleGlue(x: number, y: number, z: number, face: number) {
@@ -1625,14 +1628,16 @@ export class Mechanics {
     for (const [key, block] of electricalBlocks) {
       const state = block.state ?? {}
       if (block.id === B.BATTERY_BOX) {
-        const count = Math.max(0, Math.min(3, Math.floor(state.batteries ?? 0)))
+        const type = state.batteryType ?? 'aaa'
+        const count = Math.max(0, Math.min(type === 'large16v' ? 2 : 3, Math.floor(state.batteries ?? 0)))
         if (count > 0) {
           addTerminals(key, ['+', '-'])
           sources.push({
             id: `battery-pack:${key}`,
             positive: node(key, '+'), negative: node(key, '-'),
-            voltageVolts: 1.5 * count,
-            internalResistanceOhms: 0.15 * count,
+            voltageVolts: type === 'large16v' ? 16 : 1.5 * count,
+            // AAA cells are series-connected; 16 V cells are parallel-connected.
+            internalResistanceOhms: type === 'large16v' ? 0.15 / count : 0.15 * count,
           })
         }
       } else if (block.id === B.RESISTOR) {
@@ -2693,6 +2698,11 @@ export class Mechanics {
     preserveChildren(c.group, c.blocks.map((b) => b.origKey))
     preserveChildren(c.chassisGroup, [c.motorKey, ...c.chassisBlocks.map((b) => b.origKey)])
     for (const extra of c.extraRotors ?? []) preserveChildren(extra.group, extra.blocks.map((b) => b.origKey))
+    // Tear down every hinge before its bodies. Rapier invalidates attached
+    // joints when a body is removed; explicit ordered removal prevents stale
+    // handles when an assembly is dismantled and rebuilt in the same frame.
+    for (const extra of c.extraRotors ?? []) this.rigidPhysics.removeImpulseJoint(extra.joint)
+    this.rigidPhysics.removeImpulseJoint(c.joint)
     disposeObject(c.group)
     disposeObject(c.chassisGroup)
     for (const extra of c.extraRotors ?? []) {
@@ -4926,7 +4936,7 @@ export class Mechanics {
       }
       if (id === B.SWITCH) return componentState.switchOn ? 0.01 : Infinity
       if (id === B.LED) return Infinity
-      if (id === B.BATTERY_BOX) return 0.15 * Math.max(1, Math.floor(componentState.batteries ?? 0))
+      if (id === B.BATTERY_BOX) return componentState.batteryType === 'large16v' ? 0.15 / Math.max(1, Math.floor(componentState.batteries ?? 0)) : 0.15 * Math.max(1, Math.floor(componentState.batteries ?? 0))
       return Infinity
     }
     if (mode === 'dc_voltage') {
@@ -4983,7 +4993,10 @@ export class Mechanics {
         const current = this.electricalBranchCurrents.get(sourceId)
         const positiveLinks = this.getTerminalConnections(key, '+').length
         const negativeLinks = this.getTerminalConnections(key, '-').length
-        lines.push(`bateria ${key} células=${state?.batteries ?? 0} V=${((state?.batteries ?? 0) * 1.5).toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} +fios=${positiveLinks} -fios=${negativeLinks}`)
+        const batteryType = state?.batteryType ?? 'aaa'
+        const cellCount = state?.batteries ?? 0
+        const sourceVoltage = batteryType === 'large16v' ? (cellCount > 0 ? 16 : 0) : cellCount * 1.5
+        lines.push(`bateria ${key} tipo=${batteryType} células=${cellCount} V=${sourceVoltage.toFixed(1)}V I=${current === undefined ? '—' : current.toFixed(3) + 'A'} +fios=${positiveLinks} -fios=${negativeLinks}`)
         shown++
       } else if (entry.type === 'resistor') {
         const va = this.electricalNodeVoltages.get(`${key}|A`)

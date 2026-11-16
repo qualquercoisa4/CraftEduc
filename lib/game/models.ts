@@ -550,7 +550,7 @@ export interface BatteryBoxModel {
   batteries: THREE.Group[]
 }
 
-export function createBatteryBoxModel(count: number): BatteryBoxModel {
+export function createBatteryBoxModel(count: number, batteryType: 'aaa' | 'large16v' = 'aaa'): BatteryBoxModel {
   const m = getMaterials()
   const group = new THREE.Group()
   const box = (w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material) => {
@@ -567,7 +567,7 @@ export function createBatteryBoxModel(count: number): BatteryBoxModel {
   box(0.03, 0.22, 0.76, -0.148, 0.15, 0, m.plastic)
   box(0.03, 0.22, 0.76, 0.148, 0.15, 0, m.plastic)
 
-  const channels = [-0.295, 0, 0.295]
+  const channels = batteryType === 'large16v' ? [-0.22, 0.22] : [-0.295, 0, 0.295]
   for (const x of channels) {
     const spring = cylZ(0.06, 0.06, m.steel, -0.35, 8)
     spring.position.set(x, 0.18, -0.35)
@@ -585,9 +585,10 @@ export function createBatteryBoxModel(count: number): BatteryBoxModel {
   for (const x of channels) {
     const b = new THREE.Group()
     b.position.set(x, 0.185, 0)
-    b.add(cylZ(0.1, 0.44, m.batteryBlack, -0.11, 12))
-    b.add(cylZ(0.1, 0.22, m.copper, 0.22, 12))
-    b.add(cylZ(0.035, 0.04, m.steel, 0.35, 8))
+    const radius = batteryType === 'large16v' ? 0.17 : 0.1
+    b.add(cylZ(radius, batteryType === 'large16v' ? 0.62 : 0.44, m.batteryBlack, -0.11, 12))
+    b.add(cylZ(radius, batteryType === 'large16v' ? 0.31 : 0.22, m.copper, batteryType === 'large16v' ? 0.31 : 0.22, 12))
+    b.add(cylZ(0.045, 0.05, m.steel, batteryType === 'large16v' ? 0.49 : 0.35, 8))
     group.add(b)
     batteries.push(b)
   }

@@ -615,16 +615,18 @@ function drawItemPixels(item: ItemId, px: Px) {
       px(10, 9, [34, 34, 34])
       break
     }
-    case 'battery': {
-      rect(7, 1, 2, 1, [204, 204, 204])
-      rect(6, 2, 4, 4, [216, 135, 58])
-      rect(6, 2, 1, 4, [240, 168, 90])
-      rect(9, 2, 1, 4, [168, 96, 42])
-      rect(6, 6, 4, 8, [30, 30, 30])
-      rect(6, 6, 1, 8, [74, 74, 74])
-      rect(9, 6, 1, 8, [16, 16, 16])
-      rect(6, 9, 4, 1, [216, 135, 58])
-      rect(6, 14, 4, 1, [170, 170, 170])
+    case 'battery':
+    case 'battery_16v': {
+      const large = item === 'battery_16v'
+      rect(large ? 5 : 7, 1, large ? 6 : 2, 1, [204, 204, 204])
+      rect(large ? 4 : 6, 2, large ? 8 : 4, 4, large ? [188, 58, 48] : [216, 135, 58])
+      rect(large ? 4 : 6, 2, 1, 4, [240, 168, 90])
+      rect(large ? 10 : 9, 2, 1, 4, [168, 96, 42])
+      rect(large ? 4 : 6, 6, large ? 8 : 4, 8, [30, 30, 30])
+      rect(large ? 4 : 6, 6, 1, 8, [74, 74, 74])
+      rect(large ? 11 : 9, 6, 1, 8, [16, 16, 16])
+      rect(large ? 4 : 6, 9, large ? 8 : 4, 1, large ? [188, 58, 48] : [216, 135, 58])
+      rect(large ? 4 : 6, 14, large ? 8 : 4, 1, [170, 170, 170])
       break
     }
     case 'wheel': {
@@ -647,20 +649,22 @@ function drawItemPixels(item: ItemId, px: Px) {
       rect(7, 7, 2, 2, [210, 214, 220])
       break
     }
-    case 'battery_box': {
+    case 'battery_box':
+    case 'battery_box_16v': {
+      const large = item === 'battery_box_16v'
       rect(1, 2, 14, 12, [34, 34, 36])
       rect(1, 2, 14, 1, [60, 60, 64])
-      for (const cx of [2, 6, 10]) {
-        rect(cx, 3, 3, 10, [52, 52, 56])
+      for (const cx of (large ? [4, 9] : [2, 6, 10])) {
+        const width = large ? 4 : 3
+        rect(cx, 3, width, 10, [52, 52, 56])
         px(cx + 1, 3, [190, 190, 190])
         px(cx, 4, [190, 190, 190])
-        px(cx + 2, 4, [190, 190, 190])
-        rect(cx, 12, 3, 1, [220, 220, 220])
+        px(cx + width - 1, 4, [190, 190, 190])
+        rect(cx, 12, width, 1, [220, 220, 220])
       }
-      px(14, 4, [220, 40, 40])
-      px(15, 4, [220, 40, 40])
-      px(14, 6, [70, 70, 70])
-      px(15, 6, [70, 70, 70])
+      if (large) { rect(4, 5, 4, 2, [195, 65, 48]); rect(9, 5, 4, 2, [195, 65, 48]) }
+      px(14, 4, [220, 40, 40]); px(15, 4, [220, 40, 40])
+      px(14, 6, [70, 70, 70]); px(15, 6, [70, 70, 70])
       break
     }
   }

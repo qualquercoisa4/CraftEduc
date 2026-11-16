@@ -133,7 +133,9 @@ export type ItemId =
   | 'glue'
   | 'resin_applicator'
   | 'battery_box'
+  | 'battery_box_16v'
   | 'battery'
+  | 'battery_16v'
   | 'wheel'
   | 'switch'
   | 'proximity_sensor'
@@ -168,6 +170,7 @@ export interface ItemDef {
   category: Exclude<CategoryId, 'all'>
   block?: number
   color?: string
+  batteryType?: 'aaa' | 'large16v'
 }
 
 export const ITEMS: Record<ItemId, ItemDef> = {
@@ -305,16 +308,13 @@ export const ITEMS: Record<ItemId, ItemDef> = {
     category: 'tools',
   },
   battery_box: {
-    name: 'Compartimento de Pilha AAA',
-    description: 'Compartimento para até três pilhas AAA. Com pilhas na mão, clique para inserir; mão vazia retira.', physicalInfo: 'Massa base: 0,65 kg • Cada pilha adiciona 0,12 kg • Capacidade: 3 pilhas',
-    category: 'power',
-    block: B.BATTERY_BOX,
+    name: 'Compartimento de Pilhas AAA', description: 'Compartimento para até três pilhas AAA em série. Selecione uma pilha AAA e clique para inserir; com a mão vazia, retire.', physicalInfo: 'Massa base: 0,65 kg • 0,12 kg por pilha • Capacidade: 3 • Saída máxima: 4,5 V', category: 'power', block: B.BATTERY_BOX, batteryType: 'aaa',
   },
-  battery: {
-    name: 'Pilha AAA',
-    description: 'Pilha AAA de 1,5 V para alimentar circuitos através do compartimento de pilhas.', physicalInfo: 'Tensão nominal simulada: 1,5 V • A massa adicional é contabilizada pelo compartimento',
-    category: 'power',
+  battery_box_16v: {
+    name: 'Compartimento de Pilhas Grandes 16 V', description: 'Compartimento exclusivo para até duas pilhas grandes de 16 V. As posições são ligadas em paralelo: a tensão permanece em 16 V e a capacidade de corrente aumenta.', physicalInfo: 'Massa base: 0,65 kg • 0,24 kg por pilha • Capacidade: 2 • Tensão: 16 V', category: 'power', block: B.BATTERY_BOX, batteryType: 'large16v',
   },
+  battery: { name: 'Pilha AAA', description: 'Pilha AAA de 1,5 V para o compartimento AAA.', physicalInfo: '1,5 V • Ligação em série no compartimento AAA', category: 'power', batteryType: 'aaa' },
+  battery_16v: { name: 'Pilha Grande 16 V', description: 'Pilha grande de 16 V, compatível somente com o compartimento de pilhas grandes.', physicalInfo: '16 V nominais • 0,24 kg • Duas unidades são ligadas em paralelo', category: 'power', batteryType: 'large16v' },
   ...Object.fromEntries(COLOR_VARIANTS.flatMap((variant) => [
     [`colored_block_${variant.id}`, {
       name: `Bloco ${variant.name}`,
@@ -359,7 +359,9 @@ export const ITEM_ORDER: ItemId[] = [
   'programming_tablet',
   'scanner_dws',
   'battery_box',
+  'battery_box_16v',
   'battery',
+  'battery_16v',
   'wheel',
   'paintbrush',
   ...COLOR_VARIANTS.flatMap((variant) => [

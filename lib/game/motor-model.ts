@@ -99,6 +99,12 @@ export function motorTorqueFromCurrent(
   const stallCurrentA = Math.max(0.01, spec.stallCurrentA ?? 1.5)
   const torqueConstantNmPerAmp = Math.max(0, spec.stallTorqueNm) / stallCurrentA
   const current = Number.isFinite(windingCurrentA) ? windingCurrentA : 0
+  // An open-circuit motor has back-EMF but no armature current, so it cannot
+  // produce electromagnetic torque. Mechanical coast-down is handled by the
+  // free-shaft inertia and Rapier joint damping, not by inventing no-load
+  // current after the battery/wires have been disconnected.
+  if (Math.abs(current) < 0.01) return 0
+
   const noLoadCurrentA = clamp(spec.noLoadCurrentA ?? 0, 0, stallCurrentA * 0.9)
   const internalLossTorque = Math.abs(shaftAngularSpeedRadPerSec) > 0.05
     ? Math.sign(shaftAngularSpeedRadPerSec) * torqueConstantNmPerAmp * noLoadCurrentA

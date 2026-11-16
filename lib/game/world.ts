@@ -7,6 +7,7 @@ import type { MotorVariantId } from './motor-specs'
 export interface BlockState {
   facing?: number
   batteries?: number
+  batteryType?: 'aaa' | 'large16v'
   glue?: number
   mountedWheel?: boolean
   motorType?: MotorVariantId
